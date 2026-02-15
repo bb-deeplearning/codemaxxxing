@@ -1833,12 +1833,69 @@ function WebFetch(props: ToolProps<typeof WebFetchTool>) {
 }
 
 function CodeSearch(props: ToolProps<any>) {
+  const { theme } = useTheme()
   const input = props.input as any
-  const metadata = props.metadata as any
+  const output = createMemo(() => (props.output ?? "").trim())
+  const results = createMemo(() =>
+    output()
+      .split(/(?=^## )/m)
+      .flatMap((chunk) => {
+        const heading = chunk.match(/^## (.+)/m)?.[1]?.trim()
+        if (!heading) return []
+        const url = chunk.match(/\nhttps?:\/\/\S+/)?.[0]?.trim()
+        if (!url) return []
+        const domain = url.match(/^https?:\/\/(?:www\.)?([^/]+)/)?.[1] ?? url
+        return [{ title: heading, url, domain }]
+      }),
+  )
+  const [expanded, setExpanded] = createSignal(false)
+
   return (
-    <InlineTool icon="◇" pending="Searching code..." complete={input.query} part={props.part}>
-      Exa Code Search "{input.query}" <Show when={metadata.results}>({metadata.results} results)</Show>
-    </InlineTool>
+    <Switch>
+      <Match when={results().length && expanded()}>
+        <BlockTool
+          title={`◇ Code search: "${input.query}" — ${results().length} results`}
+          part={props.part}
+          onClick={() => setExpanded(false)}
+        >
+          <box gap={1} paddingLeft={1}>
+            <For each={results()}>
+              {(r, i) => (
+                <box>
+                  <text>
+                    <span style={{ fg: theme.textMuted }}>{String(i() + 1).padStart(2, " ")}. </span>
+                    <span style={{ fg: theme.text }}>{r.title}</span>
+                  </text>
+                  <text fg={theme.textMuted}>
+                    {"    "}
+                    {r.domain}
+                  </text>
+                </box>
+              )}
+            </For>
+          </box>
+          <text paddingLeft={1} fg={theme.textMuted}>
+            Click to collapse
+          </text>
+        </BlockTool>
+      </Match>
+      <Match when={results().length}>
+        <BlockTool
+          title={`◇ Code search: "${input.query}" — ${results().length} results`}
+          part={props.part}
+          onClick={() => setExpanded(true)}
+        >
+          <text paddingLeft={1} fg={theme.textMuted}>
+            Click to view results
+          </text>
+        </BlockTool>
+      </Match>
+      <Match when={true}>
+        <InlineTool icon="◇" pending="Searching code..." complete={input.query} part={props.part}>
+          Code search "{input.query}"
+        </InlineTool>
+      </Match>
+    </Switch>
   )
 }
 
