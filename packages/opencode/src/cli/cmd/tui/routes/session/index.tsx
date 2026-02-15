@@ -1843,12 +1843,81 @@ function CodeSearch(props: ToolProps<any>) {
 }
 
 function WebSearch(props: ToolProps<any>) {
+  const { theme } = useTheme()
   const input = props.input as any
-  const metadata = props.metadata as any
+  const output = createMemo(() => (props.output ?? "").trim())
+  const results = createMemo(() =>
+    output()
+      .split(/(?=^Title: )/m)
+      .flatMap((chunk) => {
+        const title = chunk.match(/^Title: (.+)/m)?.[1]?.trim()
+        const url = chunk.match(/^URL: (.+)/m)?.[1]?.trim()
+        if (!title || !url) return []
+        const domain = url.match(/^https?:\/\/(?:www\.)?([^/]+)/)?.[1] ?? url
+        return [
+          {
+            title,
+            url,
+            domain,
+            author: chunk.match(/^Author: (.+)/m)?.[1]?.trim() || undefined,
+            date: chunk
+              .match(/^Published Date: (.+)/m)?.[1]
+              ?.trim()
+              ?.split("T")[0],
+          },
+        ]
+      }),
+  )
+  const [expanded, setExpanded] = createSignal(false)
+
   return (
-    <InlineTool icon="◈" pending="Searching web..." complete={input.query} part={props.part}>
-      Exa Web Search "{input.query}" <Show when={metadata.numResults}>({metadata.numResults} results)</Show>
-    </InlineTool>
+    <Switch>
+      <Match when={results().length && expanded()}>
+        <BlockTool
+          title={`◈ Web search: "${input.query}" — ${results().length} results`}
+          part={props.part}
+          onClick={() => setExpanded(false)}
+        >
+          <box gap={1} paddingLeft={1}>
+            <For each={results()}>
+              {(r, i) => (
+                <box>
+                  <text>
+                    <span style={{ fg: theme.textMuted }}>{String(i() + 1).padStart(2, " ")}. </span>
+                    <span style={{ fg: theme.text }}>{r.title}</span>
+                  </text>
+                  <text fg={theme.textMuted}>
+                    {"    "}
+                    {r.domain}
+                    {r.date ? ` · ${r.date}` : ""}
+                    {r.author ? ` · ${r.author}` : ""}
+                  </text>
+                </box>
+              )}
+            </For>
+          </box>
+          <text paddingLeft={1} fg={theme.textMuted}>
+            Click to collapse
+          </text>
+        </BlockTool>
+      </Match>
+      <Match when={results().length}>
+        <BlockTool
+          title={`◈ Web search: "${input.query}" — ${results().length} results`}
+          part={props.part}
+          onClick={() => setExpanded(true)}
+        >
+          <text paddingLeft={1} fg={theme.textMuted}>
+            Click to view results
+          </text>
+        </BlockTool>
+      </Match>
+      <Match when={true}>
+        <InlineTool icon="◈" pending="Searching web..." complete={input.query} part={props.part}>
+          Web search "{input.query}"
+        </InlineTool>
+      </Match>
+    </Switch>
   )
 }
 
