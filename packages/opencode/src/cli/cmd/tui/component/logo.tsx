@@ -71,11 +71,19 @@ export function Logo() {
   }
 
   return (
-    <box>
+    <box alignItems="center">
+      <For each={logo.top}>
+        {(line) => (
+          <box flexDirection="row">
+            <box flexDirection="row">{renderLine(line, theme.textMuted, false)}</box>
+          </box>
+        )}
+      </For>
       <For each={logo.left}>
         {(line, index) => (
           <box flexDirection="row" gap={1}>
-            <box flexDirection="row">{renderLine(line, theme.textMuted, false)}</box>
+            <box flexDirection="row">{renderLine(line, theme.text, true)}</box>
+            <box flexDirection="row">{renderLine(logo.mid[index()], theme.primary, true)}</box>
             <box flexDirection="row">{renderLine(logo.right[index()], theme.text, true)}</box>
           </box>
         )}
