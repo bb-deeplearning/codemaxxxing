@@ -1,137 +1,103 @@
-<p align="center">
-  <a href="https://opencode.ai">
-    <picture>
-      <source srcset="packages/console/app/src/asset/logo-ornate-dark.svg" media="(prefers-color-scheme: dark)">
-      <source srcset="packages/console/app/src/asset/logo-ornate-light.svg" media="(prefers-color-scheme: light)">
-      <img src="packages/console/app/src/asset/logo-ornate-light.svg" alt="OpenCode logo">
-    </picture>
-  </a>
-</p>
-<p align="center">The open source AI coding agent.</p>
-<p align="center">
-  <a href="https://opencode.ai/discord"><img alt="Discord" src="https://img.shields.io/discord/1391832426048651334?style=flat-square&label=discord" /></a>
-  <a href="https://www.npmjs.com/package/opencode-ai"><img alt="npm" src="https://img.shields.io/npm/v/opencode-ai?style=flat-square" /></a>
-  <a href="https://github.com/anomalyco/opencode/actions/workflows/publish.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/anomalyco/opencode/publish.yml?style=flat-square&branch=dev" /></a>
-</p>
+# codemaxxxing
 
-<p align="center">
-  <a href="README.md">English</a> |
-  <a href="README.zh.md">简体中文</a> |
-  <a href="README.zht.md">繁體中文</a> |
-  <a href="README.ko.md">한국어</a> |
-  <a href="README.de.md">Deutsch</a> |
-  <a href="README.es.md">Español</a> |
-  <a href="README.fr.md">Français</a> |
-  <a href="README.it.md">Italiano</a> |
-  <a href="README.da.md">Dansk</a> |
-  <a href="README.ja.md">日本語</a> |
-  <a href="README.pl.md">Polski</a> |
-  <a href="README.ru.md">Русский</a> |
-  <a href="README.bs.md">Bosanski</a> |
-  <a href="README.ar.md">العربية</a> |
-  <a href="README.no.md">Norsk</a> |
-  <a href="README.br.md">Português (Brasil)</a> |
-  <a href="README.th.md">ไทย</a> |
-  <a href="README.tr.md">Türkçe</a>
-</p>
+A highly opinionated fork of [OpenCode](https://github.com/anomalyco/opencode) ([docs](https://opencode.ai/docs)), used internally for all development on [Clauseo](https://clauseo.chat) and other [bbdeeplearning.systems](https://bbdeeplearning.systems) projects.
 
-[![OpenCode Terminal UI](packages/web/src/assets/lander/screenshot.png)](https://opencode.ai)
+This is an ongoing effort to tweak, configure, and personalise OpenCode for our own working methods. It's a public repository — feel free to use it if you find it useful.
 
----
+## What's different
 
-### Installation
+### System prompts
 
-```bash
-# YOLO
-curl -fsSL https://opencode.ai/install | bash
+The core system prompt has been rewritten with stronger opinions:
 
-# Package managers
-npm i -g opencode-ai@latest        # or bun/pnpm/yarn
-scoop install opencode             # Windows
-choco install opencode             # Windows
-brew install anomalyco/tap/opencode # macOS and Linux (recommended, always up to date)
-brew install opencode              # macOS and Linux (official brew formula, updated less)
-sudo pacman -S opencode            # Arch Linux (Stable)
-paru -S opencode-bin               # Arch Linux (Latest from AUR)
-mise use -g opencode               # Any OS
-nix run nixpkgs#opencode           # or github:anomalyco/opencode for latest dev branch
+- **Anti-over-engineering** — don't add features, abstractions, error handling, or comments beyond what was asked
+- **Security awareness** — actively watch for OWASP top 10 vulnerabilities in generated code
+- **No time estimates** — never predict how long tasks will take
+- **Blast radius awareness** — freely take reversible actions, flag destructive ones before proceeding
+
+### Explore agent
+
+The explore agent prompt has been overhauled for speed and strictness:
+
+- Hard read-only enforcement with an explicit deny list for destructive commands
+- Parallel tool call patterns for faster search
+- Structured thoroughness levels (quick / medium / very thorough)
+- Machine-readable response format (absolute paths, code snippets, explicit negatives)
+
+Our setup uses Claude Opus 4.6 as the primary model with the explore agent specifically running on Gemini 3 Flash. To use this, add the following to your `opencode.json`:
+
+```json
+{
+  "agent": {
+    "explore": {
+      "model": "google/gemini-3-flash-preview"
+    }
+  }
+}
 ```
 
-> [!TIP]
-> Remove versions older than 0.1.x before installing.
+The explore prompt is structured to account for that pairing. Consequences on different model setups are not tested.
 
-### Desktop App (BETA)
+### Plan mode
 
-OpenCode is also available as a desktop application. Download directly from the [releases page](https://github.com/anomalyco/opencode/releases) or [opencode.ai/download](https://opencode.ai/download).
+Plan mode has been restructured around an iterative loop — explore, update the plan, ask the user — instead of the original monolithic approach. Plans are written to `.opencode/plans/` as self-contained markdown files designed to be executed by fresh agents with no context from the planning session. Includes required sections: context, codebase analysis, approach, changes, dead ends, verification, and dependencies.
 
-| Platform              | Download                              |
-| --------------------- | ------------------------------------- |
-| macOS (Apple Silicon) | `opencode-desktop-darwin-aarch64.dmg` |
-| macOS (Intel)         | `opencode-desktop-darwin-x64.dmg`     |
-| Windows               | `opencode-desktop-windows-x64.exe`    |
-| Linux                 | `.deb`, `.rpm`, or AppImage           |
+### Subagent permissions
 
-```bash
-# macOS (Homebrew)
-brew install --cask opencode-desktop
-# Windows (Scoop)
-scoop bucket add extras; scoop install extras/opencode-desktop
-```
+The explore agent's bash access is locked down with explicit deny rules for destructive commands (`rm`, `git push`, `npm install`, etc.) while allowing read-only commands (`ls`, `find`, `git log`, etc.).
 
-#### Installation Directory
+### Custom agents
 
-The install script respects the following priority order for the installation path:
-
-1. `$OPENCODE_INSTALL_DIR` - Custom installation directory
-2. `$XDG_BIN_DIR` - XDG Base Directory Specification compliant path
-3. `$HOME/bin` - Standard user binary directory (if it exists or can be created)
-4. `$HOME/.opencode/bin` - Default fallback
+Three custom agents live in `custom_agents/`. Copy them to your config directory to use them:
 
 ```bash
-# Examples
-OPENCODE_INSTALL_DIR=/usr/local/bin curl -fsSL https://opencode.ai/install | bash
-XDG_BIN_DIR=$HOME/.local/bin curl -fsSL https://opencode.ai/install | bash
+cp custom_agents/*.md ~/.config/opencode/agent/
 ```
 
-### Agents
+- **docs** — technical documentation writer with specific style constraints (short chunks, imperative headings, relaxed tone)
+- **general** — custom system prompt for the general subagent. In upstream OpenCode, the general subagent inherits its system prompt from the parent verbatim. This replaces that with a purpose-built prompt focused on task execution, anti-over-engineering, and structured reporting back to the parent agent.
+- **plan_structured** — an alternative non-iterative plan mode (WIP)
 
-OpenCode includes two built-in agents you can switch between with the `Tab` key.
+### UI
 
-- **build** - Default, full-access agent for development work
-- **plan** - Read-only agent for analysis and code exploration
-  - Denies file edits by default
-  - Asks permission before running bash commands
-  - Ideal for exploring unfamiliar codebases or planning changes
+- Custom ASCII art logo
+- Rebranded TUI sidebar and exit screen
 
-Also included is a **general** subagent for complex searches and multistep tasks.
-This is used internally and can be invoked using `@general` in messages.
+## Before you use this
 
-Learn more about [agents](https://opencode.ai/docs/agents).
+The prompts contain my identity. If you're forking this for yourself, update these files before using:
 
-### Documentation
+- `packages/opencode/src/session/prompt/anthropic.txt` — name, org, and identity in the main system prompt
+- `packages/opencode/src/agent/prompt/explore.txt` — agent identity
+- `custom_agents/general.md` — subagent identity
 
-For more info on how to configure OpenCode, [**head over to our docs**](https://opencode.ai/docs).
+## Installation
 
-### Contributing
+### From source (development)
 
-If you're interested in contributing to OpenCode, please read our [contributing docs](./CONTRIBUTING.md) before submitting a pull request.
+```bash
+bun dev
+```
 
-### Building on OpenCode
+### Standalone binary
 
-If you are working on a project that's related to OpenCode and is using "opencode" as part of its name, for example "opencode-dashboard" or "opencode-mobile", please add a note to your README to clarify that it is not built by the OpenCode team and is not affiliated with us in any way.
+```bash
+# Build
+./packages/opencode/script/build.ts --single
 
-### FAQ
+# Make executable
+chmod +x ./packages/opencode/dist/opencode-darwin-arm64/bin/opencode
 
-#### How is this different from Claude Code?
+# Symlink to PATH
+ln -sf "$(pwd)/packages/opencode/dist/opencode-darwin-arm64/bin/opencode" ~/.local/bin/codemaxxxing
+```
 
-It's very similar to Claude Code in terms of capability. Here are the key differences:
+Make sure `~/.local/bin` is in your `PATH`. If not, add to your `.zshrc`:
 
-- 100% open source
-- Not coupled to any provider. Although we recommend the models we provide through [OpenCode Zen](https://opencode.ai/zen), OpenCode can be used with Claude, OpenAI, Google, or even local models. As models evolve, the gaps between them will close and pricing will drop, so being provider-agnostic is important.
-- Out-of-the-box LSP support
-- A focus on TUI. OpenCode is built by neovim users and the creators of [terminal.shop](https://terminal.shop); we are going to push the limits of what's possible in the terminal.
-- A client/server architecture. This, for example, can allow OpenCode to run on your computer while you drive it remotely from a mobile app, meaning that the TUI frontend is just one of the possible clients.
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
 
----
+## License
 
-**Join our community** [Discord](https://discord.gg/opencode) | [X.com](https://x.com/opencode)
+Same as upstream OpenCode — see [LICENSE](./LICENSE).
