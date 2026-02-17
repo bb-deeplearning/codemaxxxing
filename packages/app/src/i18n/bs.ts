@@ -224,6 +224,7 @@ export const dict = {
 
   "prompt.placeholder.shell": "Unesi shell naredbu...",
   "prompt.placeholder.normal": 'Pitaj bilo šta... "{{example}}"',
+  "prompt.placeholder.simple": "Pitaj bilo šta...",
   "prompt.placeholder.summarizeComments": "Sažmi komentare…",
   "prompt.placeholder.summarizeComment": "Sažmi komentar…",
   "prompt.mode.shell": "Shell",
@@ -505,6 +506,9 @@ export const dict = {
   "session.messages.jumpToLatest": "Idi na najnovije",
 
   "session.context.addToContext": "Dodaj {{selection}} u kontekst",
+  "session.todo.title": "Zadaci",
+  "session.todo.collapse": "Sažmi",
+  "session.todo.expand": "Proširi",
 
   "session.new.worktree.main": "Glavna grana",
   "session.new.worktree.mainWithBranch": "Glavna grana ({{branch}})",
@@ -631,6 +635,7 @@ export const dict = {
   "font.option.robotoMono": "Roboto Mono",
   "font.option.sourceCodePro": "Source Code Pro",
   "font.option.ubuntuMono": "Ubuntu Mono",
+  "font.option.geistMono": "Geist Mono",
   "sound.option.alert01": "Upozorenje 01",
   "sound.option.alert02": "Upozorenje 02",
   "sound.option.alert03": "Upozorenje 03",
