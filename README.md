@@ -97,13 +97,9 @@ Decompose the plan in @.opencode/plans/my-plan.md
 
 This produces the `.wave/` directory — `AGENT_INSTRUCTIONS.md`, `OVERVIEW.md`, `STATE.md`, and `waves/wave_N/WAVE.md` for each wave. No source code is modified.
 
-**Sessions 3 to N — Execute.** New session for each wave. Use the built-in `/execute-wave` command — type it in the prompt or search "Execute Next Wave" in ctrl+p. It switches to the build agent, opens a new session, and pre-fills:
+**Sessions 3 to N — Execute.** New session for each wave. Use the built-in `/execute-wave` slash command (or `/wave`) — it switches to the build agent, opens a new session, and pre-fills the prompt with `.wave/AGENT_INSTRUCTIONS.md` attached as context. Press Enter to send.
 
-```
-Execute the next wave as mentioned in .wave/AGENT_INSTRUCTIONS.md
-```
-
-Press Enter to send. The agent reads `STATE.md` to find the current wave, loads only what it needs, executes, verifies, updates state, and stops. Start a new session and repeat until `wave_status: all_complete`.
+The agent reads `STATE.md` to find the current wave, loads only what it needs, executes, verifies, updates state, and stops. Start a new session and repeat until `wave_status: all_complete`.
 
 Read more: [Why waves instead of plan-and-build](./WAVES.md)
 
@@ -112,7 +108,7 @@ Read more: [Why waves instead of plan-and-build](./WAVES.md)
 - Custom ASCII art logo
 - Rebranded TUI sidebar and exit screen
 - Collapsible web search and code search result displays in TUI
-- `/execute-wave` slash command in web app — switches to build agent, opens a new session, and pre-fills the wave execution prompt
+- `/execute-wave` (alias `/wave`) slash command — switches to build agent, opens new session with wave prompt and file context pre-filled
 
 ### Model support
 

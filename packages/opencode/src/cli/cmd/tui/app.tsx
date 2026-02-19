@@ -37,6 +37,7 @@ import { Provider } from "@/provider/provider"
 import { ArgsProvider, useArgs, type Args } from "./context/args"
 import open from "open"
 import { writeHeapSnapshot } from "v8"
+import { pathToFileURL } from "bun"
 import { PromptRefProvider, usePromptRef } from "./context/prompt"
 
 async function getTerminalBackgroundColor(): Promise<"dark" | "light"> {
@@ -387,6 +388,50 @@ function App() {
           initialPrompt: currentPrompt,
         })
         dialog.clear()
+      },
+    },
+    // codemaxxxing addition — not in upstream OpenCode
+    {
+      title: "Execute next wave",
+      value: "session.execute-wave",
+      category: "Session",
+      slash: {
+        name: "execute-wave",
+        aliases: ["wave"],
+      },
+      onSelect: () => {
+        local.agent.set("build")
+        route.navigate({ type: "home" })
+        dialog.clear()
+        const file = ".wave/AGENT_INSTRUCTIONS.md"
+        const text = "Execute the next wave per "
+        const mention = "@" + file
+        const input = text + mention + " "
+        const baseDir = (sync.data.path.directory || process.cwd()).replace(/\/+$/, "")
+        const url = pathToFileURL(`${baseDir}/${file}`).href
+        // setTimeout(0) so Home component mounts and registers its prompt ref first
+        setTimeout(() => {
+          promptRef.current?.set({
+            input,
+            parts: [
+              {
+                type: "file",
+                mime: "text/plain",
+                filename: file,
+                url,
+                source: {
+                  type: "file",
+                  path: file,
+                  text: {
+                    start: text.length,
+                    end: text.length + mention.length,
+                    value: mention,
+                  },
+                },
+              },
+            ],
+          })
+        }, 0)
       },
     },
     {

@@ -43,8 +43,6 @@ export const dict = {
   "command.language.set": "Use language: {{language}}",
 
   "command.session.new": "New session",
-  "command.session.execute-wave": "Execute Next Wave",
-  "command.session.execute-wave.description": "Start new chat with build agent for next wave",
   "command.file.open": "Open file",
   "command.tab.close": "Close tab",
   "command.context.addSelection": "Add selection to context",

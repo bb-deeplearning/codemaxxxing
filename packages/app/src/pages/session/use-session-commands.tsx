@@ -106,27 +106,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       slash: "new",
       onSelect: () => navigate(`/${params.dir}/session`),
     }),
-    // codemaxxxing addition — not in upstream OpenCode
-    sessionCommand({
-      id: "session.execute-wave",
-      title: language.t("command.session.execute-wave"),
-      description: language.t("command.session.execute-wave.description"),
-      slash: "execute-wave",
-      onSelect: () => {
-        local.agent.set("build")
-        navigate(`/${params.dir}/session`)
-        requestAnimationFrame(() => {
-          prompt.set([
-            {
-              type: "text",
-              content: "Execute the next wave as mentioned in .wave/AGENT_INSTRUCTIONS.md",
-              start: 0,
-              end: 0,
-            },
-          ])
-        })
-      },
-    }),
   ])
 
   const fileCommands = createMemo(() => [

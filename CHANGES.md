@@ -93,12 +93,12 @@ Comprehensive list of every modification in this fork relative to [anomalyco/ope
 - Fixed permission and question prompts from nested subagent sessions (grandchildren+)
 - Changed `children()` to `descendants()` using recursive traversal so permissions and questions from arbitrarily deep subagent trees surface in the parent session
 
-## Web app changes (`packages/app/`)
+### `/execute-wave` slash command (`packages/opencode/src/cli/cmd/tui/app.tsx`)
 
-### `/execute-wave` slash command
-
-- **`packages/app/src/i18n/en.ts`** — added `command.session.execute-wave` and `command.session.execute-wave.description` i18n keys
-- **`packages/app/src/pages/session/use-session-commands.tsx`** — registered `/execute-wave` command that sets agent to "build", navigates to a new session, and pre-fills the wave execution prompt via `requestAnimationFrame`
+- Registered `/execute-wave` (alias `/wave`) in the TUI command system
+- Sets agent to "build", navigates to home, pre-fills prompt with wave execution text
+- Attaches `.wave/AGENT_INSTRUCTIONS.md` as a file context part with proper `file://` URL
+- Uses `setTimeout(0)` + `promptRef` to set the prompt after the Home component mounts, avoiding the module-level `once` guard in `home.tsx` that blocks `initialPrompt` on re-mount
 
 ## Custom agents (`custom_agents/`)
 
