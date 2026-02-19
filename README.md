@@ -97,13 +97,13 @@ Decompose the plan in @.opencode/plans/my-plan.md
 
 This produces the `.wave/` directory — `AGENT_INSTRUCTIONS.md`, `OVERVIEW.md`, `STATE.md`, and `waves/wave_N/WAVE.md` for each wave. No source code is modified.
 
-**Sessions 3 to N — Execute.** New session for each wave. Same prompt every time:
+**Sessions 3 to N — Execute.** New session for each wave. Use the built-in `/execute-wave` command — type it in the prompt or search "Execute Next Wave" in ctrl+p. It switches to the build agent, opens a new session, and pre-fills:
 
 ```
-Execute the next wave per @.wave/AGENT_INSTRUCTIONS.md
+Execute the next wave as mentioned in .wave/AGENT_INSTRUCTIONS.md
 ```
 
-The agent reads `STATE.md` to find the current wave, loads only what it needs, executes, verifies, updates state, and stops. Start a new session and repeat until `wave_status: all_complete`.
+Press Enter to send. The agent reads `STATE.md` to find the current wave, loads only what it needs, executes, verifies, updates state, and stops. Start a new session and repeat until `wave_status: all_complete`.
 
 Read more: [Why waves instead of plan-and-build](./WAVES.md)
 
@@ -111,6 +111,16 @@ Read more: [Why waves instead of plan-and-build](./WAVES.md)
 
 - Custom ASCII art logo
 - Rebranded TUI sidebar and exit screen
+- Collapsible web search and code search result displays in TUI
+- `/execute-wave` slash command in web app — switches to build agent, opens a new session, and pre-fills the wave execution prompt
+
+### Model support
+
+- Sonnet 4.6 gets adaptive thinking parity with Opus 4.6 on Google Vertex and Amazon Bedrock providers
+
+### Bug fixes
+
+- Permissions and questions from nested subagent sessions (not just direct children) now surface correctly in the TUI
 
 ## Before you use this
 
