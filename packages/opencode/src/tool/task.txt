@@ -32,9 +32,24 @@ When starting fresh, your prompt MUST be self-contained. Include:
 - Whether to write code or just do research (the agent does not know the user's intent)
 
 Bad: "Investigate the auth issue we discussed"
-Good: "Search the codebase for authentication/authorization logic. Start with src/auth/ and src/middleware/. Look for JWT handling, session management, and permission checks. Return: file paths with line numbers, key function signatures, and how auth flows through the request lifecycle. This is research only — do not modify any files."
+Bad: "Explore the codebase and find how auth works — look at JWT, sessions, permissions, middleware, and the user model" (too broad for one agent — will cause context bloat and shallow results)
+Good: "Find where JWT tokens are validated in this codebase. Start from src/auth/ and src/middleware/. Return file paths, line numbers, and the validation logic used. This is research only — do not modify any files."
+Good (parallel split for a broad question):
+  Agent 1: "Find where JWT tokens are validated. Start from src/auth/. Return file paths with line numbers and the key validation function signatures."
+  Agent 2: "Find how session state is managed and persisted. Start from src/session/. Return file paths with line numbers and the storage mechanism used."
+  Agent 3: "Find where permission/authorization checks happen in API route handlers. Start from src/routes/. Return file paths with line numbers and the middleware chain."
 
 To continue a previous agent's session, pass its task_id — this preserves the full context from prior work.
+
+# Explore agent delegation
+
+The explore agent runs on a smaller, faster model. It is a focused search tool, not a comprehensive researcher. Follow these rules when delegating to it:
+
+- **Ask questions, don't request code dumps.** Tell the explore agent what you need to FIND OUT, not which files to read and return. If you already know the file paths, use Read directly — don't waste an agent on it.
+- **Split broad exploration into multiple parallel explore agents.** Each agent should target one concern or area (e.g., "how sessions work" or "where errors are handled"), not multiple unrelated topics. Scope by area or concern, not by individual file.
+- **Expect findings back, not raw code.** The explore agent should return file paths, line numbers, and brief explanations. You can then Read specific lines yourself if you need more detail.
+- **Always specify a thoroughness level** ("quick", "medium", or "very thorough") so the explore agent knows how deep to go.
+- **Give starting points.** Include likely directories or file patterns in your prompt so the agent doesn't waste calls searching blindly.
 
 # Usage notes
 1. When you have multiple independent tasks, launch agents concurrently in a single message with multiple tool calls. This reduces wall-clock time significantly. If the user specifies "in parallel", you MUST send a single message with multiple Task tool calls.

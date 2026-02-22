@@ -4,6 +4,22 @@ An opinionated fork of [OpenCode](https://github.com/anomalyco/opencode) ([docs]
 
 Rewritten system prompts, aggressive subagent parallelism, stricter permissions, and custom agents — including a [wave executor](#wave-executor-workflow) for breaking large tasks across fresh sessions. The prompts and agents are portable to stock OpenCode; the fork adds the prompt and agent changes that make them work well.
 
+## Prompt iteration
+
+The core value of this fork is iterative prompt tuning. We observe model behavior during daily use, identify recurring failure patterns, research how other harnesses handle the same problems, change the prompts, and repeat. Each iteration follows a consistent structure:
+
+1. **Discovery** — what behavior is going wrong, with concrete examples
+2. **Research** — how Claude Code, Cursor, and community patterns handle it
+3. **Solution** — exact files changed and why
+4. **Observe** — what to watch for to know if it worked
+
+Iteration logs live in [`PROMPT_ITERATIONS/`](./PROMPT_ITERATIONS/) and corresponding change lists in [`CHANGES/`](./CHANGES/).
+
+| Iteration                                                 | Date       | Focus                                                                                     |
+| --------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------- |
+| [1](./PROMPT_ITERATIONS/2026-02-15-initial-fork.md)       | 2026-02-15 | Initial fork: anti-over-engineering, explore lockdown, context isolation, plan mode       |
+| [2](./PROMPT_ITERATIONS/2026-02-22-explore-delegation.md) | 2026-02-22 | Explore agent delegation: split broad tasks into parallel focused agents, stop code dumps |
+
 ## What's different
 
 ### System prompts
@@ -24,6 +40,13 @@ The explore agent prompt has been overhauled for speed and strictness:
 - Parallel tool call patterns for faster search
 - Structured thoroughness levels (quick / medium / very thorough)
 - Machine-readable response format (absolute paths, code snippets, explicit negatives)
+- Concise findings — key function signatures and critical logic, not entire file dumps
+
+The main agent's delegation to explore has been tuned to prevent context bloat (iteration 2):
+
+- Broad questions are split into multiple parallel explore agents, each targeting one area or concern
+- The main agent uses Read directly when it already knows file paths, instead of wasting an explore agent on file reading
+- Explore agents are always given a thoroughness level and starting-point directories
 
 Our setup uses Claude Opus 4.6 as the primary model with the explore agent specifically running on Gemini 3 Flash. To use this, add the following to your `opencode.json`:
 

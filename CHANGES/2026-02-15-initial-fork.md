@@ -1,4 +1,7 @@
-# Changes from upstream OpenCode
+# Changes: Initial fork
+
+**Date**: 2026-02-15
+**Commit**: `abb154db540153403edb9e601c07cb232717d67b`
 
 Comprehensive list of every modification in this fork relative to [anomalyco/opencode](https://github.com/anomalyco/opencode) `dev` branch.
 
@@ -55,10 +58,6 @@ Comprehensive list of every modification in this fork relative to [anomalyco/ope
 - Locked down bash permissions with explicit deny/allow rules:
   - **Denied**: `rm`, `rmdir`, `mkdir`, `touch`, `mv`, `cp`, `chmod`, `chown`, `sudo`, `git add/commit/push/reset/checkout/merge/rebase/stash/clean`, `npm install/run`, `yarn`, `pnpm`, `bun install`, `pip install`, `brew`, `wget`
   - **Allowed**: `ls`, `find`, `cat`, `head`, `tail`, `wc`, `file`, `stat`, `du`, `tree`, `diff`, `sort`, `uniq`, `cut`, `which`, `echo`, `pwd`, `realpath`, `basename`, `dirname`, `git log/diff/show/blame/status/branch/rev-parse/ls-files/ls-tree/config`
-
-## Model support (`packages/opencode/src/provider/transform.ts`)
-
-- Added Sonnet 4.6 adaptive thinking variants (low/medium/high/max) on Google Vertex and Amazon Bedrock providers, matching existing Opus 4.6 support
 
 ## TUI changes
 

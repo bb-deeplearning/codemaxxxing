@@ -208,7 +208,7 @@ export namespace Agent {
           }),
           user,
         ),
-        description: `Read-only agent for codebase exploration and research. Runs on a smaller, faster model suited for search tasks. Use when you need to search across many files, understand architecture, or answer questions about how the codebase works — tasks where a single Grep or Glob call isn't enough. Cannot modify files. Specify thoroughness: "quick" for basic searches, "medium" for moderate exploration, "very thorough" for comprehensive analysis across multiple locations and naming conventions.`,
+        description: `Read-only agent for codebase exploration and research. Runs on a smaller, faster model suited for search tasks. Use when you need to search across many files, understand architecture, or answer questions about how the codebase works — tasks where a single Grep or Glob call isn't enough. Cannot modify files. Specify thoroughness: "quick" for basic searches, "medium" for moderate exploration, "very thorough" for comprehensive analysis across multiple locations and naming conventions. Works best with focused scope — for broad questions, prefer spawning multiple explore agents in parallel, each targeting a specific area. Do not use as a file reader — if you know the paths, use Read directly.`,
         prompt: PROMPT_EXPLORE,
         options: {},
         mode: "subagent",
