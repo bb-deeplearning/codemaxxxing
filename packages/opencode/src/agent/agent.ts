@@ -11,6 +11,8 @@ import { ProviderTransform } from "../provider/transform"
 import PROMPT_GENERATE from "./generate.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
+import PROMPT_GENERAL_ANTHROPIC from "./prompt/general/anthropic.txt"
+import PROMPT_GENERAL_GEMINI from "./prompt/general/gemini.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
 import { PermissionNext } from "@/permission/next"
@@ -312,6 +314,15 @@ export namespace Agent {
 
   export async function get(agent: string) {
     return state().then((x) => x[agent])
+  }
+
+  export function resolvePrompt(agent: Info, model: { api: { id: string } }) {
+    if (agent.prompt) return agent.prompt
+    if (agent.name === "general" && agent.native) {
+      if (model.api.id.includes("claude")) return PROMPT_GENERAL_ANTHROPIC
+      return PROMPT_GENERAL_GEMINI
+    }
+    return undefined
   }
 
   export async function list() {

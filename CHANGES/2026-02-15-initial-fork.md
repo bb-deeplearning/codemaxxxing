@@ -2,49 +2,18 @@
 
 **Date**: 2026-02-15
 **Commit**: `abb154db540153403edb9e601c07cb232717d67b`
+**Iteration**: [PROMPT_ITERATIONS/2026-02-15-initial-fork.md](../PROMPT_ITERATIONS/2026-02-15-initial-fork.md)
 
-Comprehensive list of every modification in this fork relative to [anomalyco/opencode](https://github.com/anomalyco/opencode) `dev` branch.
+Comprehensive list of every modification in this fork relative to [anomalyco/opencode](https://github.com/anomalyco/opencode) `dev` branch. Prompt changes are detailed in the [iteration log](../PROMPT_ITERATIONS/2026-02-15-initial-fork.md).
 
 ## System prompts
 
-### Main system prompt (`packages/opencode/src/session/prompt/anthropic.txt`)
+Prompt changes are detailed in the [iteration log](../PROMPT_ITERATIONS/2026-02-15-initial-fork.md).
 
-- Rebranded identity from "OpenCode" to "codemaxxxing" with Rohan Shiralkar / bbdeeplearning.systems attribution
-- Removed upstream help text (ctrl+p hint, GitHub issue link)
-- Added self-referencing docs lookup for both "codemaxxxing" and "OpenCode" questions
-- Added "Never give time estimates" rule
-- Added anti-over-engineering guidelines: no unnecessary features, abstractions, error handling, comments, or type annotations beyond what was asked
-- Added security awareness: OWASP top 10 vulnerability watchlist
-- Added blast radius awareness: freely take reversible actions, flag destructive ones before proceeding
-- Added backwards-compatibility hack avoidance: delete unused code instead of renaming to `_var` or adding `// removed`
-- Tightened tool usage policy: prefer explore subagent for broad codebase searches, explicit context isolation rules for subagent prompts
-- Reorganized and condensed tone/style section
-
-### Plan mode prompt (`packages/opencode/src/session/prompt/plan.txt`)
-
-- Replaced minimal "do not edit" reminder with a full iterative planning workflow
-- Added the explore-update-ask loop: explore with subagents, update plan incrementally, ask user on ambiguities
-- Added self-contained plan requirements: exact file paths, code snippets, patterns, dead ends, rationale, verification, dependencies
-- Added required plan structure sections: Context, Codebase Analysis, Approach, Changes, Dead Ends, Verification, Dependencies
-- Added question guidelines: never ask what you could find by reading code, batch related questions
-- Plans write to `.opencode/plans/` — the only writable location in plan mode
-
-### Task tool prompt (`packages/opencode/src/tool/task.txt`)
-
-- Added context isolation section: each subagent starts with zero context, prompts must be self-contained with absolute paths, code snippets, and expected output format
-- Added overhead awareness: delegate when work benefits from isolation or parallelism, not for single tool calls
-- Added bad/good prompt examples
-- Added "always include a short description (3-5 words)" requirement
-- Restructured when-to-use and when-not-to-use guidance
-
-### Explore agent prompt (`packages/opencode/src/agent/prompt/explore.txt`)
-
-- Rebranded identity to codemaxxxing exploration agent
-- Added explicit read-only enforcement with prohibition list (no Write, Edit, touch, mv, cp, redirect operators)
-- Added tool selection guidance with allowed/denied bash commands
-- Added speed and parallelism section with concrete parallel patterns
-- Added structured thoroughness levels: quick (1-3 calls), medium (5-10 calls), very thorough (no limit)
-- Added machine-readable response format: absolute paths, code snippets, relevance ordering, explicit negatives, no emojis
+- `packages/opencode/src/session/prompt/anthropic.txt` — rebranded, added our behavioural guidelines
+- `packages/opencode/src/session/prompt/plan.txt` — full iterative planning workflow
+- `packages/opencode/src/tool/task.txt` — context isolation, subagent delegation guidance
+- `packages/opencode/src/agent/prompt/explore.txt` — read-only enforcement, structured format
 
 ## Agent configuration (`packages/opencode/src/agent/agent.ts`)
 
@@ -104,7 +73,7 @@ Comprehensive list of every modification in this fork relative to [anomalyco/ope
 Four custom agent configs, intended to be copied to `~/.config/opencode/agent/`:
 
 - **`docs.md`** — technical documentation writer with style constraints (short chunks, imperative headings, relaxed tone, no trailing semicolons in code snippets)
-- **`general.md`** — custom general subagent prompt replacing the upstream behavior of inheriting the parent's system prompt verbatim. Purpose-built for task execution with anti-over-engineering rules and structured reporting format
+- **`general.md`** — custom general subagent prompt replacing the upstream behavior of inheriting the parent's system prompt verbatim. Now shipped natively — see [prompt-parity](2026-02-22-prompt-parity.md). This file remains as a reference.
 - **`plan_structured.md`** — structured 4-phase planning pipeline (survey, organize, write, verify) with locked-down permissions. Read-only except `.opencode/plans/`. Full explore agent bash deny/allow rules
 - **`wave_decompose.md`** — wave decomposition agent that takes a plan and produces the `.wave/` execution system. Read-only except `.wave/`. Produces `AGENT_INSTRUCTIONS.md`, `OVERVIEW.md`, `STATE.md`, and per-wave `WAVE.md` files
 

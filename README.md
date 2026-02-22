@@ -13,24 +13,31 @@ The core value of this fork is iterative prompt tuning. We observe model behavio
 3. **Solution** — exact files changed and why
 4. **Observe** — what to watch for to know if it worked
 
-Iteration logs live in [`PROMPT_ITERATIONS/`](./PROMPT_ITERATIONS/) and corresponding change lists in [`CHANGES/`](./CHANGES/).
+Iteration logs live in [`PROMPT_ITERATIONS/`](./PROMPT_ITERATIONS/) and corresponding change lists in [`CHANGES/`](./CHANGES/). A full index of files differing from upstream is in [`CHANGES/INDEX.md`](./CHANGES/INDEX.md).
 
-| Iteration                                                 | Date       | Focus                                                                                     |
-| --------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------- |
-| [1](./PROMPT_ITERATIONS/2026-02-15-initial-fork.md)       | 2026-02-15 | Initial fork: anti-over-engineering, explore lockdown, context isolation, plan mode       |
-| [2](./PROMPT_ITERATIONS/2026-02-22-explore-delegation.md) | 2026-02-22 | Explore agent delegation: split broad tasks into parallel focused agents, stop code dumps |
+| Iteration                                                      | Date       | Focus                                                                                     |
+| -------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------- |
+| [1](./PROMPT_ITERATIONS/2026-02-15-initial-fork.md)            | 2026-02-15 | Initial fork: anti-over-engineering, explore lockdown, context isolation, plan mode       |
+| [2](./PROMPT_ITERATIONS/2026-02-22-explore-delegation.md)      | 2026-02-22 | Explore agent delegation: split broad tasks into parallel focused agents, stop code dumps |
+| [3](./PROMPT_ITERATIONS/2026-02-22-prompt-parity/ITERATION.md) | 2026-02-22 | Prompt parity: Gemini system prompt rewrite, native general subagent prompts              |
 
 ## What's different
 
 ### System prompts
 
-The core system prompt has been rewritten with stronger opinions:
+The Anthropic and Gemini system prompts have both been rewritten with our flavour:
 
 - **Anti-over-engineering** — don't add features, abstractions, error handling, or comments beyond what was asked
 - **Security awareness** — actively watch for OWASP top 10 vulnerabilities in generated code
 - **No time estimates** — never predict how long tasks will take
 - **Blast radius awareness** — freely take reversible actions, flag destructive ones before proceeding
 - **Parallelism** — the prompts encourage parallel tool calls and parallel subagent launches wherever independent work exists. This keeps sessions shorter, context cleaner, and is what makes patterns like the wave executor practical.
+
+The Gemini prompt is adapted for Gemini's response patterns — prescriptive framing over prohibitions, context efficiency guidance, Directives/Inquiries distinction, Research-Strategy-Execution lifecycle. See [iteration 3](./PROMPT_ITERATIONS/2026-02-22-prompt-parity/ITERATION.md) and the [research learnings](./PROMPT_ITERATIONS/2026-02-22-prompt-parity/LEARNINGS.md) for the rationale.
+
+### General subagent
+
+In upstream OpenCode, the general subagent inherits its system prompt from the parent verbatim. We now ship native general subagent prompts — one for Anthropic models, one for Gemini — purpose-built for task execution with anti-over-engineering rules and structured reporting back to the parent agent. Model selection happens automatically via `Agent.resolvePrompt()` in `agent.ts`. Custom agents defined via `.opencode/agent/` config still take precedence.
 
 ### Explore agent
 
@@ -80,14 +87,14 @@ The explore agent's bash access is locked down with explicit deny rules for dest
 
 ### Custom agents
 
-Four custom agents live in `custom_agents/`. Copy them to your config directory to use them:
+The `general` subagent prompt now ships natively (see [General subagent](#general-subagent) above). The remaining custom agents in `custom_agents/` still need to be copied to your config directory:
 
 ```bash
-cp custom_agents/*.md ~/.config/opencode/agent/
+cp custom_agents/docs.md custom_agents/plan_structured.md custom_agents/wave_decompose.md ~/.config/opencode/agent/
 ```
 
 - **docs** — technical documentation writer with specific style constraints (short chunks, imperative headings, relaxed tone)
-- **general** — custom system prompt for the general subagent. In upstream OpenCode, the general subagent inherits its system prompt from the parent verbatim. This replaces that with a purpose-built prompt focused on task execution, anti-over-engineering, and structured reporting back to the parent agent.
+- **general** — custom system prompt for the general subagent. Now shipped natively (iteration 3) — this file remains as a reference. See [General subagent](#general-subagent) above.
 - **plan_structured** — structured planning with a 4-phase pipeline: survey (parallel explore subagents), organize, write, verify. You provide the task upfront; the agent's value-add is thorough codebase survey and structured documentation. Asks questions on genuine ambiguities. Read-only — never modifies source code.
 - **wave_decompose** — wave decomposition mode. Takes a plan and produces the `.wave/` execution system — a stateless, progressive-disclosure-based wave executor that breaks large tasks into fresh-session-sized chunks. See [Wave executor workflow](#wave-executor-workflow) below.
 
@@ -133,21 +140,19 @@ Read more: [Why waves instead of plan-and-build](./WAVES.md)
 - Collapsible web search and code search result displays in TUI
 - `/execute-wave` (alias `/wave`) slash command — switches to build agent, opens new session with wave prompt and file context pre-filled
 
-### Model support
-
-- Sonnet 4.6 gets adaptive thinking parity with Opus 4.6 on Google Vertex and Amazon Bedrock providers
-
 ### Bug fixes
 
 - Permissions and questions from nested subagent sessions (not just direct children) now surface correctly in the TUI
 
 ## Before you use this
 
-The prompts contain my identity. If you're forking this for yourself, update these files before using:
+The prompts contain our identity. If you're forking this for yourself, update these files:
 
-- `packages/opencode/src/session/prompt/anthropic.txt` — name, org, and identity in the main system prompt
-- `packages/opencode/src/agent/prompt/explore.txt` — agent identity
-- `custom_agents/general.md` — subagent identity
+- `packages/opencode/src/session/prompt/anthropic.txt` — name, org, and identity in the Anthropic system prompt
+- `packages/opencode/src/session/prompt/gemini.txt` — same for the Gemini system prompt
+- `packages/opencode/src/agent/prompt/explore.txt` — explore agent identity
+- `packages/opencode/src/agent/prompt/general/anthropic.txt` — Anthropic general subagent identity
+- `packages/opencode/src/agent/prompt/general/gemini.txt` — Gemini general subagent identity
 
 ## Installation
 
