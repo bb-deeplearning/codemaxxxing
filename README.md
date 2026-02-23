@@ -20,6 +20,7 @@ Iteration logs live in [`PROMPT_ITERATIONS/`](./PROMPT_ITERATIONS/) and correspo
 | [1](./PROMPT_ITERATIONS/2026-02-15-initial-fork.md)            | 2026-02-15 | Initial fork: anti-over-engineering, explore lockdown, context isolation, plan mode       |
 | [2](./PROMPT_ITERATIONS/2026-02-22-explore-delegation.md)      | 2026-02-22 | Explore agent delegation: split broad tasks into parallel focused agents, stop code dumps |
 | [3](./PROMPT_ITERATIONS/2026-02-22-prompt-parity/ITERATION.md) | 2026-02-22 | Prompt parity: Gemini system prompt rewrite, native general subagent prompts              |
+| [4](./PROMPT_ITERATIONS/2026-02-23-anthropic-inquiry-mode.md)  | 2026-02-23 | Anthropic inquiry mode: distinguish questions from directives                             |
 
 ## What's different
 
@@ -28,6 +29,7 @@ Iteration logs live in [`PROMPT_ITERATIONS/`](./PROMPT_ITERATIONS/) and correspo
 The Anthropic and Gemini system prompts have both been rewritten with our flavour:
 
 - **Anti-over-engineering** — don't add features, abstractions, error handling, or comments beyond what was asked
+- **Inquiry vs directive awareness** — distinguish questions and discussions from action requests; don't start implementing when the user is exploring ideas
 - **Security awareness** — actively watch for OWASP top 10 vulnerabilities in generated code
 - **No time estimates** — never predict how long tasks will take
 - **Blast radius awareness** — freely take reversible actions, flag destructive ones before proceeding
