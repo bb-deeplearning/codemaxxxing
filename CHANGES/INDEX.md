@@ -9,6 +9,7 @@ Compare with: `git diff origin/dev --stat`
 | File                                                       | Status   | Changes file                                                                                                                                                       |
 | ---------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `packages/opencode/src/session/prompt/anthropic.txt`       | Modified | [initial-fork](2026-02-15-initial-fork.md), [explore-delegation](2026-02-22-explore-delegation.md), [anthropic-inquiry-mode](2026-02-23-anthropic-inquiry-mode.md) |
+| `packages/opencode/src/session/prompt/qwen.txt`            | Modified | [qwen-prompt-sync](2026-02-24-qwen-prompt-sync.md)                                                                                                                 |
 | `packages/opencode/src/session/prompt/gemini.txt`          | Modified | [prompt-parity](2026-02-22-prompt-parity.md)                                                                                                                       |
 | `packages/opencode/src/session/prompt/plan.txt`            | Modified | [initial-fork](2026-02-15-initial-fork.md)                                                                                                                         |
 | `packages/opencode/src/tool/task.txt`                      | Modified | [initial-fork](2026-02-15-initial-fork.md), [explore-delegation](2026-02-22-explore-delegation.md)                                                                 |
@@ -43,8 +44,8 @@ Compare with: `git diff origin/dev --stat`
 
 ## Fork-only directories
 
-| Directory            | Purpose                                                                                        |
-| -------------------- | ---------------------------------------------------------------------------------------------- |
-| `CHANGES/`           | Per-change documentation linking to iteration logs                                             |
-| `PROMPT_ITERATIONS/` | Research, rationale, and observation logs for prompt changes                                   |
-| `custom_agents/`     | Agent configs for `~/.config/opencode/agent/` (docs, general, plan_structured, wave_decompose) |
+| Directory            | Purpose                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------- |
+| `CHANGES/`           | Per-change documentation linking to iteration logs                                    |
+| `PROMPT_ITERATIONS/` | Research, rationale, and observation logs for prompt changes                          |
+| `custom_agents/`     | Agent configs for `~/.config/opencode/agent/` (docs, plan_structured, wave_decompose) |

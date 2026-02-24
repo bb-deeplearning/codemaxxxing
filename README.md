@@ -21,12 +21,13 @@ Iteration logs live in [`PROMPT_ITERATIONS/`](./PROMPT_ITERATIONS/) and correspo
 | [2](./PROMPT_ITERATIONS/2026-02-22-explore-delegation.md)      | 2026-02-22 | Explore agent delegation: split broad tasks into parallel focused agents, stop code dumps |
 | [3](./PROMPT_ITERATIONS/2026-02-22-prompt-parity/ITERATION.md) | 2026-02-22 | Prompt parity: Gemini system prompt rewrite, native general subagent prompts              |
 | [4](./PROMPT_ITERATIONS/2026-02-23-anthropic-inquiry-mode.md)  | 2026-02-23 | Anthropic inquiry mode: distinguish questions from directives                             |
+| [5](./PROMPT_ITERATIONS/2026-02-24-qwen-prompt-sync.md)        | 2026-02-24 | Default prompt sync: full codemaxxxing prompt for GLM and non-Claude models               |
 
 ## What's different
 
 ### System prompts
 
-The Anthropic and Gemini system prompts have both been rewritten with our flavour:
+The Anthropic, Gemini, and default (GLM/Qwen/other) system prompts have all been rewritten with our flavour:
 
 - **Anti-over-engineering** — don't add features, abstractions, error handling, or comments beyond what was asked
 - **Inquiry vs directive awareness** — distinguish questions and discussions from action requests; don't start implementing when the user is exploring ideas
@@ -151,6 +152,7 @@ Read more: [Why waves instead of plan-and-build](./WAVES.md)
 The prompts contain our identity. If you're forking this for yourself, update these files:
 
 - `packages/opencode/src/session/prompt/anthropic.txt` — name, org, and identity in the Anthropic system prompt
+- `packages/opencode/src/session/prompt/qwen.txt` — same for the default prompt (GLM, Qwen, and other non-specifically-matched models)
 - `packages/opencode/src/session/prompt/gemini.txt` — same for the Gemini system prompt
 - `packages/opencode/src/agent/prompt/explore.txt` — explore agent identity
 - `packages/opencode/src/agent/prompt/general/anthropic.txt` — Anthropic general subagent identity
