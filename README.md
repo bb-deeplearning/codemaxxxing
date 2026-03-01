@@ -175,8 +175,17 @@ bun dev
 # Make executable
 chmod +x ./packages/opencode/dist/opencode-darwin-arm64/bin/opencode
 
+#or
+
+chmod +x ./packages/opencode/dist/opencode-darwin-x64/bin/opencode
+
 # Symlink to PATH
 ln -sf "$(pwd)/packages/opencode/dist/opencode-darwin-arm64/bin/opencode" ~/.local/bin/codemaxxxing
+
+#or
+
+ln -sf "$(pwd)/packages/opencode/dist/opencode-darwin-x64/bin/opencode" ~/.local/bin/codemaxxxing
+
 ```
 
 Make sure `~/.local/bin` is in your `PATH`. If not, add to your `.zshrc`:
