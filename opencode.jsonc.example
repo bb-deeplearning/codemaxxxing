@@ -1,0 +1,245 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "tui": {
+    "scroll_acceleration": {
+      "enabled": true,
+    },
+  },
+  "small_model": "glm-vertex/openai/gpt-oss-20b-maas",
+  "enabled_providers": ["glm-vertex", "anthropic", "google", "opencode"],
+  "agent": {
+    "explore": {
+      "model": "google/gemini-3-flash-preview",
+    },
+  },
+  "permission": {
+    "read": "allow",
+    "edit": "ask",
+    "glob": "allow",
+    "grep": "allow",
+    "list": "allow",
+    "task": "allow",
+    "skill": "ask",
+    "lsp": "allow",
+    "todoread": "allow",
+    "todowrite": "allow",
+    "websearch": "allow",
+    "codesearch": "allow",
+    "external_directory": "ask",
+    "doom_loop": "ask",
+    "bash": "ask",
+  },
+  // when executing waves - this is okay, but be extremely careful - this is pretty much yolo
+  // "permission": {
+  //   "read": "allow",
+  //   "edit": "allow",
+  //   "glob": "allow",
+  //   "grep": "allow",
+  //   "list": "allow",
+  //   "task": "allow",
+  //   "skill": "allow",
+  //   "lsp": "allow",
+  //   "todoread": "allow",
+  //   "todowrite": "allow",
+  //   "websearch": "allow",
+  //   "codesearch": "allow",
+  //   "external_directory": "ask",
+  //   "doom_loop": "ask",
+  //   "bash": "allow",
+  // },
+  "provider": {
+    "google": {
+      "options": {
+        "baseURL": "http://localhost:6969/v1beta",
+        "apiKey": "dummy",
+      },
+    },
+    "anthropic": {
+      "options": {
+        "baseURL": "http://localhost:6969/v1",
+      },
+      "models": {
+        "claude-opus-4-6-1m": {
+          "id": "claude-rohan-opus-4-6-mega-context",
+          "name": "Claude Opus 4.6 (1M)",
+          "family": "claude-opus",
+          "attachment": true,
+          "reasoning": true,
+          "tool_call": true,
+          "temperature": true,
+          "release_date": "2026-02-05",
+          "modalities": {
+            "input": ["text", "image", "pdf"],
+            "output": ["text"],
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000,
+          },
+          "cost": {
+            "input": 0.00001,
+            "output": 0.0000375,
+            "cache_read": 0.000001,
+            "cache_write": 0.0000125,
+          },
+        },
+        "claude-sonnet-4-5-1m": {
+          "id": "claude-rohan-sonnet-4-5-mega-context",
+          "name": "Claude Sonnet 4.5 (1M)",
+          "family": "claude-sonnet",
+          "attachment": true,
+          "reasoning": true,
+          "tool_call": true,
+          "temperature": true,
+          "release_date": "2025-09-29",
+          "modalities": {
+            "input": ["text", "image", "pdf"],
+            "output": ["text"],
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 64000,
+          },
+          "cost": {
+            "input": 0.000003,
+            "output": 0.000015,
+            "cache_read": 0.0000003,
+            "cache_write": 0.00000375,
+          },
+        },
+        "claude-sonnet-4-6-1m": {
+          "id": "claude-rohan-sonnet-4-6-mega-context",
+          "name": "Claude Sonnet 4.6 (1M)",
+          "family": "claude-sonnet",
+          "attachment": true,
+          "reasoning": true,
+          "tool_call": true,
+          "temperature": true,
+          "release_date": "2026-02-17",
+          "modalities": {
+            "input": ["text", "image", "pdf"],
+            "output": ["text"],
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 64000,
+          },
+          "cost": {
+            "input": 0.000006,
+            "output": 0.0000225,
+            "cache_read": 0.0000006,
+            "cache_write": 0.0000075,
+          },
+        },
+      },
+    },
+    "glm-vertex": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "GLM (Vertex AI)",
+      "options": {
+        "baseURL": "http://localhost:6969/glm/v1",
+      },
+      "models": {
+        // "zai-org/glm-4.7-maas": {
+        //   "name": "GLM-4.7",
+        //   "reasoning": true,
+        //   "tool_call": true,
+        //   "temperature": true,
+        //   "interleaved": {
+        //     "field": "reasoning_content",
+        //   },
+        //   "limit": {
+        //     "context": 200000,
+        //     "output": 128000,
+        //   },
+        //   "variants": {
+        //     "thinking": {},
+        //   },
+        // },
+        "zai-org/glm-5-maas": {
+          "name": "GLM 5",
+          "reasoning": true,
+          "tool_call": true,
+          "temperature": true,
+          "interleaved": {
+            "field": "reasoning_content",
+          },
+          "limit": {
+            "context": 202752,
+            "output": 131072,
+          },
+          "cost": {
+            "input": 0.000001,
+            "output": 0.0000032,
+            "cache_read": 0.0000001,
+          },
+          "variants": {
+            "thinking": {},
+            "none": {
+              "chat_template_kwargs": {
+                "enable_thinking": false,
+              },
+            },
+          },
+        },
+        "openai/gpt-oss-120b-maas": {
+          "name": "GPT-OSS 120B",
+          "reasoning": true,
+          "tool_call": true,
+          "temperature": true,
+          "interleaved": {
+            "field": "reasoning_content",
+          },
+          "limit": {
+            "context": 131072,
+            "output": 131072,
+          },
+          "cost": {
+            "input": 0.00000009,
+            "output": 0.00000036,
+          },
+          "variants": {
+            "high": {
+              "reasoning_effort": "high",
+            },
+            "medium": {
+              "reasoning_effort": "medium",
+            },
+            "low": {
+              "reasoning_effort": "low",
+            },
+          },
+        },
+        "openai/gpt-oss-20b-maas": {
+          "name": "GPT-OSS 20B",
+          "reasoning": true,
+          "tool_call": true,
+          "temperature": true,
+          "interleaved": {
+            "field": "reasoning_content",
+          },
+          "limit": {
+            "context": 131072,
+            "output": 131072,
+          },
+          "cost": {
+            "input": 0.00000007,
+            "output": 0.00000025,
+            "cache_read": 0.000000007,
+          },
+          "variants": {
+            "high": {
+              "reasoning_effort": "high",
+            },
+            "medium": {
+              "reasoning_effort": "medium",
+            },
+            "low": {
+              "reasoning_effort": "low",
+            },
+          },
+        },
+      },
+    },
+  },
+}
