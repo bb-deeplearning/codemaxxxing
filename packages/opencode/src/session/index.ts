@@ -557,7 +557,7 @@ export namespace Session {
       conditions.push(like(SessionTable.title, `%${input.search}%`))
     }
 
-    const limit = input?.limit ?? 100
+    const limit = input?.limit ?? 500
 
     const rows = Database.use((db) =>
       db
@@ -603,7 +603,7 @@ export namespace Session {
       conditions.push(isNull(SessionTable.time_archived))
     }
 
-    const limit = input?.limit ?? 100
+    const limit = input?.limit ?? 500
 
     const rows = Database.use((db) => {
       const query =
