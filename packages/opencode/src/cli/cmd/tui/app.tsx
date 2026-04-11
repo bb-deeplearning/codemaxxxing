@@ -502,8 +502,8 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
         const text = "Execute the next wave per "
         const mention = "@" + file
         const input = text + mention + " "
-        const baseDir = (sync.data.path.directory || process.cwd()).replace(/\/+$/, "")
-        const url = pathToFileURL(`${baseDir}/${file}`).href
+        const baseDir = (sync.path.directory || process.cwd()).replace(/\/+$/, "")
+        const url = Bun.pathToFileURL(`${baseDir}/${file}`).href
         // setTimeout(0) so Home component mounts and registers its prompt ref first
         setTimeout(() => {
           promptRef.current?.set({
