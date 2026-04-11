@@ -221,6 +221,13 @@ for (const item of targets) {
     },
   })
 
+  // Fix truncated codesign on macOS arm64 (oven-sh/bun#29120)
+  if (item.os === "darwin") {
+    const binary = `dist/${name}/bin/opencode`
+    await $`codesign --remove-signature ${binary}`
+    await $`codesign --sign - ${binary}`
+  }
+
   // Smoke test: only run if binary is for current platform
   if (item.os === process.platform && item.arch === process.arch && !item.abi) {
     const binaryPath = `dist/${name}/bin/opencode`
