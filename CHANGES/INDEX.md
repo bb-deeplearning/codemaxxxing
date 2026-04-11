@@ -13,8 +13,8 @@ Compare with: `git diff origin/dev --stat`
 | `packages/opencode/src/session/prompt/gemini.txt`          | Modified | [prompt-parity](2026-02-22-prompt-parity.md)                                                                                                                       |
 | `packages/opencode/src/session/prompt/plan.txt`            | Modified | [initial-fork](2026-02-15-initial-fork.md)                                                                                                                         |
 | `packages/opencode/src/tool/task.txt`                      | Modified | [initial-fork](2026-02-15-initial-fork.md), [explore-delegation](2026-02-22-explore-delegation.md)                                                                 |
-| `packages/opencode/src/agent/prompt/explore.txt`           | Modified | [initial-fork](2026-02-15-initial-fork.md), [explore-delegation](2026-02-22-explore-delegation.md)                                                                 |
-| `packages/opencode/src/agent/prompt/general/anthropic.txt` | New      | [prompt-parity](2026-02-22-prompt-parity.md)                                                                                                                       |
+| `packages/opencode/src/agent/prompt/explore.txt`           | Modified | [initial-fork](2026-02-15-initial-fork.md), [explore-delegation](2026-02-22-explore-delegation.md), [caveman-agent](2026-04-11-caveman-agent.md)                   |
+| `packages/opencode/src/agent/prompt/general/anthropic.txt` | New      | [prompt-parity](2026-02-22-prompt-parity.md), [caveman-agent](2026-04-11-caveman-agent.md)                                                                         |
 | `packages/opencode/src/agent/prompt/general/gemini.txt`    | New      | [prompt-parity](2026-02-22-prompt-parity.md)                                                                                                                       |
 
 ## Source code — agent infrastructure
@@ -33,6 +33,12 @@ Compare with: `git diff origin/dev --stat`
 | `packages/opencode/src/cli/cmd/tui/routes/session/sidebar.tsx` | Modified | [initial-fork](2026-02-15-initial-fork.md) |
 | `packages/opencode/src/cli/cmd/tui/routes/session/index.tsx`   | Modified | [initial-fork](2026-02-15-initial-fork.md) |
 | `packages/opencode/src/cli/cmd/tui/app.tsx`                    | Modified | [initial-fork](2026-02-15-initial-fork.md) |
+
+## Project-local config
+
+| File                         | Status | Changes file                                 |
+| ---------------------------- | ------ | -------------------------------------------- |
+| `.opencode/agent/caveman.md` | New    | [caveman-agent](2026-04-11-caveman-agent.md) |
 
 ## Root files
 

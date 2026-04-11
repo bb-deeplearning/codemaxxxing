@@ -22,6 +22,7 @@ Iteration logs live in [`PROMPT_ITERATIONS/`](./PROMPT_ITERATIONS/) and correspo
 | [3](./PROMPT_ITERATIONS/2026-02-22-prompt-parity/ITERATION.md) | 2026-02-22 | Prompt parity: Gemini system prompt rewrite, native general subagent prompts              |
 | [4](./PROMPT_ITERATIONS/2026-02-23-anthropic-inquiry-mode.md)  | 2026-02-23 | Anthropic inquiry mode: distinguish questions from directives                             |
 | [5](./PROMPT_ITERATIONS/2026-02-24-qwen-prompt-sync.md)        | 2026-02-24 | Default prompt sync: full codemaxxxing prompt for GLM and non-Claude models               |
+| [6](./PROMPT_ITERATIONS/2026-04-11-caveman-agent.md)           | 2026-04-11 | Caveman agent: ultra-terse primary agent, terse subagent output rules                     |
 
 ## What's different
 
@@ -87,6 +88,21 @@ Use `/mode plan` when you're still figuring out what you want — you have a rou
 ### Subagent permissions
 
 The explore agent's bash access is locked down with explicit deny rules for destructive commands (`rm`, `git push`, `npm install`, etc.) while allowing read-only commands (`ls`, `find`, `git log`, etc.).
+
+### Caveman agent
+
+A custom primary agent that produces ultra-terse output — ~75% fewer output tokens while keeping full technical accuracy. Based on [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman). Switch to it via the agent selector.
+
+The system prompt is a 1:1 copy of `anthropic.txt` with caveman communication rules prepended. Rules are sourced from the caveman skill's core SKILL.md (ultra mode: abbreviations, arrows, fragments) and the compress skill's SKILL.md (granular remove/preserve/structure spec). The TodoWrite examples are rewritten in caveman style for consistency.
+
+The `build` agent remains the default for normal conversational use. Use `caveman` when you want maximum speed and token efficiency and don't need verbose explanations.
+
+Both the general and explore subagent prompts also have caveman output rules — tailored to each agent's role:
+
+- **General subagent**: terse implementation reporting. No progress narration. State file changed, what changed, why. Failure reports state what was tried and where blocked.
+- **Explore subagent**: terse search findings. No search narration. Lead with file path + line number. Group by area, not search order.
+
+Subagent caveman rules are always active regardless of which primary agent is selected — they reduce token usage in agent-to-agent communication where no human reads the output.
 
 ### Custom agents
 
