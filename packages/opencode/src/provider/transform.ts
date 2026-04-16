@@ -368,6 +368,7 @@ export namespace ProviderTransform {
     const isAnthropicAdaptive = ["opus-4-6", "opus-4.6", "opus-4-7", "opus-4.7", "sonnet-4-6", "sonnet-4.6"].some((v) =>
       model.api.id.includes(v),
     )
+    const isOpus47 = ["opus-4-7", "opus-4.7"].some((v) => model.api.id.includes(v))
     const adaptiveEfforts = ["low", "medium", "high", "max"]
     if (
       id.includes("deepseek") ||
@@ -410,6 +411,7 @@ export namespace ProviderTransform {
                 {
                   thinking: {
                     type: "adaptive",
+                    ...(isOpus47 && { display: "summarized" }),
                   },
                   effort,
                 },
@@ -559,6 +561,7 @@ export namespace ProviderTransform {
               {
                 thinking: {
                   type: "adaptive",
+                  ...(isOpus47 && { display: "summarized" }),
                 },
                 effort,
               },
@@ -697,6 +700,7 @@ export namespace ProviderTransform {
                 {
                   thinking: {
                     type: "adaptive",
+                    ...(isOpus47 && { display: "summarized" }),
                   },
                   effort,
                 },
