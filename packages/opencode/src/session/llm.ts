@@ -8,7 +8,7 @@ import { GitLabWorkflowLanguageModel } from "gitlab-ai-provider"
 import { ProviderTransform } from "@/provider/transform"
 import { Config } from "@/config/config"
 import { InstanceState } from "@/effect/instance-state"
-import type { Agent } from "@/agent/agent"
+import { Agent } from "@/agent/agent"
 import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
@@ -101,10 +101,11 @@ const live: Layer.Layer<
       const isOpenaiOauth = item.id === "openai" && info?.type === "oauth"
 
       const system: string[] = []
+      const agentPrompt = Agent.resolvePrompt(input.agent, input.model)
       system.push(
         [
-          // use agent prompt otherwise provider prompt
-          ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model)),
+          // use agent prompt (codemaxxxing: model-specific for native general subagent) otherwise provider prompt
+          ...(agentPrompt ? [agentPrompt] : SystemPrompt.provider(input.model)),
           // any custom prompt passed into this call
           ...input.system,
           // any custom prompt from last user message

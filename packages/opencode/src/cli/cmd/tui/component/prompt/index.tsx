@@ -27,6 +27,7 @@ import { useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import * as Editor from "@tui/util/editor"
 import { useExit } from "../../context/exit"
 import * as Clipboard from "../../util/clipboard"
+import { needsConvert, toJpeg, ConvertError } from "../../util/image-convert"
 import type { AssistantMessage, FilePart, UserMessage } from "@opencode-ai/sdk/v2"
 import { TuiEvent } from "../../event"
 import { iife } from "@/util/iife"
@@ -944,6 +945,16 @@ export function Prompt(props: PromptProps) {
   }
 
   async function pasteAttachment(file: { filename?: string; filepath?: string; content: string; mime: string }) {
+    if (needsConvert(file.mime)) {
+      try {
+        const out = await toJpeg({ mime: file.mime, content: file.content, filename: file.filename })
+        file = { ...file, mime: out.mime, content: out.content, filename: out.filename ?? file.filename }
+      } catch (err) {
+        const msg = err instanceof ConvertError ? err.message : `Failed to convert ${file.mime}`
+        toast.show({ message: msg, variant: "error", duration: 5000 })
+        return
+      }
+    }
     const currentOffset = input.visualCursor.offset
     const extmarkStart = currentOffset
     const pdf = file.mime === "application/pdf"

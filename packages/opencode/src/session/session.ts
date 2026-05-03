@@ -847,7 +847,7 @@ function* listByProject(
     conditions.push(like(SessionTable.title, `%${input.search}%`))
   }
 
-  const limit = input.limit ?? 100
+  const limit = input.limit ?? 500
 
   const rows = Database.use((db) =>
     db
@@ -893,7 +893,7 @@ export function* listGlobal(input?: {
     conditions.push(isNull(SessionTable.time_archived))
   }
 
-  const limit = input?.limit ?? 100
+  const limit = input?.limit ?? 500
 
   const rows = Database.use((db) => {
     const query =

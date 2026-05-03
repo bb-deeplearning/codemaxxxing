@@ -10,6 +10,8 @@ import { ProviderTransform } from "@/provider/transform"
 import PROMPT_GENERATE from "./generate.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
+import PROMPT_GENERAL_ANTHROPIC from "./prompt/general/anthropic.txt"
+import PROMPT_GENERAL_GEMINI from "./prompt/general/gemini.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
 import { Permission } from "@/permission"
@@ -409,5 +411,18 @@ export const defaultLayer = layer.pipe(
   Layer.provide(Config.defaultLayer),
   Layer.provide(Skill.defaultLayer),
 )
+
+// codemaxxxing addition — picks model-specific general subagent prompt.
+// Returns the agent's user-defined prompt if set, otherwise the codemaxxxing
+// general subagent voice for the native general agent (claude vs gemini-style).
+// Returns undefined to fall through to SystemPrompt.provider().
+export function resolvePrompt(agent: Info, model: { api: { id: string } }) {
+  if (agent.prompt) return agent.prompt
+  if (agent.name === "general" && agent.native) {
+    if (model.api.id.includes("claude")) return PROMPT_GENERAL_ANTHROPIC
+    return PROMPT_GENERAL_GEMINI
+  }
+  return undefined
+}
 
 export * as Agent from "./agent"

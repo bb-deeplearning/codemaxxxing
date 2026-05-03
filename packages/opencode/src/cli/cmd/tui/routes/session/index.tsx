@@ -134,14 +134,26 @@ export function Session() {
       .filter((x) => x.parentID === parentID || x.id === parentID)
       .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   })
+  // codemaxxxing addition: recursive descendants for nested-subagent permission/question rollup
+  const descendants = createMemo(() => {
+    const rootID = session()?.parentID ?? session()?.id
+    if (!rootID) return []
+    const ids = new Set([rootID])
+    for (const id of ids) {
+      for (const s of sync.data.session) {
+        if (s.parentID === id) ids.add(s.id)
+      }
+    }
+    return sync.data.session.filter((x) => ids.has(x.id))
+  })
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
   const permissions = createMemo(() => {
     if (session()?.parentID) return []
-    return children().flatMap((x) => sync.data.permission[x.id] ?? [])
+    return descendants().flatMap((x) => sync.data.permission[x.id] ?? [])
   })
   const questions = createMemo(() => {
     if (session()?.parentID) return []
-    return children().flatMap((x) => sync.data.question[x.id] ?? [])
+    return descendants().flatMap((x) => sync.data.question[x.id] ?? [])
   })
   const visible = createMemo(() => !session()?.parentID && permissions().length === 0 && questions().length === 0)
   const disabled = createMemo(() => permissions().length > 0 || questions().length > 0)
@@ -276,19 +288,12 @@ export function Session() {
 
   createEffect(() => {
     const title = Locale.truncate(session()?.title ?? "", 50)
-    const pad = (text: string) => text.padEnd(10, " ")
-    const weak = (text: string) => UI.Style.TEXT_DIM + pad(text) + UI.Style.TEXT_NORMAL
-    const logo = UI.logo("  ").split(/\r?\n/)
     return exit.message.set(
       [
-        `${logo[0] ?? ""}`,
-        `${logo[1] ?? ""}`,
-        `${logo[2] ?? ""}`,
-        `${logo[3] ?? ""}`,
         ``,
-        `  ${weak("Session")}${UI.Style.TEXT_NORMAL_BOLD}${title}${UI.Style.TEXT_NORMAL}`,
-        `  ${weak("Continue")}${UI.Style.TEXT_NORMAL_BOLD}opencode -s ${session()?.id}${UI.Style.TEXT_NORMAL}`,
-        ``,
+        `  █▄▄█ █▄▄█ █▄▄█  ${UI.Style.TEXT_DIM}${title}${UI.Style.TEXT_NORMAL}`,
+        `   ██   ██   ██   ${UI.Style.TEXT_DIM}codemaxxxing -s ${session()?.id}${UI.Style.TEXT_NORMAL}`,
+        `  █▀▀█ █▀▀█ █▀▀█  `,
       ].join("\n"),
     )
   })
@@ -1949,11 +1954,81 @@ function WebFetch(props: ToolProps<typeof WebFetchTool>) {
 }
 
 function WebSearch(props: ToolProps<typeof WebSearchTool>) {
-  const metadata = props.metadata as { numResults?: number }
+  const { theme } = useTheme()
+  const input = props.input as any
+  const output = createMemo(() => (props.output ?? "").trim())
+  const results = createMemo(() =>
+    output()
+      .split(/(?=^Title: )/m)
+      .flatMap((chunk) => {
+        const title = chunk.match(/^Title: (.+)/m)?.[1]?.trim()
+        const url = chunk.match(/^URL: (.+)/m)?.[1]?.trim()
+        if (!title || !url) return []
+        const domain = url.match(/^https?:\/\/(?:www\.)?([^/]+)/)?.[1] ?? url
+        return [
+          {
+            title,
+            url,
+            domain,
+            author: chunk.match(/^Author: (.+)/m)?.[1]?.trim() || undefined,
+            date: chunk
+              .match(/^Published Date: (.+)/m)?.[1]
+              ?.trim()
+              ?.split("T")[0],
+          },
+        ]
+      }),
+  )
+  const [expanded, setExpanded] = createSignal(false)
+
   return (
-    <InlineTool icon="◈" pending="Searching web..." complete={props.input.query} part={props.part}>
-      Exa Web Search "{props.input.query}" <Show when={metadata.numResults}>({metadata.numResults} results)</Show>
-    </InlineTool>
+    <Switch>
+      <Match when={results().length && expanded()}>
+        <BlockTool
+          title={`◈ Web search: "${input.query}" — ${results().length} results`}
+          part={props.part}
+          onClick={() => setExpanded(false)}
+        >
+          <box gap={1} paddingLeft={1}>
+            <For each={results()}>
+              {(r, i) => (
+                <box>
+                  <text>
+                    <span style={{ fg: theme.textMuted }}>{String(i() + 1).padStart(2, " ")}. </span>
+                    <span style={{ fg: theme.text }}>{r.title}</span>
+                  </text>
+                  <text fg={theme.textMuted}>
+                    {"    "}
+                    {r.domain}
+                    {r.date ? ` · ${r.date}` : ""}
+                    {r.author ? ` · ${r.author}` : ""}
+                  </text>
+                </box>
+              )}
+            </For>
+          </box>
+          <text paddingLeft={1} fg={theme.textMuted}>
+            Click to collapse
+          </text>
+        </BlockTool>
+      </Match>
+      <Match when={results().length}>
+        <BlockTool
+          title={`◈ Web search: "${input.query}" — ${results().length} results`}
+          part={props.part}
+          onClick={() => setExpanded(true)}
+        >
+          <text paddingLeft={1} fg={theme.textMuted}>
+            Click to view results
+          </text>
+        </BlockTool>
+      </Match>
+      <Match when={true}>
+        <InlineTool icon="◈" pending="Searching web..." complete={input.query} part={props.part}>
+          Web search "{input.query}"
+        </InlineTool>
+      </Match>
+    </Switch>
   )
 }
 

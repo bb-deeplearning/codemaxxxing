@@ -1,8 +1,14 @@
+// codemaxxxing logo, left/right shape for upstream's animated Logo component.
+// left renders "CODE" (4 letters, 19 cells wide — same font as upstream's "CODE").
+// right renders "MAXXXING" (8 letters, 39 cells wide — using existing M/A/X/I/N/G shapes).
 export const logo = {
-  top: ["             ▄     ", "█▀▀▀ █▀▀█ █▀▀█ █▀▀█", "█___ █__█ █__█ █^^^", "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀"],
-  left: ["          ", "█▀▄▀█ █▀▀█", "█_▀_█ █^^█", "▀   ▀ ▀  ▀"],
-  mid: ["              ", "█▄▄█ █▄▄█ █▄▄█", "_██_ _██_ _██_", "█▀▀█ █▀▀█ █▀▀█"],
-  right: ["              ", "▀██▀ █▀▀▄ █▀▀▀", "_██_ █__█ █_▀█", "▄██▄ ▀~~▀ ▀▀▀▀"],
+  left: ["             ▄     ", "█▀▀▀ █▀▀█ █▀▀█ █▀▀█", "█___ █__█ █__█ █^^^", "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀"],
+  right: [
+    "                                       ",
+    "█▀▄▀█ █▀▀█ █▄▄█ █▄▄█ █▄▄█ ▀██▀ █▀▀▄ █▀▀▀",
+    "█_▀_█ █^^█ _██_ _██_ _██_ _██_ █__█ █_▀█",
+    "▀   ▀ ▀  ▀ █▀▀█ █▀▀█ █▀▀█ ▄██▄ ▀~~▀ ▀▀▀▀",
+  ],
 }
 
 export const go = {
