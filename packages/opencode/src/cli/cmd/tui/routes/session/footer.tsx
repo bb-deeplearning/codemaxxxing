@@ -1,10 +1,11 @@
-import { createMemo, Match, onCleanup, onMount, Show, Switch } from "solid-js"
+import { createMemo, For, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import { useTheme } from "../../context/theme"
 import { useSync } from "../../context/sync"
 import { useDirectory } from "../../context/directory"
 import { useConnected } from "../../component/use-connected"
 import { createStore } from "solid-js/store"
 import { useRoute } from "../../context/route"
+import type { RGBA } from "@opentui/core"
 
 export function Footer() {
   const { theme } = useTheme()
@@ -25,7 +26,6 @@ export function Footer() {
   })
 
   onMount(() => {
-    // Track all timeouts to ensure proper cleanup
     const timeouts: ReturnType<typeof setTimeout>[] = []
 
     function tick() {
@@ -49,39 +49,59 @@ export function Footer() {
     })
   })
 
+  // Each segment is a labeled field in the status strip. Visible only when
+  // its data is meaningful (e.g. mcp segment hides when mcp count is 0).
+  const segments = createMemo(() => {
+    const out: { label: string; value: string; valueFg?: RGBA }[] = []
+    if (permissions().length > 0) {
+      out.push({
+        label: "warn",
+        value: String(permissions().length),
+        valueFg: theme.warning,
+      })
+    }
+    out.push({
+      label: "lsp",
+      value: String(lsp().length),
+      valueFg: lsp().length > 0 ? theme.success : theme.textMuted,
+    })
+    if (mcp() > 0) {
+      out.push({
+        label: "mcp",
+        value: String(mcp()),
+        valueFg: mcpError() ? theme.error : theme.success,
+      })
+    }
+    return out
+  })
+
   return (
-    <box flexDirection="row" justifyContent="space-between" gap={1} flexShrink={0}>
-      <text fg={theme.textMuted}>{directory()}</text>
-      <box gap={2} flexDirection="row" flexShrink={0}>
+    <box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1} flexShrink={0}>
+      <text fg={theme.textMuted}>
+        <span style={{ fg: theme.textMuted }}>cwd</span> <span style={{ fg: theme.text }}>{directory()}</span>
+      </text>
+      <box gap={1} flexDirection="row" alignItems="center" flexShrink={0}>
         <Switch>
           <Match when={store.welcome}>
             <text fg={theme.text}>
-              Get started <span style={{ fg: theme.textMuted }}>/connect</span>
+              <span style={{ fg: theme.textMuted }}>get started</span> /connect
             </text>
           </Match>
           <Match when={connected()}>
-            <Show when={permissions().length > 0}>
-              <text fg={theme.warning}>
-                <span style={{ fg: theme.warning }}>△</span> {permissions().length} Permission
-                {permissions().length > 1 ? "s" : ""}
-              </text>
-            </Show>
-            <text fg={theme.text}>
-              <span style={{ fg: lsp().length > 0 ? theme.success : theme.textMuted }}>•</span> {lsp().length} LSP
-            </text>
-            <Show when={mcp()}>
-              <text fg={theme.text}>
-                <Switch>
-                  <Match when={mcpError()}>
-                    <span style={{ fg: theme.error }}>⊙ </span>
-                  </Match>
-                  <Match when={true}>
-                    <span style={{ fg: theme.success }}>⊙ </span>
-                  </Match>
-                </Switch>
-                {mcp()} MCP
-              </text>
-            </Show>
+            <For each={segments()}>
+              {(seg, i) => (
+                <>
+                  <Show when={i() > 0}>
+                    <text fg={theme.border}>│</text>
+                  </Show>
+                  <text>
+                    <span style={{ fg: theme.textMuted }}>{seg.label}</span>{" "}
+                    <span style={{ fg: seg.valueFg ?? theme.text }}>{seg.value}</span>
+                  </text>
+                </>
+              )}
+            </For>
+            <text fg={theme.border}>│</text>
             <text fg={theme.textMuted}>/status</text>
           </Match>
         </Switch>

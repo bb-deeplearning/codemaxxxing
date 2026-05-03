@@ -4,6 +4,7 @@ import { createStore } from "solid-js/store"
 import { For } from "solid-js"
 import { useTheme } from "../context/theme"
 import { useDialog } from "../ui/dialog"
+import { Rule } from "./border"
 
 export function DialogWorkspaceUnavailable(props: { onRestore?: () => boolean | void | Promise<boolean | void> }) {
   const dialog = useDialog()
@@ -44,36 +45,59 @@ export function DialogWorkspaceUnavailable(props: { onRestore?: () => boolean | 
   })
 
   return (
-    <box paddingLeft={2} paddingRight={2} gap={1}>
-      <box flexDirection="row" justifyContent="space-between">
+    <box>
+      <box flexDirection="row" justifyContent="space-between" paddingLeft={3} paddingRight={3} paddingTop={1}>
         <text attributes={TextAttributes.BOLD} fg={theme.text}>
-          Workspace Unavailable
+          workspace unavailable
         </text>
         <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
           esc
         </text>
       </box>
-      <text fg={theme.textMuted} wrapMode="word">
-        This session is attached to a workspace that is no longer available.
-      </text>
-      <text fg={theme.textMuted} wrapMode="word">
-        Would you like to restore this session into a new workspace?
-      </text>
-      <box flexDirection="row" justifyContent="flex-end" paddingBottom={1} gap={1}>
+      <box paddingTop={1}>
+        <Rule color={theme.warning} />
+      </box>
+      <box paddingLeft={3} paddingRight={3} paddingTop={1} paddingBottom={1} gap={1}>
+        <text fg={theme.textMuted} wrapMode="word">
+          this session is attached to a workspace that is no longer available.
+        </text>
+        <text fg={theme.textMuted} wrapMode="word">
+          would you like to restore this session into a new workspace?
+        </text>
+      </box>
+      <Rule color={theme.warning} />
+      <box
+        flexDirection="row"
+        justifyContent="flex-end"
+        paddingLeft={3}
+        paddingRight={3}
+        paddingTop={1}
+        paddingBottom={1}
+        gap={3}
+      >
         <For each={options}>
-          {(item) => (
-            <box
-              paddingLeft={2}
-              paddingRight={2}
-              backgroundColor={item === store.active ? theme.primary : undefined}
-              onMouseUp={() => {
-                setStore("active", item)
-                void confirm()
-              }}
-            >
-              <text fg={item === store.active ? theme.selectedListItemText : theme.textMuted}>{item}</text>
-            </box>
-          )}
+          {(item) => {
+            const active = () => item === store.active
+            return (
+              <box
+                flexDirection="row"
+                gap={1}
+                onMouseOver={() => setStore("active", item)}
+                onMouseUp={() => {
+                  setStore("active", item)
+                  void confirm()
+                }}
+              >
+                <text fg={active() ? theme.borderActive : theme.borderSubtle}>{active() ? "▸" : " "}</text>
+                <text
+                  fg={active() ? theme.text : theme.textMuted}
+                  attributes={active() ? TextAttributes.BOLD : undefined}
+                >
+                  {item}
+                </text>
+              </box>
+            )
+          }}
         </For>
       </box>
     </box>

@@ -1,12 +1,13 @@
-import { BoxRenderable, RGBA, TextAttributes } from "@opentui/core"
+import { BoxRenderable, TextAttributes } from "@opentui/core"
 import { useKeyboard } from "@opentui/solid"
 import open from "open"
 import { createSignal, onCleanup, onMount } from "solid-js"
-import { selectedForeground, useTheme } from "@tui/context/theme"
+import { useTheme } from "@tui/context/theme"
 import { useDialog, type DialogContext } from "@tui/ui/dialog"
 import { Link } from "@tui/ui/link"
 import { GoLogo } from "./logo"
 import { BgPulse, type BgPulseMask } from "./bg-pulse"
+import { Rule } from "./border"
 
 const GO_URL = "https://opencode.ai/go"
 const PAD_X = 3
@@ -30,7 +31,6 @@ function dismiss(props: DialogGoUpsellProps, dialog: ReturnType<typeof useDialog
 export function DialogGoUpsell(props: DialogGoUpsellProps) {
   const dialog = useDialog()
   const { theme } = useTheme()
-  const fg = selectedForeground(theme)
   const [selected, setSelected] = createSignal<"dismiss" | "subscribe">("subscribe")
   const [center, setCenter] = createSignal<{ x: number; y: number } | undefined>()
   const [masks, setMasks] = createSignal<BgPulseMask[]>([])
@@ -89,19 +89,28 @@ export function DialogGoUpsell(props: DialogGoUpsellProps) {
       <box position="absolute" top={-PAD_TOP_OUTER} left={0} right={0} bottom={0} zIndex={0}>
         <BgPulse centerX={center()?.x} centerY={center()?.y} masks={masks()} />
       </box>
-      <box paddingLeft={PAD_X} paddingRight={PAD_X} paddingBottom={1} gap={1}>
-        <box ref={(item: BoxRenderable) => (headingBox = item)} flexDirection="row" justifyContent="space-between">
-          <text attributes={TextAttributes.BOLD} fg={theme.text}>
-            Free limit reached
-          </text>
-          <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
-            esc
-          </text>
-        </box>
+      <box
+        ref={(item: BoxRenderable) => (headingBox = item)}
+        flexDirection="row"
+        justifyContent="space-between"
+        paddingLeft={PAD_X}
+        paddingRight={PAD_X}
+      >
+        <text attributes={TextAttributes.BOLD} fg={theme.text}>
+          free limit reached
+        </text>
+        <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
+          esc
+        </text>
+      </box>
+      <box paddingTop={1}>
+        <Rule color={theme.borderActive} />
+      </box>
+      <box paddingLeft={PAD_X} paddingRight={PAD_X} paddingTop={1} gap={1}>
         <box ref={(item: BoxRenderable) => (descBox = item)} gap={0}>
           <box flexDirection="row">
-            <text fg={theme.textMuted}>Subscribe to </text>
-            <text attributes={TextAttributes.BOLD} fg={theme.textMuted}>
+            <text fg={theme.textMuted}>subscribe to </text>
+            <text attributes={TextAttributes.BOLD} fg={theme.text}>
               OpenCode Go
             </text>
             <text fg={theme.textMuted}> for reliable access to the</text>
@@ -114,35 +123,48 @@ export function DialogGoUpsell(props: DialogGoUpsellProps) {
           </box>
           <Link href={GO_URL} fg={theme.primary} />
         </box>
-        <box ref={(item: BoxRenderable) => (buttonsBox = item)} flexDirection="row" justifyContent="space-between">
-          <box
-            paddingLeft={2}
-            paddingRight={2}
-            backgroundColor={selected() === "dismiss" ? theme.primary : RGBA.fromInts(0, 0, 0, 0)}
-            onMouseOver={() => setSelected("dismiss")}
-            onMouseUp={() => dismiss(props, dialog)}
+      </box>
+      <Rule color={theme.borderActive} />
+      <box
+        ref={(item: BoxRenderable) => (buttonsBox = item)}
+        flexDirection="row"
+        justifyContent="space-between"
+        paddingLeft={PAD_X}
+        paddingRight={PAD_X}
+        paddingTop={1}
+        paddingBottom={1}
+      >
+        <box
+          flexDirection="row"
+          gap={1}
+          onMouseOver={() => setSelected("dismiss")}
+          onMouseUp={() => dismiss(props, dialog)}
+        >
+          <text fg={selected() === "dismiss" ? theme.text : theme.textMuted}>
+            {selected() === "dismiss" ? "▸" : " "}
+          </text>
+          <text
+            fg={selected() === "dismiss" ? theme.text : theme.textMuted}
+            attributes={selected() === "dismiss" ? TextAttributes.BOLD : undefined}
           >
-            <text
-              fg={selected() === "dismiss" ? fg : theme.textMuted}
-              attributes={selected() === "dismiss" ? TextAttributes.BOLD : undefined}
-            >
-              don't show again
-            </text>
-          </box>
-          <box
-            paddingLeft={2}
-            paddingRight={2}
-            backgroundColor={selected() === "subscribe" ? theme.primary : RGBA.fromInts(0, 0, 0, 0)}
-            onMouseOver={() => setSelected("subscribe")}
-            onMouseUp={() => subscribe(props, dialog)}
+            don't show again
+          </text>
+        </box>
+        <box
+          flexDirection="row"
+          gap={1}
+          onMouseOver={() => setSelected("subscribe")}
+          onMouseUp={() => subscribe(props, dialog)}
+        >
+          <text fg={selected() === "subscribe" ? theme.text : theme.textMuted}>
+            {selected() === "subscribe" ? "▸" : " "}
+          </text>
+          <text
+            fg={selected() === "subscribe" ? theme.text : theme.textMuted}
+            attributes={selected() === "subscribe" ? TextAttributes.BOLD : undefined}
           >
-            <text
-              fg={selected() === "subscribe" ? fg : theme.text}
-              attributes={selected() === "subscribe" ? TextAttributes.BOLD : undefined}
-            >
-              subscribe
-            </text>
-          </box>
+            subscribe
+          </text>
         </box>
       </box>
     </box>

@@ -1,11 +1,58 @@
-import { TextAttributes } from "@opentui/core"
+import { TextAttributes, type RGBA } from "@opentui/core"
 import { fileURLToPath } from "bun"
 import { useTheme } from "../context/theme"
 import { useDialog } from "@tui/ui/dialog"
 import { useSync } from "@tui/context/sync"
-import { For, Match, Switch, Show, createMemo } from "solid-js"
+import { For, Match, Switch, Show, createMemo, type JSX } from "solid-js"
+import { Rule } from "./border"
 
-export type DialogStatusProps = {}
+// Tracked small caps section header. Spaces between letters convey
+// hierarchy without pulling weight into the chrome.
+function tracked(label: string) {
+  return label.split("").join(" ")
+}
+
+function Section(props: { label: string; count: number; empty?: string; children?: JSX.Element }) {
+  const { theme } = useTheme()
+  return (
+    <box paddingTop={1}>
+      <box flexDirection="row" justifyContent="space-between">
+        <text fg={theme.textMuted}>{tracked(props.label)}</text>
+        <text fg={theme.text}>{String(props.count)}</text>
+      </box>
+      <Show
+        when={props.count > 0}
+        fallback={
+          <Show when={props.empty}>
+            <box paddingTop={1}>
+              <text fg={theme.textMuted}>{props.empty}</text>
+            </box>
+          </Show>
+        }
+      >
+        <box paddingTop={1} gap={0}>
+          {props.children}
+        </box>
+      </Show>
+    </box>
+  )
+}
+
+function Row(props: { label: JSX.Element; value: JSX.Element; valueFg?: RGBA }) {
+  const { theme } = useTheme()
+  return (
+    <box flexDirection="row" justifyContent="space-between" gap={2}>
+      <box flexShrink={1} overflow="hidden">
+        <text fg={theme.text} wrapMode="none">
+          {props.label}
+        </text>
+      </box>
+      <box flexShrink={0}>
+        <text fg={props.valueFg ?? theme.textMuted}>{props.value}</text>
+      </box>
+    </box>
+  )
+}
 
 export function DialogStatus() {
   const sync = useSync()
@@ -40,129 +87,119 @@ export function DialogStatus() {
     return result.toSorted((a, b) => a.name.localeCompare(b.name))
   })
 
+  const mcpEntries = createMemo(() => Object.entries(sync.data.mcp))
+
   return (
-    <box paddingLeft={2} paddingRight={2} gap={1} paddingBottom={1}>
-      <box flexDirection="row" justifyContent="space-between">
+    <box>
+      <box flexDirection="row" justifyContent="space-between" paddingLeft={3} paddingRight={3} paddingTop={1}>
         <text fg={theme.text} attributes={TextAttributes.BOLD}>
-          Status
+          status
         </text>
         <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
           esc
         </text>
       </box>
-      <Show when={Object.keys(sync.data.mcp).length > 0} fallback={<text fg={theme.text}>No MCP Servers</text>}>
-        <box>
-          <text fg={theme.text}>{Object.keys(sync.data.mcp).length} MCP Servers</text>
-          <For each={Object.entries(sync.data.mcp)}>
-            {([key, item]) => (
-              <box flexDirection="row" gap={1}>
-                <text
-                  flexShrink={0}
-                  style={{
-                    fg: (
-                      {
-                        connected: theme.success,
-                        failed: theme.error,
-                        disabled: theme.textMuted,
-                        needs_auth: theme.warning,
-                        needs_client_registration: theme.error,
-                      } as Record<string, typeof theme.success>
-                    )[item.status],
-                  }}
-                >
-                  •
-                </text>
-                <text fg={theme.text} wrapMode="word">
-                  <b>{key}</b>{" "}
-                  <span style={{ fg: theme.textMuted }}>
-                    <Switch fallback={item.status}>
-                      <Match when={item.status === "connected"}>Connected</Match>
-                      <Match when={item.status === "failed" && item}>{(val) => val().error}</Match>
-                      <Match when={item.status === "disabled"}>Disabled in configuration</Match>
-                      <Match when={(item.status as string) === "needs_auth"}>
-                        Needs authentication (run: opencode mcp auth {key})
-                      </Match>
-                      <Match when={(item.status as string) === "needs_client_registration" && item}>
-                        {(val) => (val() as { error: string }).error}
-                      </Match>
-                    </Switch>
-                  </span>
-                </text>
-              </box>
-            )}
+      <box paddingTop={1}>
+        <Rule color={theme.borderActive} />
+      </box>
+      <box paddingLeft={3} paddingRight={3} paddingBottom={1}>
+        <Section label="m c p" count={mcpEntries().length} empty="no mcp servers">
+          <For each={mcpEntries()}>
+            {([key, item]) => {
+              const fg = (
+                {
+                  connected: theme.success,
+                  failed: theme.error,
+                  disabled: theme.textMuted,
+                  needs_auth: theme.warning,
+                  needs_client_registration: theme.error,
+                } as Record<string, typeof theme.success>
+              )[item.status]
+              return (
+                <Row
+                  label={
+                    <>
+                      <span style={{ fg: theme.text, bold: true }}>{key}</span>
+                      <span style={{ fg: theme.textMuted }}>
+                        {"  "}
+                        <Switch fallback={item.status}>
+                          <Match when={item.status === "connected"}>connected</Match>
+                          <Match when={item.status === "failed" && item}>{(val) => val().error}</Match>
+                          <Match when={item.status === "disabled"}>disabled in configuration</Match>
+                          <Match when={(item.status as string) === "needs_auth"}>
+                            needs authentication (run: opencode mcp auth {key})
+                          </Match>
+                          <Match when={(item.status as string) === "needs_client_registration" && item}>
+                            {(val) => (val() as { error: string }).error}
+                          </Match>
+                        </Switch>
+                      </span>
+                    </>
+                  }
+                  value={item.status}
+                  valueFg={fg}
+                />
+              )
+            }}
           </For>
-        </box>
-      </Show>
-      {sync.data.lsp.length > 0 && (
-        <box>
-          <text fg={theme.text}>{sync.data.lsp.length} LSP Servers</text>
+        </Section>
+        <Section label="l s p" count={sync.data.lsp.length} empty="no lsp servers">
           <For each={sync.data.lsp}>
-            {(item) => (
-              <box flexDirection="row" gap={1}>
-                <text
-                  flexShrink={0}
-                  style={{
-                    fg: {
-                      connected: theme.success,
-                      error: theme.error,
-                    }[item.status],
-                  }}
-                >
-                  •
-                </text>
-                <text fg={theme.text} wrapMode="word">
-                  <b>{item.id}</b> <span style={{ fg: theme.textMuted }}>{item.root}</span>
-                </text>
-              </box>
-            )}
+            {(item) => {
+              const fg = ({ connected: theme.success, error: theme.error } as Record<string, typeof theme.success>)[
+                item.status
+              ]
+              return (
+                <Row
+                  label={
+                    <>
+                      <span style={{ fg: theme.text, bold: true }}>{item.id}</span>
+                      <span style={{ fg: theme.textMuted }}>{"  " + item.root}</span>
+                    </>
+                  }
+                  value={item.status}
+                  valueFg={fg}
+                />
+              )
+            }}
           </For>
-        </box>
-      )}
-      <Show when={enabledFormatters().length > 0} fallback={<text fg={theme.text}>No Formatters</text>}>
-        <box>
-          <text fg={theme.text}>{enabledFormatters().length} Formatters</text>
+        </Section>
+        <Section label="f o r m a t t e r s" count={enabledFormatters().length} empty="no formatters">
           <For each={enabledFormatters()}>
             {(item) => (
-              <box flexDirection="row" gap={1}>
-                <text
-                  flexShrink={0}
-                  style={{
-                    fg: theme.success,
-                  }}
-                >
-                  •
-                </text>
-                <text wrapMode="word" fg={theme.text}>
-                  <b>{item.name}</b>
-                </text>
-              </box>
+              <Row
+                label={<span style={{ fg: theme.text, bold: true }}>{item.name}</span>}
+                value="enabled"
+                valueFg={theme.success}
+              />
             )}
           </For>
-        </box>
-      </Show>
-      <Show when={plugins().length > 0} fallback={<text fg={theme.text}>No Plugins</text>}>
-        <box>
-          <text fg={theme.text}>{plugins().length} Plugins</text>
+        </Section>
+        <Section label="p l u g i n s" count={plugins().length} empty="no plugins">
           <For each={plugins()}>
             {(item) => (
-              <box flexDirection="row" gap={1}>
-                <text
-                  flexShrink={0}
-                  style={{
-                    fg: theme.success,
-                  }}
-                >
-                  •
-                </text>
-                <text wrapMode="word" fg={theme.text}>
-                  <b>{item.name}</b>
-                  {item.version && <span style={{ fg: theme.textMuted }}> @{item.version}</span>}
-                </text>
-              </box>
+              <Row
+                label={<span style={{ fg: theme.text, bold: true }}>{item.name}</span>}
+                value={item.version ? `@${item.version}` : "loaded"}
+                valueFg={item.version ? theme.textMuted : theme.success}
+              />
             )}
           </For>
-        </box>
-      </Show>
+        </Section>
+      </box>
+      <Rule color={theme.borderActive} />
+      <box
+        flexDirection="row"
+        justifyContent="flex-end"
+        paddingLeft={3}
+        paddingRight={3}
+        paddingTop={1}
+        paddingBottom={1}
+      >
+        <text fg={theme.text}>
+          esc <span style={{ fg: theme.textMuted }}>close</span>
+        </text>
+      </box>
     </box>
   )
 }

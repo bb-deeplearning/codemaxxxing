@@ -225,6 +225,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             return {
               provider: "Connect a provider",
               model: "No provider selected",
+              modelID: "",
               reasoning: false,
             }
           }
@@ -233,6 +234,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           return {
             provider: provider?.name ?? value.providerID,
             model: info?.name ?? value.modelID,
+            modelID: value.modelID,
             reasoning: info?.capabilities?.reasoning ?? false,
           }
         }),

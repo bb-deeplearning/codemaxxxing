@@ -15,6 +15,7 @@ import * as Clipboard from "@tui/util/clipboard"
 import { useToast } from "../ui/toast"
 import { isConsoleManagedProvider } from "@tui/util/provider-origin"
 import { useConnected } from "./use-connected"
+import { Rule } from "./border"
 
 const PROVIDER_PRIORITY: Record<string, number> = {
   opencode: 0,
@@ -44,14 +45,14 @@ export function createDialogProviderOptions() {
           title: provider.name,
           value: provider.id,
           description: {
-            opencode: "(Recommended)",
-            anthropic: "(API key)",
-            openai: "(ChatGPT Plus/Pro or API key)",
-            "opencode-go": "Low cost subscription for everyone",
+            opencode: "(recommended)",
+            anthropic: "(api key)",
+            openai: "(chatgpt plus/pro or api key)",
+            "opencode-go": "low cost subscription for everyone",
           }[provider.id],
           footer: consoleManaged ? sync.data.console_state.activeOrgName : undefined,
-          category: provider.id in PROVIDER_PRIORITY ? "Popular" : "Other",
-          gutter: connected && onboarded() ? () => <text fg={theme.success}>✓</text> : undefined,
+          category: provider.id in PROVIDER_PRIORITY ? "popular" : "other",
+          gutter: connected && onboarded() ? () => <text fg={theme.success}>·</text> : undefined,
           async onSelect() {
             if (consoleManaged) return
 
@@ -67,7 +68,7 @@ export function createDialogProviderOptions() {
                 dialog.replace(
                   () => (
                     <DialogSelect
-                      title="Select auth method"
+                      title="select auth method"
                       options={methods.map((x, index) => ({
                         title: x.label,
                         value: index,
@@ -147,7 +148,7 @@ export function createDialogProviderOptions() {
 
 export function DialogProvider() {
   const options = createDialogProviderOptions()
-  return <DialogSelect title="Connect a provider" options={options()} />
+  return <DialogSelect title="connect a provider" options={options()} />
 }
 
 interface AutoMethodProps {
@@ -187,23 +188,39 @@ function AutoMethod(props: AutoMethodProps) {
   })
 
   return (
-    <box paddingLeft={2} paddingRight={2} gap={1} paddingBottom={1}>
-      <box flexDirection="row" justifyContent="space-between">
-        <text attributes={TextAttributes.BOLD} fg={theme.text}>
+    <box>
+      <box flexDirection="row" justifyContent="space-between" paddingLeft={3} paddingRight={3} paddingTop={1}>
+        <text fg={theme.text} attributes={TextAttributes.BOLD}>
           {props.title}
         </text>
         <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
           esc
         </text>
       </box>
-      <box gap={1}>
+      <box paddingTop={1}>
+        <Rule color={theme.borderActive} />
+      </box>
+      <box paddingLeft={3} paddingRight={3} paddingTop={1} paddingBottom={1} gap={1}>
         <Link href={props.authorization.url} fg={theme.primary} />
         <text fg={theme.textMuted}>{props.authorization.instructions}</text>
+        <text fg={theme.textMuted}>waiting for authorization...</text>
       </box>
-      <text fg={theme.textMuted}>Waiting for authorization...</text>
-      <text fg={theme.text}>
-        c <span style={{ fg: theme.textMuted }}>copy</span>
-      </text>
+      <Rule color={theme.borderActive} />
+      <box
+        flexDirection="row"
+        justifyContent="space-between"
+        paddingLeft={3}
+        paddingRight={3}
+        paddingTop={1}
+        paddingBottom={1}
+      >
+        <text fg={theme.text}>
+          c <span style={{ fg: theme.textMuted }}>copy</span>
+        </text>
+        <text fg={theme.text}>
+          esc <span style={{ fg: theme.textMuted }}>cancel</span>
+        </text>
+      </box>
     </box>
   )
 }
@@ -224,7 +241,7 @@ function CodeMethod(props: CodeMethodProps) {
   return (
     <DialogPrompt
       title={props.title}
-      placeholder="Authorization code"
+      placeholder="authorization code"
       onConfirm={async (value) => {
         const { error } = await sdk.client.provider.oauth.callback({
           providerID: props.providerID,
@@ -244,7 +261,7 @@ function CodeMethod(props: CodeMethodProps) {
           <text fg={theme.textMuted}>{props.authorization.instructions}</text>
           <Link href={props.authorization.url} fg={theme.primary} />
           <Show when={error()}>
-            <text fg={theme.error}>Invalid code</text>
+            <text fg={theme.error}>invalid code</text>
           </Show>
         </box>
       )}
@@ -266,28 +283,28 @@ function ApiMethod(props: ApiMethodProps) {
   return (
     <DialogPrompt
       title={props.title}
-      placeholder="API key"
+      placeholder="api key"
       description={
         {
           opencode: (
             <box gap={1}>
               <text fg={theme.textMuted}>
-                OpenCode Zen gives you access to all the best coding models at the cheapest prices with a single API
+                opencode zen gives you access to all the best coding models at the cheapest prices with a single api
                 key.
               </text>
               <text fg={theme.text}>
-                Go to <span style={{ fg: theme.primary }}>https://opencode.ai/zen</span> to get a key
+                go to <span style={{ fg: theme.primary }}>https://opencode.ai/zen</span> to get a key
               </text>
             </box>
           ),
           "opencode-go": (
             <box gap={1}>
               <text fg={theme.textMuted}>
-                OpenCode Go is a $10 per month subscription that provides reliable access to popular open coding models
+                opencode go is a $10 per month subscription that provides reliable access to popular open coding models
                 with generous usage limits.
               </text>
               <text fg={theme.text}>
-                Go to <span style={{ fg: theme.primary }}>https://opencode.ai/zen</span> and enable OpenCode Go
+                go to <span style={{ fg: theme.primary }}>https://opencode.ai/zen</span> and enable opencode go
               </text>
             </box>
           ),

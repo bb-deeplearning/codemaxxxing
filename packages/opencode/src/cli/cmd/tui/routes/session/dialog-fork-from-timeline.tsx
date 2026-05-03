@@ -22,7 +22,7 @@ export function DialogForkFromTimeline(props: { sessionID: string; onMove: (mess
   const options = createMemo((): DialogSelectOption<string | undefined>[] => {
     const messages = sync.data.message[props.sessionID] ?? []
     const fullSession = {
-      title: "Full session",
+      title: "full session",
       value: undefined,
       onSelect: async (dialog: DialogContext) => {
         const forked = await sdk.client.session.fork({ sessionID: props.sessionID })
@@ -72,5 +72,5 @@ export function DialogForkFromTimeline(props: { sessionID: string; onMove: (mess
     return [fullSession, ...result.reverse()]
   })
 
-  return <DialogSelect onMove={(option) => props.onMove(option.value)} title="Fork session" options={options()} />
+  return <DialogSelect onMove={(option) => props.onMove(option.value)} title="fork session" options={options()} />
 }

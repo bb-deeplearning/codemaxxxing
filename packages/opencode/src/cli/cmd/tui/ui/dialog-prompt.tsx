@@ -4,6 +4,7 @@ import { useDialog, type DialogContext } from "./dialog"
 import { Show, createEffect, onMount, type JSX } from "solid-js"
 import { useKeyboard } from "@opentui/solid"
 import { Spinner } from "../component/spinner"
+import { Rule } from "../component/border"
 
 export type DialogPromptProps = {
   title: string
@@ -62,8 +63,9 @@ export function DialogPrompt(props: DialogPromptProps) {
   })
 
   return (
-    <box paddingLeft={2} paddingRight={2} gap={1}>
-      <box flexDirection="row" justifyContent="space-between">
+    <box>
+      {/* Header */}
+      <box flexDirection="row" justifyContent="space-between" paddingLeft={3} paddingRight={3} paddingTop={1}>
         <text attributes={TextAttributes.BOLD} fg={theme.text}>
           {props.title}
         </text>
@@ -71,8 +73,12 @@ export function DialogPrompt(props: DialogPromptProps) {
           esc
         </text>
       </box>
-      <box gap={1}>
-        {props.description}
+      <box paddingTop={1}>
+        <Rule color={theme.borderActive} />
+      </box>
+      {/* Body */}
+      <box paddingLeft={3} paddingRight={3} paddingTop={1} paddingBottom={1} gap={1}>
+        <Show when={props.description}>{props.description!()}</Show>
         <textarea
           onSubmit={() => {
             if (props.busy) return
@@ -84,21 +90,37 @@ export function DialogPrompt(props: DialogPromptProps) {
             textarea = val
           }}
           initialValue={props.value}
-          placeholder={props.placeholder ?? "Enter text"}
+          placeholder={props.placeholder ?? "enter text"}
           placeholderColor={theme.textMuted}
           textColor={props.busy ? theme.textMuted : theme.text}
           focusedTextColor={props.busy ? theme.textMuted : theme.text}
           cursorColor={props.busy ? theme.backgroundElement : theme.text}
         />
         <Show when={props.busy}>
-          <Spinner color={theme.textMuted}>{props.busyText ?? "Working..."}</Spinner>
+          <Spinner color={theme.textMuted}>{props.busyText ?? "working..."}</Spinner>
         </Show>
       </box>
-      <box paddingBottom={1} gap={1} flexDirection="row">
+      <Rule color={theme.borderActive} />
+      {/* Footer hints */}
+      <box
+        paddingLeft={3}
+        paddingRight={3}
+        paddingTop={1}
+        paddingBottom={1}
+        flexDirection="row"
+        justifyContent="space-between"
+      >
         <Show when={!props.busy} fallback={<text fg={theme.textMuted}>processing...</text>}>
-          <text fg={theme.text}>
-            enter <span style={{ fg: theme.textMuted }}>submit</span>
-          </text>
+          <box flexDirection="row" gap={2}>
+            <text>
+              <span style={{ fg: theme.text, bold: true }}>enter</span>{" "}
+              <span style={{ fg: theme.textMuted }}>submit</span>
+            </text>
+            <text>
+              <span style={{ fg: theme.text, bold: true }}>esc</span>{" "}
+              <span style={{ fg: theme.textMuted }}>cancel</span>
+            </text>
+          </box>
         </Show>
       </box>
     </box>

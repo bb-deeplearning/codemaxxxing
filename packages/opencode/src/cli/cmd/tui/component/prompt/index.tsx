@@ -33,7 +33,8 @@ import { TuiEvent } from "../../event"
 import { iife } from "@/util/iife"
 import { Locale } from "@/util/locale"
 import { formatDuration } from "@/util/format"
-import { createColors, createFrames } from "../../ui/spinner.ts"
+import { SP_FALLBACK } from "../spinner"
+import { createV12Colors, createV12Frames } from "../../ui/spinner.ts"
 import { useDialog } from "@tui/ui/dialog"
 import { DialogProvider as DialogProviderConnect } from "../dialog-provider"
 import { DialogAlert } from "../../ui/dialog-alert"
@@ -113,6 +114,30 @@ function formatEditorContext(selection: EditorSelection) {
 }
 
 let stashed: { prompt: PromptInfo; cursor: number } | undefined
+
+// 8-cell visual usage meter. Calm by default — colors only appear when
+// usage approaches the limit. < 70% uses theme.border (subtle, blends with
+// chrome). 70-90% warning (yellow). > 90% error (red). The numeric overlay
+// always sits beside it in textMuted with two-space breathing room. Square
+// glyphs (■/□) — flat, architectural.
+const METER_WIDTH = 8
+
+function UsageMeter(props: { pct: number; numeric: string }) {
+  const { theme } = useTheme()
+  const filled = () => Math.max(0, Math.min(METER_WIDTH, Math.round((props.pct / 100) * METER_WIDTH)))
+  const color = () => {
+    if (props.pct > 90) return theme.error
+    if (props.pct > 70) return theme.warning
+    return theme.textMuted
+  }
+  return (
+    <text wrapMode="none" flexShrink={0}>
+      <span style={{ fg: color() }}>{"■".repeat(filled())}</span>
+      <span style={{ fg: theme.border }}>{"□".repeat(METER_WIDTH - filled())}</span>
+      <span style={{ fg: theme.textMuted }}>{"  " + props.numeric}</span>
+    </text>
+  )
+}
 
 export function Prompt(props: PromptProps) {
   let input: TextareaRenderable
@@ -236,10 +261,16 @@ export function Prompt(props: PromptProps) {
     if (tokens <= 0) return
 
     const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
-    const pct = model?.limit.context ? `${Math.round((tokens / model.limit.context) * 100)}%` : undefined
+    const limit = model?.limit.context
+    const pct = limit ? Math.round((tokens / limit) * 100) : undefined
     const cost = msg.reduce((sum, item) => sum + (item.role === "assistant" ? item.cost : 0), 0)
     return {
-      context: pct ? `${Locale.number(tokens)} (${pct})` : Locale.number(tokens),
+      tokens,
+      limit,
+      pct,
+      tokensFormatted: Locale.number(tokens),
+      pctFormatted: pct !== undefined ? `${pct}%` : undefined,
+      context: pct ? `${Locale.number(tokens)} (${pct}%)` : Locale.number(tokens),
       cost: cost > 0 ? money.format(cost) : undefined,
     }
   })
@@ -1023,38 +1054,35 @@ export function Prompt(props: PromptProps) {
     () => !!local.agent.current() && store.mode === "normal" && showVariant(),
     animationsEnabled,
   )
+  // borderHighlight = tint of theme.border toward highlight() (which is the
+  // state-driven color: agent / shell-mode primary / leader-dim border).
+  // Used on the 1-cell ▎ accent at the start of the textarea so the prompt's
+  // affordance carries state.
   const borderHighlight = createMemo(() => tint(theme.border, highlight(), agentMetaAlpha()))
+
+  // V12 spinner with idle wave. Two layers: a slow background sine wave that
+  // breathes across all 12 cells (engine "running at idle"), plus cylinder
+  // firings in proper V12 firing order (1-12-5-8-3-10-6-7-2-11-4-9) overlaid
+  // as bright peaks with 4-frame decay. New firing every 2 frames so 2-3
+  // cylinders are always decaying simultaneously. Cycle includes a 6-frame
+  // rest phase between V12 cycles for a micro-breath.
+  // See ui/spinner.ts createV12Frames / createV12Colors.
+  const v12Frames = createV12Frames()
+  const sparkColor = createMemo(() => {
+    const agent = local.agent.current()
+    return agent ? local.agent.color(agent.name) : theme.border
+  })
+  const v12Colors = createMemo(() => createV12Colors(sparkColor()))
+  const V12_INTERVAL_MS = 60
 
   const placeholderText = createMemo(() => {
     if (props.showPlaceholder === false) return undefined
     if (store.mode === "shell") {
-      if (!shell().length) return undefined
-      const example = shell()[store.placeholder % shell().length]
-      return `Run a command... "${example}"`
+      if (!shell().length) return "$ shell mode — be careful"
+      return `$ ${shell()[store.placeholder % shell().length]}`
     }
-    if (!list().length) return undefined
-    return `Ask anything... "${list()[store.placeholder % list().length]}"`
-  })
-
-  const spinnerDef = createMemo(() => {
-    const agent = local.agent.current()
-    const color = agent ? local.agent.color(agent.name) : theme.border
-    return {
-      frames: createFrames({
-        color,
-        style: "blocks",
-        inactiveFactor: 0.6,
-        // enableFading: false,
-        minAlpha: 0.3,
-      }),
-      color: createColors({
-        color,
-        style: "blocks",
-        inactiveFactor: 0.6,
-        // enableFading: false,
-        minAlpha: 0.3,
-      }),
-    }
+    if (!list().length) return "what's the move"
+    return list()[store.placeholder % list().length]
   })
 
   return (
@@ -1083,22 +1111,16 @@ export function Prompt(props: PromptProps) {
         promptPartTypeId={() => promptPartTypeId}
       />
       <box ref={(r) => (anchor = r)} visible={props.visible !== false}>
-        <box
-          border={["left"]}
-          borderColor={borderHighlight()}
-          customBorderChars={{
-            ...SplitBorder.customBorderChars,
-            bottomLeft: "╹",
-          }}
-        >
-          <box
-            paddingLeft={2}
-            paddingRight={2}
-            paddingTop={1}
-            flexShrink={0}
-            backgroundColor={theme.backgroundElement}
-            flexGrow={1}
-          >
+        {/* Input row. The ▎ accent at col 4 absolute (session paddingLeft 2 +
+            this paddingLeft 2) is the agent-color state indicator. Textarea
+            content sits immediately after at col 5 — aligns column-for-column
+            with the message body indent above. alignItems=flex-start keeps
+            the ▎ pinned to the first row when textarea grows multi-line. */}
+        <box paddingLeft={2} paddingRight={0} paddingTop={1} flexShrink={0} flexDirection="row" alignItems="flex-start">
+          <text fg={borderHighlight()} flexShrink={0}>
+            ▎
+          </text>
+          <box flexGrow={1} flexShrink={1}>
             <textarea
               placeholder={placeholderText()}
               placeholderColor={theme.textMuted}
@@ -1291,198 +1313,199 @@ export function Prompt(props: PromptProps) {
                 }, 0)
               }}
               onMouseDown={(r: MouseEvent) => r.target?.focus()}
-              focusedBackgroundColor={theme.backgroundElement}
               cursorColor={theme.text}
               syntaxStyle={syntax()}
             />
-            <box flexDirection="row" flexShrink={0} paddingTop={1} gap={1} justifyContent="space-between">
-              <box flexDirection="row" gap={1}>
-                <Show when={local.agent.current()} fallback={<box height={1} />}>
-                  {(agent) => (
-                    <>
-                      <text fg={fadeColor(highlight(), agentMetaAlpha())}>
-                        {store.mode === "shell" ? "Shell" : Locale.titlecase(agent().name)}
-                      </text>
-                      <Show when={store.mode === "normal"}>
-                        <box flexDirection="row" gap={1}>
-                          <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>·</text>
-                          <text
-                            flexShrink={0}
-                            fg={fadeColor(keybind.leader ? theme.textMuted : theme.text, modelMetaAlpha())}
-                          >
-                            {local.model.parsed().model}
-                          </text>
-                          <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>{currentProviderLabel()}</text>
-                          <Show when={showVariant()}>
-                            <text fg={fadeColor(theme.textMuted, variantMetaAlpha())}>·</text>
-                            <text>
-                              <span style={{ fg: fadeColor(theme.warning, variantMetaAlpha()), bold: true }}>
-                                {local.model.variant.current()}
-                              </span>
-                            </text>
-                          </Show>
-                        </box>
-                      </Show>
-                    </>
-                  )}
-                </Show>
-              </box>
-              <Show when={hasRightContent()}>
-                <box flexDirection="row" gap={1} alignItems="center">
-                  {props.right}
-                </box>
-              </Show>
-            </box>
           </box>
         </box>
+        {/* Breathing row between input and identity strip — so the meta below
+            doesn't crowd the bottom of the textarea. */}
+        <box height={1} flexShrink={0} />
+        {/* Identity row. Stable position. agent · model · variant on left,
+            meter + cost + plugin slot on right. paddingLeft=3 puts content
+            at col 5 absolute (matches message body indent). paddingRight=0
+            so it extends to the same right edge as message bodies above.
+            Wraps to multiple lines on narrow widths — never hides info. */}
         <box
-          height={1}
-          border={["left"]}
-          borderColor={borderHighlight()}
-          customBorderChars={{
-            ...EmptyBorder,
-            vertical: theme.backgroundElement.a !== 0 ? "╹" : " ",
-          }}
+          paddingLeft={3}
+          paddingRight={0}
+          flexDirection="row"
+          justifyContent="space-between"
+          alignItems="flex-start"
+          gap={3}
+          flexShrink={0}
+          flexWrap="wrap"
         >
-          <box
-            height={1}
-            border={["bottom"]}
-            borderColor={theme.backgroundElement}
-            customBorderChars={
-              theme.backgroundElement.a !== 0
-                ? {
-                    ...EmptyBorder,
-                    horizontal: "▀",
-                  }
-                : {
-                    ...EmptyBorder,
-                    horizontal: " ",
-                  }
-            }
-          />
-        </box>
-        <box width="100%" flexDirection="row" justifyContent="space-between">
-          <Show when={status().type !== "idle"} fallback={props.hint ?? <text />}>
-            <box
-              flexDirection="row"
-              gap={1}
-              flexGrow={1}
-              justifyContent={status().type === "retry" ? "space-between" : "flex-start"}
-            >
-              <box flexShrink={0} flexDirection="row" gap={1}>
-                <box marginLeft={1}>
-                  <Show when={kv.get("animations_enabled", true)} fallback={<text fg={theme.textMuted}>[⋯]</text>}>
-                    <spinner color={spinnerDef().color} frames={spinnerDef().frames} interval={40} />
+          <box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
+            <Show when={local.agent.current()} fallback={<text fg={theme.textMuted}>—</text>}>
+              {(agent) => (
+                <>
+                  <text fg={fadeColor(highlight(), agentMetaAlpha())}>
+                    {store.mode === "shell" ? "shell" : agent().name}
+                  </text>
+                  <Show when={store.mode === "normal"}>
+                    <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>·</text>
+                    <text
+                      flexShrink={0}
+                      fg={fadeColor(keybind.leader ? theme.textMuted : theme.text, modelMetaAlpha())}
+                    >
+                      {local.model.parsed().modelID}
+                    </text>
+                    <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>·</text>
+                    <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>
+                      {currentProviderLabel().toLowerCase()}
+                    </text>
+                    <Show when={showVariant()}>
+                      <text fg={fadeColor(theme.textMuted, variantMetaAlpha())}>·</text>
+                      <text>
+                        <span style={{ fg: fadeColor(theme.warning, variantMetaAlpha()), bold: true }}>
+                          {local.model.variant.current()}
+                        </span>
+                      </text>
+                    </Show>
                   </Show>
-                </box>
-                <box flexDirection="row" gap={1} flexShrink={0}>
-                  {(() => {
-                    const retry = createMemo(() => {
-                      const s = status()
-                      if (s.type !== "retry") return
-                      return s
-                    })
-                    const message = createMemo(() => {
-                      const r = retry()
-                      if (!r) return
-                      if (r.message.includes("exceeded your current quota") && r.message.includes("gemini"))
-                        return "gemini is way too hot right now"
-                      if (r.message.length > 80) return r.message.slice(0, 80) + "..."
-                      return r.message
-                    })
-                    const isTruncated = createMemo(() => {
-                      const r = retry()
-                      if (!r) return false
-                      return r.message.length > 120
-                    })
-                    const [seconds, setSeconds] = createSignal(0)
-                    onMount(() => {
-                      const timer = setInterval(() => {
-                        const next = retry()?.next
-                        if (next) setSeconds(Math.round((next - Date.now()) / 1000))
-                      }, 1000)
-
-                      onCleanup(() => {
-                        clearInterval(timer)
-                      })
-                    })
-                    const handleMessageClick = () => {
-                      const r = retry()
-                      if (!r) return
-                      if (isTruncated()) {
-                        void DialogAlert.show(dialog, "Retry Error", r.message)
-                      }
-                    }
-
-                    const retryText = () => {
-                      const r = retry()
-                      if (!r) return ""
-                      const baseMessage = message()
-                      const truncatedHint = isTruncated() ? " (click to expand)" : ""
-                      const duration = formatDuration(seconds())
-                      const retryInfo = ` [retrying ${duration ? `in ${duration} ` : ""}attempt #${r.attempt}]`
-                      return baseMessage + truncatedHint + retryInfo
-                    }
-
-                    return (
-                      <Show when={retry()}>
-                        <box onMouseUp={handleMessageClick}>
-                          <text fg={theme.error}>{retryText()}</text>
-                        </box>
-                      </Show>
-                    )
-                  })()}
-                </box>
+                </>
+              )}
+            </Show>
+          </box>
+          <box flexDirection="row" gap={2} alignItems="center" flexShrink={0}>
+            <Show when={usage()}>
+              {(u) => (
+                <>
+                  <Show
+                    when={u().limit && u().pct !== undefined}
+                    fallback={<text fg={theme.textMuted}>{u().tokensFormatted}</text>}
+                  >
+                    <UsageMeter pct={u().pct!} numeric={u().context} />
+                  </Show>
+                  <Show when={u().cost}>
+                    <text fg={theme.textMuted}>· {u().cost}</text>
+                  </Show>
+                </>
+              )}
+            </Show>
+            <Show when={hasRightContent()}>
+              <box flexDirection="row" gap={1} alignItems="center">
+                {props.right}
               </box>
-              <text fg={store.interrupt > 0 ? theme.primary : theme.text}>
-                esc{" "}
+            </Show>
+          </box>
+        </box>
+        {/* Breathing row between identity and status so they read as paired
+            but distinct surfaces, not crammed together. */}
+        <box height={1} flexShrink={0} />
+        {/* Status row. Spark spinner + state on the LEFT when busy/retry,
+            keybind hints when idle. Editor file context pinned RIGHT when
+            present. Reserves 1 row min so identity above doesn't jump. */}
+        <box
+          paddingLeft={3}
+          paddingRight={0}
+          flexDirection="row"
+          justifyContent="space-between"
+          alignItems="flex-start"
+          gap={3}
+          flexShrink={0}
+          minHeight={1}
+          flexWrap="wrap"
+        >
+          <Show
+            when={status().type !== "idle"}
+            fallback={
+              <Switch>
+                <Match when={store.mode === "normal"}>
+                  <text fg={theme.border} flexShrink={0}>
+                    {keybind.print("agent_cycle")} agents · {keybind.print("command_list")} commands
+                  </text>
+                </Match>
+                <Match when={store.mode === "shell"}>
+                  <text fg={theme.border} flexShrink={0}>
+                    esc exit shell mode
+                  </text>
+                </Match>
+              </Switch>
+            }
+          >
+            <box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
+              <Show when={kv.get("animations_enabled", true)} fallback={<text fg={sparkColor()}>{SP_FALLBACK}</text>}>
+                <spinner color={v12Colors()} frames={v12Frames} interval={V12_INTERVAL_MS} />
+              </Show>
+              <box flexDirection="row" gap={1} flexShrink={0}>
+                {(() => {
+                  const retry = createMemo(() => {
+                    const s = status()
+                    if (s.type !== "retry") return
+                    return s
+                  })
+                  const message = createMemo(() => {
+                    const r = retry()
+                    if (!r) return
+                    if (r.message.includes("exceeded your current quota") && r.message.includes("gemini"))
+                      return "gemini is way too hot right now"
+                    if (r.message.length > 80) return r.message.slice(0, 80) + "..."
+                    return r.message
+                  })
+                  const isTruncated = createMemo(() => {
+                    const r = retry()
+                    if (!r) return false
+                    return r.message.length > 120
+                  })
+                  const [seconds, setSeconds] = createSignal(0)
+                  onMount(() => {
+                    const timer = setInterval(() => {
+                      const next = retry()?.next
+                      if (next) setSeconds(Math.round((next - Date.now()) / 1000))
+                    }, 1000)
+
+                    onCleanup(() => {
+                      clearInterval(timer)
+                    })
+                  })
+                  const handleMessageClick = () => {
+                    const r = retry()
+                    if (!r) return
+                    if (isTruncated()) {
+                      void DialogAlert.show(dialog, "Retry Error", r.message)
+                    }
+                  }
+
+                  const retryText = () => {
+                    const r = retry()
+                    if (!r) return ""
+                    const baseMessage = message()
+                    const truncatedHint = isTruncated() ? " (click to expand)" : ""
+                    const duration = formatDuration(seconds())
+                    const retryInfo = ` [retrying ${duration ? `in ${duration} ` : ""}attempt #${r.attempt}]`
+                    return baseMessage + truncatedHint + retryInfo
+                  }
+
+                  return (
+                    <Show when={retry()}>
+                      <box onMouseUp={handleMessageClick}>
+                        <text fg={theme.error}>{retryText()}</text>
+                      </box>
+                    </Show>
+                  )
+                })()}
+              </box>
+              <text>
+                <span style={{ fg: store.interrupt > 0 ? theme.primary : theme.text }}>esc</span>
                 <span style={{ fg: store.interrupt > 0 ? theme.primary : theme.textMuted }}>
-                  {store.interrupt > 0 ? "again to interrupt" : "interrupt"}
+                  {store.interrupt > 0 ? " again to interrupt" : " interrupt"}
                 </span>
               </text>
             </box>
           </Show>
-          <Show when={status().type !== "retry"}>
-            <box gap={2} flexDirection="row">
-              <Show when={editorFileLabelDisplay()}>
-                {(file) => (
-                  <text
-                    fg={theme.secondary}
-                    onMouseOver={() => setEditorContextHover(true)}
-                    onMouseOut={() => setEditorContextHover(false)}
-                    onMouseUp={dismissEditorContext}
-                  >
-                    {editorContextHover() ? `x ${file()}` : file()}
-                  </text>
-                )}
-              </Show>
-              <Switch>
-                <Match when={store.mode === "normal"}>
-                  <Switch>
-                    <Match when={usage()}>
-                      {(item) => (
-                        <text fg={theme.textMuted} wrapMode="none">
-                          {[item().context, item().cost].filter(Boolean).join(" · ")}
-                        </text>
-                      )}
-                    </Match>
-                    <Match when={true}>
-                      <text fg={theme.text}>
-                        {keybind.print("agent_cycle")} <span style={{ fg: theme.textMuted }}>agents</span>
-                      </text>
-                    </Match>
-                  </Switch>
-                  <text fg={theme.text}>
-                    {keybind.print("command_list")} <span style={{ fg: theme.textMuted }}>commands</span>
-                  </text>
-                </Match>
-                <Match when={store.mode === "shell"}>
-                  <text fg={theme.text}>
-                    esc <span style={{ fg: theme.textMuted }}>exit shell mode</span>
-                  </text>
-                </Match>
-              </Switch>
-            </box>
+          <Show when={editorFileLabelDisplay()}>
+            {(file) => (
+              <text
+                fg={theme.secondary}
+                onMouseOver={() => setEditorContextHover(true)}
+                onMouseOut={() => setEditorContextHover(false)}
+                onMouseUp={dismissEditorContext}
+              >
+                {editorContextHover() ? `x ${file()}` : file()}
+              </text>
+            )}
           </Show>
         </box>
       </box>

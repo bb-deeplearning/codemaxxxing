@@ -3,12 +3,7 @@ import { useRenderer } from "@opentui/solid"
 import { For, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js"
 import { useTheme, tint } from "@tui/context/theme"
 import * as Sound from "@tui/util/sound"
-import { go, logo } from "@/cli/logo"
-
-export type LogoShape = {
-  left: string[]
-  right: string[]
-}
+import { go, logo, type ColorRole, type LogoShape } from "@/cli/logo"
 
 type ShimmerConfig = {
   period: number
@@ -62,7 +57,6 @@ const shimmerConfig: ShimmerConfig = {
 // _ = full shadow cell (space with bg=shadow)
 // ^ = letter top, shadow bottom (▀ with fg=letter, bg=shadow)
 // ~ = shadow top only (▀ with fg=shadow)
-const GAP = 1
 const WIDTH = 0.76
 const GAIN = 2.3
 const FLASH = 2.15
@@ -289,7 +283,6 @@ function mapGlyphs(full: string[]) {
 }
 
 type LogoContext = {
-  LEFT: number
   FULL: string[]
   SPAN: number
   MAP: ReturnType<typeof mapGlyphs>
@@ -297,14 +290,61 @@ type LogoContext = {
 }
 
 function build(shape: LogoShape): LogoContext {
-  const LEFT = shape.left[0]?.length ?? 0
-  const FULL = shape.left.map((line, i) => line + " ".repeat(GAP) + shape.right[i])
+  const FULL = shape.rows.map((row) => row.map((seg) => seg.chars).join(""))
   const SPAN = Math.hypot(FULL[0]?.length ?? 0, FULL.length * 2) * 0.94
-  return { LEFT, FULL, SPAN, MAP: mapGlyphs(FULL), shape }
+  return { FULL, SPAN, MAP: mapGlyphs(FULL), shape }
 }
 
 const DEFAULT = build(logo)
 const GO = build(go)
+
+// Resolve a segment's color role to a concrete RGBA from the active theme.
+// Lives at module scope (pure) — no theme captures, must be called with theme.
+function inkFor(role: ColorRole, theme: ReturnType<typeof useTheme>["theme"]): RGBA {
+  if (role === "primary") return theme.primary
+  if (role === "secondary") return theme.secondary
+  if (role === "accent") return theme.accent
+  if (role === "text") return theme.text
+  if (role === "textMuted") return theme.textMuted
+  if (role === "border") return theme.border
+  // primaryPeak: brand color pushed toward white for the "past redline" zone
+  return tint(theme.primary, PEAK, 0.35)
+}
+
+// One-shot launch sweep: a Gaussian wave travels L→R across the whole logo
+// in the first ~1200ms after mount, then settles. Returns extra brightness.
+const LAUNCH_DURATION = 1200
+const LAUNCH_OVERSHOOT = 12
+function launchSweep(x: number, t: number, mountedAt: number, totalWidth: number): number {
+  const elapsed = t - mountedAt
+  if (elapsed < 0 || elapsed > LAUNCH_DURATION) return 0
+  const phase = elapsed / LAUNCH_DURATION
+  // Quadratic ease-in so the sweep "accelerates" like an engine revving up
+  const eased = phase * phase
+  const wavePos = eased * (totalWidth + LAUNCH_OVERSHOOT)
+  const dist = Math.abs(x - wavePos)
+  const trail = x < wavePos ? Math.exp(-(wavePos - x) / 8) * 0.4 : 0
+  return Math.exp(-((dist / 3.2) ** 2)) * 1.6 + trail
+}
+
+// Continuous redline pulse: cells in the PEAK (post-redline) zone oscillate
+// in brightness like real F1 shift lights at the limiter.
+function redlinePulse(t: number, role: ColorRole): number {
+  if (role !== "primary" && role !== "primaryPeak") return 0
+  // Different periods for primary vs peak so they don't move in lockstep
+  const phase = role === "primaryPeak" ? t * 0.013 : t * 0.011 + 1.2
+  const amp = role === "primaryPeak" ? 0.42 : 0.26
+  return (Math.sin(phase) + 1) * 0.5 * amp
+}
+
+// Needle bounce: the ●▶ chars at the bar tip jitter rapidly, like the
+// needle smacking the rev limiter.
+function needleBounce(char: string, t: number): number {
+  if (char !== "●" && char !== "▶") return 0
+  // High-frequency noise so it feels chaotic, not sinusoidal
+  const n = Math.sin(t * 0.08) * Math.cos(t * 0.13 + char.charCodeAt(0))
+  return Math.max(0, n) * 0.55
+}
 
 function shimmer(x: number, y: number, frame: Frame, ctx: LogoContext) {
   return frame.list.reduce((best, item) => {
@@ -564,6 +604,10 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; idle?: boolean } = 
   let box: BoxRenderable | undefined
   let timer: ReturnType<typeof setInterval> | undefined
   let hum = false
+  let mountedAt = 0
+  // The new tach shape has continuous animations (redline pulse, needle bounce, launch sweep)
+  // so the timer must always run. GoLogo and similar passthroughs use props.idle = true anyway.
+  const alwaysOn = !props.ink
 
   const stop = () => {
     if (!timer) return
@@ -594,7 +638,7 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; idle?: boolean } = 
     }
     if (!live) setRelease(undefined)
     if (live || hold() || release() || glow()) return
-    if (props.idle) return
+    if (props.idle || alwaysOn) return
     stop()
   }
 
@@ -610,8 +654,9 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; idle?: boolean } = 
   })
 
   onMount(() => {
-    if (!props.idle) return
-    setNow(performance.now())
+    mountedAt = performance.now()
+    setNow(mountedAt)
+    if (!props.idle && !alwaysOn) return
     start()
   })
 
@@ -685,13 +730,15 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; idle?: boolean } = 
     }
   })
 
-  const idleState = createMemo(() => (props.idle ? buildIdleState(frame().t, ctx) : undefined))
+  const idleState = createMemo(() => (props.idle || alwaysOn ? buildIdleState(frame().t, ctx) : undefined))
   const useSubpixelBlocks = () => renderer.capabilities?.rgb === true
+  const totalWidth = createMemo(() => ctx.FULL[0]?.length ?? 0)
 
   const renderLine = (
     line: string,
     y: number,
     ink: RGBA,
+    role: ColorRole,
     bold: boolean,
     off: number,
     frame: Frame,
@@ -700,6 +747,7 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; idle?: boolean } = 
   ): JSX.Element[] => {
     const shadow = tint(theme.background, ink, 0.25)
     const attrs = bold ? TextAttributes.BOLD : undefined
+    const width = totalWidth()
 
     return Array.from(line).map((char, i) => {
       if (char === " ") {
@@ -748,6 +796,11 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; idle?: boolean } = 
       const e = charLit ? trace(off + i, y, frame, ctx) : 0
       const b = charLit ? bloom(off + i, y, frame, ctx) : 0
       const q = shimmer(off + i, y, frame, ctx)
+      // New tach animations: launch sweep on mount, redline pulse on PEAK/HOT cells, needle bounce on ●▶ chars
+      const ls = launchSweep(off + i, frame.t, mountedAt, width)
+      const rp = redlinePulse(frame.t, role)
+      const nb = needleBounce(char, frame.t)
+      const tach = ls + rp + nb
 
       if (char === "_") {
         return (
@@ -765,7 +818,7 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; idle?: boolean } = 
       if (char === "^") {
         return (
           <text
-            fg={shade(inkTop, theme, n + p + e + b)}
+            fg={shade(inkTop, theme, n + p + e + b + tach)}
             bg={shade(shadowBot, theme, ghost(s, 0.18) + ghost(q, 0.05) + ghost(b, 0.08))}
             attributes={attrs}
             selectable={false}
@@ -795,8 +848,8 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; idle?: boolean } = 
       if (char === "█" && useSubpixelBlocks()) {
         return (
           <text
-            fg={shade(inkTop, theme, n + p + e + b)}
-            bg={shade(inkBot, theme, n + p + e + b)}
+            fg={shade(inkTop, theme, n + p + e + b + tach)}
+            bg={shade(inkBot, theme, n + p + e + b + tach)}
             attributes={attrs}
             selectable={false}
           >
@@ -808,7 +861,7 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; idle?: boolean } = 
       // ▀ top-half-lit: fg uses top-pixel sample, bg stays transparent/panel
       if (char === "▀") {
         return (
-          <text fg={shade(inkTop, theme, n + p + e + b)} attributes={attrs} selectable={false}>
+          <text fg={shade(inkTop, theme, n + p + e + b + tach)} attributes={attrs} selectable={false}>
             ▀
           </text>
         )
@@ -817,18 +870,38 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; idle?: boolean } = 
       // ▄ bottom-half-lit: fg uses bottom-pixel sample
       if (char === "▄") {
         return (
-          <text fg={shade(inkBot, theme, n + p + e + b)} attributes={attrs} selectable={false}>
+          <text fg={shade(inkBot, theme, n + p + e + b + tach)} attributes={attrs} selectable={false}>
             ▄
           </text>
         )
       }
 
       return (
-        <text fg={shade(inkTinted, theme, n + p + e + b)} attributes={attrs} selectable={false}>
+        <text fg={shade(inkTinted, theme, n + p + e + b + tach)} attributes={attrs} selectable={false}>
           {char}
         </text>
       )
     })
+  }
+
+  // Walk a row's segments and emit JSX for each char. Called from inside JSX
+  // so SolidJS tracks frame/dusk/state reads at the call site as reactive deps.
+  const renderRow = (
+    row: LogoShape["rows"][number],
+    y: number,
+    frame: Frame,
+    dusk: Frame,
+    state: IdleState | undefined,
+  ): JSX.Element[] => {
+    const elements: JSX.Element[] = []
+    let off = 0
+    for (const seg of row) {
+      const ink = props.ink ?? inkFor(seg.ink, theme)
+      const bold = !!props.ink || seg.ink !== "textMuted"
+      elements.push(...renderLine(seg.chars, y, ink, seg.ink, bold, off, frame, dusk, state))
+      off += seg.chars.length
+    }
+    return elements
   }
 
   const mouse = (evt: MouseEvent) => {
@@ -864,26 +937,8 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; idle?: boolean } = 
         zIndex={1}
         onMouse={mouse}
       />
-      <For each={ctx.shape.left}>
-        {(line, index) => (
-          <box flexDirection="row" gap={1}>
-            <box flexDirection="row">
-              {renderLine(line, index(), props.ink ?? theme.textMuted, !!props.ink, 0, frame(), dusk(), idleState())}
-            </box>
-            <box flexDirection="row">
-              {renderLine(
-                ctx.shape.right[index()],
-                index(),
-                props.ink ?? theme.text,
-                true,
-                ctx.LEFT + GAP,
-                frame(),
-                dusk(),
-                idleState(),
-              )}
-            </box>
-          </box>
-        )}
+      <For each={ctx.shape.rows}>
+        {(row, index) => <box flexDirection="row">{renderRow(row, index(), frame(), dusk(), idleState())}</box>}
       </For>
     </box>
   )

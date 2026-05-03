@@ -2,8 +2,9 @@ import { TextareaRenderable, TextAttributes } from "@opentui/core"
 import { useTheme } from "../context/theme"
 import { useDialog, type DialogContext } from "./dialog"
 import { createStore } from "solid-js/store"
-import { onMount, Show } from "solid-js"
+import { For, onMount, Show } from "solid-js"
 import { useKeyboard } from "@opentui/solid"
+import { Rule } from "../component/border"
 
 export type DialogExportOptionsProps = {
   defaultFilename: string
@@ -21,6 +22,15 @@ export type DialogExportOptionsProps = {
   onCancel?: () => void
 }
 
+type Field = "filename" | "thinking" | "toolDetails" | "assistantMetadata" | "openWithoutSaving"
+
+const TOGGLES: { key: Exclude<Field, "filename">; label: string }[] = [
+  { key: "thinking", label: "include thinking" },
+  { key: "toolDetails", label: "include tool details" },
+  { key: "assistantMetadata", label: "include assistant metadata" },
+  { key: "openWithoutSaving", label: "open without saving" },
+]
+
 export function DialogExportOptions(props: DialogExportOptionsProps) {
   const dialog = useDialog()
   const { theme } = useTheme()
@@ -30,29 +40,27 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
     toolDetails: props.defaultToolDetails,
     assistantMetadata: props.defaultAssistantMetadata,
     openWithoutSaving: props.defaultOpenWithoutSaving,
-    active: "filename" as "filename" | "thinking" | "toolDetails" | "assistantMetadata" | "openWithoutSaving",
+    active: "filename" as Field,
   })
+
+  function submit() {
+    props.onConfirm?.({
+      filename: textarea.plainText,
+      thinking: store.thinking,
+      toolDetails: store.toolDetails,
+      assistantMetadata: store.assistantMetadata,
+      openWithoutSaving: store.openWithoutSaving,
+    })
+  }
 
   useKeyboard((evt) => {
     if (evt.name === "return") {
       evt.preventDefault()
       evt.stopPropagation()
-      props.onConfirm?.({
-        filename: textarea.plainText,
-        thinking: store.thinking,
-        toolDetails: store.toolDetails,
-        assistantMetadata: store.assistantMetadata,
-        openWithoutSaving: store.openWithoutSaving,
-      })
+      submit()
     }
     if (evt.name === "tab") {
-      const order: Array<"filename" | "thinking" | "toolDetails" | "assistantMetadata" | "openWithoutSaving"> = [
-        "filename",
-        "thinking",
-        "toolDetails",
-        "assistantMetadata",
-        "openWithoutSaving",
-      ]
+      const order: Field[] = ["filename", "thinking", "toolDetails", "assistantMetadata", "openWithoutSaving"]
       const currentIndex = order.indexOf(store.active)
       const nextIndex = (currentIndex + 1) % order.length
       setStore("active", order[nextIndex])
@@ -77,29 +85,29 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
   })
 
   return (
-    <box paddingLeft={2} paddingRight={2} gap={1}>
-      <box flexDirection="row" justifyContent="space-between">
+    <box>
+      {/* Header */}
+      <box flexDirection="row" justifyContent="space-between" paddingLeft={3} paddingRight={3} paddingTop={1}>
         <text attributes={TextAttributes.BOLD} fg={theme.text}>
-          Export Options
+          export options
         </text>
         <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
           esc
         </text>
       </box>
-      <box gap={1}>
-        <box>
-          <text fg={theme.text}>Filename:</text>
+      <box paddingTop={1}>
+        <Rule color={theme.borderActive} />
+      </box>
+      {/* Body: filename + toggles */}
+      <box paddingLeft={3} paddingRight={3} paddingTop={1} paddingBottom={1} gap={1}>
+        <box flexDirection="row" gap={1}>
+          <text fg={store.active === "filename" ? theme.text : theme.textMuted}>
+            {store.active === "filename" ? "▸" : " "}
+          </text>
+          <text fg={theme.textMuted}>filename</text>
         </box>
         <textarea
-          onSubmit={() => {
-            props.onConfirm?.({
-              filename: textarea.plainText,
-              thinking: store.thinking,
-              toolDetails: store.toolDetails,
-              assistantMetadata: store.assistantMetadata,
-              openWithoutSaving: store.openWithoutSaving,
-            })
-          }}
+          onSubmit={() => submit()}
           height={3}
           keyBindings={[{ name: "return", action: "submit" }]}
           ref={(val: TextareaRenderable) => {
@@ -107,75 +115,72 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
             val.traits = { status: "FILENAME" }
           }}
           initialValue={props.defaultFilename}
-          placeholder="Enter filename"
+          placeholder="enter filename"
           placeholderColor={theme.textMuted}
           textColor={theme.text}
           focusedTextColor={theme.text}
           cursorColor={theme.text}
         />
-      </box>
-      <box flexDirection="column">
-        <box
-          flexDirection="row"
-          gap={2}
-          paddingLeft={1}
-          backgroundColor={store.active === "thinking" ? theme.backgroundElement : undefined}
-          onMouseUp={() => setStore("active", "thinking")}
-        >
-          <text fg={store.active === "thinking" ? theme.primary : theme.textMuted}>
-            {store.thinking ? "[x]" : "[ ]"}
-          </text>
-          <text fg={store.active === "thinking" ? theme.primary : theme.text}>Include thinking</text>
-        </box>
-        <box
-          flexDirection="row"
-          gap={2}
-          paddingLeft={1}
-          backgroundColor={store.active === "toolDetails" ? theme.backgroundElement : undefined}
-          onMouseUp={() => setStore("active", "toolDetails")}
-        >
-          <text fg={store.active === "toolDetails" ? theme.primary : theme.textMuted}>
-            {store.toolDetails ? "[x]" : "[ ]"}
-          </text>
-          <text fg={store.active === "toolDetails" ? theme.primary : theme.text}>Include tool details</text>
-        </box>
-        <box
-          flexDirection="row"
-          gap={2}
-          paddingLeft={1}
-          backgroundColor={store.active === "assistantMetadata" ? theme.backgroundElement : undefined}
-          onMouseUp={() => setStore("active", "assistantMetadata")}
-        >
-          <text fg={store.active === "assistantMetadata" ? theme.primary : theme.textMuted}>
-            {store.assistantMetadata ? "[x]" : "[ ]"}
-          </text>
-          <text fg={store.active === "assistantMetadata" ? theme.primary : theme.text}>Include assistant metadata</text>
-        </box>
-        <box
-          flexDirection="row"
-          gap={2}
-          paddingLeft={1}
-          backgroundColor={store.active === "openWithoutSaving" ? theme.backgroundElement : undefined}
-          onMouseUp={() => setStore("active", "openWithoutSaving")}
-        >
-          <text fg={store.active === "openWithoutSaving" ? theme.primary : theme.textMuted}>
-            {store.openWithoutSaving ? "[x]" : "[ ]"}
-          </text>
-          <text fg={store.active === "openWithoutSaving" ? theme.primary : theme.text}>Open without saving</text>
+        <box>
+          <For each={TOGGLES}>
+            {(toggle) => {
+              const checked = () => store[toggle.key]
+              const active = () => store.active === toggle.key
+              return (
+                <box
+                  flexDirection="row"
+                  gap={1}
+                  paddingLeft={0}
+                  onMouseUp={() => {
+                    setStore("active", toggle.key)
+                    setStore(toggle.key, !store[toggle.key])
+                  }}
+                  onMouseOver={() => setStore("active", toggle.key)}
+                >
+                  <text fg={active() ? theme.text : theme.textMuted}>{active() ? "▸" : " "}</text>
+                  <text fg={active() ? theme.text : theme.textMuted}>{checked() ? "[x]" : "[ ]"}</text>
+                  <text
+                    fg={active() ? theme.text : theme.textMuted}
+                    attributes={active() ? TextAttributes.BOLD : undefined}
+                  >
+                    {toggle.label}
+                  </text>
+                </box>
+              )
+            }}
+          </For>
         </box>
       </box>
-      <Show when={store.active !== "filename"}>
-        <text fg={theme.textMuted} paddingBottom={1}>
-          Press <span style={{ fg: theme.text }}>space</span> to toggle, <span style={{ fg: theme.text }}>return</span>{" "}
-          to confirm
+      <Rule color={theme.borderActive} />
+      {/* Footer hints */}
+      <box
+        paddingLeft={3}
+        paddingRight={3}
+        paddingTop={1}
+        paddingBottom={1}
+        flexDirection="row"
+        justifyContent="space-between"
+      >
+        <box flexDirection="row" gap={2}>
+          <text>
+            <span style={{ fg: theme.text, bold: true }}>enter</span>{" "}
+            <span style={{ fg: theme.textMuted }}>confirm</span>
+          </text>
+          <text>
+            <span style={{ fg: theme.text, bold: true }}>tab</span>{" "}
+            <span style={{ fg: theme.textMuted }}>next field</span>
+          </text>
+          <Show when={store.active !== "filename"}>
+            <text>
+              <span style={{ fg: theme.text, bold: true }}>space</span>{" "}
+              <span style={{ fg: theme.textMuted }}>toggle</span>
+            </text>
+          </Show>
+        </box>
+        <text>
+          <span style={{ fg: theme.text, bold: true }}>esc</span> <span style={{ fg: theme.textMuted }}>cancel</span>
         </text>
-      </Show>
-      <Show when={store.active === "filename"}>
-        <text fg={theme.textMuted} paddingBottom={1}>
-          Press <span style={{ fg: theme.text }}>return</span> to confirm, <span style={{ fg: theme.text }}>tab</span>{" "}
-          for options
-        </text>
-      </Show>
+      </box>
     </box>
   )
 }

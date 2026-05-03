@@ -37,7 +37,7 @@ export function DialogConsoleOrg() {
     if (listed === undefined) {
       return [
         {
-          title: "Loading orgs...",
+          title: "loading orgs...",
           value: "loading",
           onSelect: () => {},
         },
@@ -47,7 +47,7 @@ export function DialogConsoleOrg() {
     if (listed.length === 0) {
       return [
         {
-          title: "No orgs found",
+          title: "no orgs found",
           value: "empty",
           onSelect: () => {},
         },
@@ -71,7 +71,7 @@ export function DialogConsoleOrg() {
         category: accountLabel(item),
         categoryView: (
           <box flexDirection="row" gap={2}>
-            <text fg={theme.accent}>{item.accountEmail}</text>
+            <text fg={theme.textMuted}>{item.accountEmail}</text>
             <text fg={theme.textMuted}>{accountHost(item.accountUrl)}</text>
           </box>
         ),
@@ -91,7 +91,7 @@ export function DialogConsoleOrg() {
 
           await sdk.client.instance.dispose()
           toast.show({
-            message: `Switched to ${item.orgName}`,
+            message: `switched to ${item.orgName}`,
             variant: "info",
           })
           dialog.clear()
@@ -99,5 +99,5 @@ export function DialogConsoleOrg() {
       }))
   })
 
-  return <DialogSelect<string | OrgOption> title="Switch org" options={options()} current={current()} />
+  return <DialogSelect<string | OrgOption> title="switch org" options={options()} current={current()} />
 }

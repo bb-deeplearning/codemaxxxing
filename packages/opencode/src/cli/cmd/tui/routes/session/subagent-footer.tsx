@@ -1,25 +1,33 @@
 import { createMemo, createSignal, Show } from "solid-js"
 import { useRouteData } from "@tui/context/route"
 import { useSync } from "@tui/context/sync"
-import { useTheme } from "@tui/context/theme"
-import { SplitBorder } from "@tui/component/border"
+import { useTheme, tint } from "@tui/context/theme"
+import { Rule } from "@tui/component/border"
 import type { AssistantMessage } from "@opencode-ai/sdk/v2"
 import { useCommandDialog } from "@tui/component/dialog-command"
 import { useKeybind } from "../../context/keybind"
+import { useLocal } from "@tui/context/local"
 import { Locale } from "@/util/locale"
 import { useTerminalDimensions } from "@opentui/solid"
 
 export function SubagentFooter() {
   const route = useRouteData("session")
   const sync = useSync()
+  const local = useLocal()
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
   const session = createMemo(() => sync.session.get(route.sessionID))
 
+  // Parse the agent name out of the title; we use it both for the label
+  // and for tinting the top rule so the surface itself signals "you are
+  // in a subagent under <agent>".
+  const agentMatch = createMemo(() => session()?.title.match(/@(\w+) subagent/))
+  const agentName = createMemo(() => agentMatch()?.[1])
+
   const subagentInfo = createMemo(() => {
     const s = session()
-    if (!s) return { label: "Subagent", index: 0, total: 0 }
-    const agentMatch = s.title.match(/@(\w+) subagent/)
-    const label = agentMatch ? Locale.titlecase(agentMatch[1]) : "Subagent"
+    if (!s) return { label: "subagent", index: 0, total: 0 }
+    const name = agentName()
+    const label = name ? Locale.titlecase(name) : "Subagent"
 
     if (!s.parentID) return { label, index: 0, total: 0 }
 
@@ -61,66 +69,87 @@ export function SubagentFooter() {
   const [hover, setHover] = createSignal<"parent" | "prev" | "next" | null>(null)
   useTerminalDimensions()
 
+  // Top rule reflects which agent owns this subagent. When we know the
+  // agent name, tint the rule toward that color (subtly — half-blend with
+  // theme.border so it's still chrome, not body) so this surface carries
+  // identity even before reading the label.
+  const ruleColor = createMemo(() => {
+    const name = agentName()
+    if (!name) return theme.border
+    const agentColor = local.agent.color(name)
+    return tint(theme.border, agentColor, 0.6)
+  })
+
   return (
-    <box flexShrink={0}>
-      <box
-        paddingTop={1}
-        paddingBottom={1}
-        paddingLeft={2}
-        paddingRight={1}
-        {...SplitBorder}
-        border={["left"]}
-        borderColor={theme.border}
-        flexShrink={0}
-        backgroundColor={theme.backgroundPanel}
-      >
-        <box flexDirection="row" justifyContent="space-between" gap={1}>
-          <box flexDirection="row" gap={1}>
+    <box flexShrink={0} flexDirection="column">
+      <Rule color={ruleColor()} />
+      <box paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={1} flexShrink={0}>
+        <box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1}>
+          <box flexDirection="row" alignItems="center" gap={1}>
             <text fg={theme.text}>
               <b>{subagentInfo().label}</b>
             </text>
             <Show when={subagentInfo().total > 0}>
-              <text style={{ fg: theme.textMuted }}>
+              <text fg={theme.textMuted}>
                 ({subagentInfo().index} of {subagentInfo().total})
               </text>
             </Show>
             <Show when={usage()}>
               {(item) => (
-                <text fg={theme.textMuted} wrapMode="none">
-                  {[item().context, item().cost].filter(Boolean).join(" · ")}
-                </text>
+                <>
+                  <text fg={theme.border}>│</text>
+                  <text fg={theme.textMuted} wrapMode="none">
+                    <span style={{ fg: theme.textMuted }}>tokens</span>{" "}
+                    <span style={{ fg: theme.text }}>{item().context}</span>
+                    <Show when={item().cost}>
+                      {(cost) => (
+                        <>
+                          <span style={{ fg: theme.textMuted }}> · </span>
+                          <span style={{ fg: theme.text }}>{cost()}</span>
+                        </>
+                      )}
+                    </Show>
+                  </text>
+                </>
               )}
             </Show>
           </box>
-          <box flexDirection="row" gap={2}>
+          <box flexDirection="row" alignItems="center" gap={2}>
             <box
               onMouseOver={() => setHover("parent")}
               onMouseOut={() => setHover(null)}
               onMouseUp={() => command.trigger("session.parent")}
-              backgroundColor={hover() === "parent" ? theme.backgroundElement : theme.backgroundPanel}
             >
-              <text fg={theme.text}>
-                Parent <span style={{ fg: theme.textMuted }}>{keybind.print("session_parent")}</span>
+              <text>
+                <span style={{ fg: hover() === "parent" ? theme.text : theme.textMuted, bold: hover() === "parent" }}>
+                  parent
+                </span>{" "}
+                <span style={{ fg: theme.textMuted }}>{keybind.print("session_parent")}</span>
               </text>
             </box>
+            <text fg={theme.border}>│</text>
             <box
               onMouseOver={() => setHover("prev")}
               onMouseOut={() => setHover(null)}
               onMouseUp={() => command.trigger("session.child.previous")}
-              backgroundColor={hover() === "prev" ? theme.backgroundElement : theme.backgroundPanel}
             >
-              <text fg={theme.text}>
-                Prev <span style={{ fg: theme.textMuted }}>{keybind.print("session_child_cycle_reverse")}</span>
+              <text>
+                <span style={{ fg: hover() === "prev" ? theme.text : theme.textMuted, bold: hover() === "prev" }}>
+                  prev
+                </span>{" "}
+                <span style={{ fg: theme.textMuted }}>{keybind.print("session_child_cycle_reverse")}</span>
               </text>
             </box>
             <box
               onMouseOver={() => setHover("next")}
               onMouseOut={() => setHover(null)}
               onMouseUp={() => command.trigger("session.child.next")}
-              backgroundColor={hover() === "next" ? theme.backgroundElement : theme.backgroundPanel}
             >
-              <text fg={theme.text}>
-                Next <span style={{ fg: theme.textMuted }}>{keybind.print("session_child_cycle")}</span>
+              <text>
+                <span style={{ fg: hover() === "next" ? theme.text : theme.textMuted, bold: hover() === "next" }}>
+                  next
+                </span>{" "}
+                <span style={{ fg: theme.textMuted }}>{keybind.print("session_child_cycle")}</span>
               </text>
             </box>
           </box>

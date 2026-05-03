@@ -12,8 +12,19 @@ import { TuiPluginRuntime } from "@/cli/cmd/tui/plugin/runtime"
 
 let once = false
 const placeholder = {
-  normal: ["Fix a TODO in the codebase", "What is the tech stack of this project?", "Fix broken tests"],
-  shell: ["ls -la", "git status", "pwd"],
+  normal: [
+    "what's the move",
+    "fire away",
+    "go on, i'm listening",
+    "the cursor blinks. the model waits.",
+    "what should we cook today",
+    "type something interesting (no pressure)",
+    "make me work for it",
+    "fix broken tests, maybe?",
+    "explain this codebase to a 5 year old",
+    "spit it out",
+  ],
+  shell: ["ls -la", "git status", "bun test", "pwd", "echo hi"],
 }
 
 export function Home() {

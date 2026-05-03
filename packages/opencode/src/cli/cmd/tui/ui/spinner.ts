@@ -366,3 +366,74 @@ export function createColors(options: KnightRiderOptions = {}): ColorGenerator {
 
   return createKnightRiderTrail(trailOptions)
 }
+
+// ── V12 with idle wave ────────────────────────────────────────────────────
+//
+// Two layers running simultaneously:
+//
+// LAYER 1 — Idle wave: a slow sine-wave brightness pulse across all 12 cells.
+//   Two combined sinusoids (different frequencies, slight phase offset per cell)
+//   so the wave is never quite uniform — looks alive at idle even between
+//   firing events. Range ~10-50% alpha.
+//
+// LAYER 2 — Cylinder firings: 12 cylinders fire in proper V12 firing order
+//   (1-12-5-8-3-10-6-7-2-11-4-9). Each firing peaks at 100% alpha and decays
+//   over 4 frames (1.0 → 0.75 → 0.5 → 0.25). New firing every 2 frames so
+//   2-3 cylinders are decaying simultaneously at any moment.
+//
+// CYCLE: 24 active frames + 6 rest frames = 30 frames/cycle. The rest phase
+// shows the wave only (no firings) — gives the eye a micro-breath between
+// V12 cycles. At ~60ms/frame ≈ 1.8s per cycle.
+//
+// Combined alpha per cell = max(wave, firing). Glyph height encodes alpha
+// via Unicode block-eighths (▁..█). Color is the agent color throughout,
+// only alpha varies.
+
+const V12_FIRING_ORDER = [0, 11, 4, 7, 2, 9, 5, 6, 1, 10, 3, 8]
+const V12_INTERVAL = 2
+const V12_DECAY_ALPHAS = [1.0, 0.75, 0.5, 0.25]
+const V12_ACTIVE_FRAMES = V12_FIRING_ORDER.length * V12_INTERVAL // 24
+const V12_REST_FRAMES = 6
+const V12_TOTAL_FRAMES = V12_ACTIVE_FRAMES + V12_REST_FRAMES // 30
+const V12_WIDTH = V12_FIRING_ORDER.length // 12
+const V12_GLYPHS = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
+
+function v12Alpha(frame: number, cell: number): number {
+  // Wave: dual-frequency sin/cos, phase-shifted per cell. Always present.
+  const wavePhase = ((frame * 6 + cell * 30) * Math.PI) / 180
+  const wave = 0.15 + 0.18 * Math.sin(wavePhase) + 0.08 * Math.cos(wavePhase * 0.7)
+
+  // Firing: check if this cell has fired in the current active cycle and is
+  // still in its 4-frame decay window.
+  let firing = 0
+  for (let i = 0; i < V12_FIRING_ORDER.length; i++) {
+    if (V12_FIRING_ORDER[i] !== cell) continue
+    const firingFrame = i * V12_INTERVAL
+    const timeSince = frame - firingFrame
+    if (timeSince < 0 || timeSince >= V12_DECAY_ALPHAS.length) continue
+    const a = V12_DECAY_ALPHAS[timeSince]
+    if (a > firing) firing = a
+  }
+
+  return Math.max(wave, firing)
+}
+
+export function createV12Frames(): string[] {
+  return Array.from({ length: V12_TOTAL_FRAMES }, (_, frame) => {
+    let line = ""
+    for (let cell = 0; cell < V12_WIDTH; cell++) {
+      const a = v12Alpha(frame, cell)
+      const idx = Math.max(0, Math.min(V12_GLYPHS.length - 1, Math.floor(a * V12_GLYPHS.length)))
+      line += V12_GLYPHS[idx]
+    }
+    return line
+  })
+}
+
+export function createV12Colors(brightColor: ColorInput): ColorGenerator {
+  const baseRgba = brightColor instanceof RGBA ? brightColor : RGBA.fromHex(brightColor as string)
+  return (frameIndex: number, charIndex: number) => {
+    const a = v12Alpha(frameIndex, charIndex)
+    return RGBA.fromValues(baseRgba.r, baseRgba.g, baseRgba.b, Math.max(0.08, Math.min(1, a)))
+  }
+}

@@ -1,7 +1,7 @@
 import z from "zod"
 import { EOL } from "os"
 import { NamedError } from "@opencode-ai/core/util/error"
-import { logo as glyphs } from "./logo"
+import { wordmark as glyphs } from "./logo"
 
 const wordmark = [
   `⠀                                ▄     `,

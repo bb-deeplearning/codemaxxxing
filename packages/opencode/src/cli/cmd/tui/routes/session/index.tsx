@@ -18,7 +18,7 @@ import { useRoute, useRouteData } from "@tui/context/route"
 import { useProject } from "@tui/context/project"
 import { useSync } from "@tui/context/sync"
 import { useEvent } from "@tui/context/event"
-import { SplitBorder } from "@tui/component/border"
+import { SplitBorder, Rule, LabeledRule } from "@tui/component/border"
 import { Spinner } from "@tui/component/spinner"
 import { selectedForeground, useTheme } from "@tui/context/theme"
 import { BoxRenderable, ScrollBoxRenderable, addDefaultParsers, TextAttributes, RGBA } from "@opentui/core"
@@ -1109,23 +1109,26 @@ export function Session() {
                             onMouseUp={handleUnrevert}
                             marginTop={1}
                             flexShrink={0}
-                            border={["left"]}
-                            customBorderChars={SplitBorder.customBorderChars}
-                            borderColor={theme.backgroundPanel}
                           >
                             <box
-                              paddingTop={1}
-                              paddingBottom={1}
-                              paddingLeft={2}
-                              backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
+                              flexDirection="row"
+                              justifyContent="space-between"
+                              alignItems="center"
+                              paddingLeft={1}
+                              paddingRight={1}
                             >
-                              <text fg={theme.textMuted}>{revert()!.reverted.length} message reverted</text>
+                              <text fg={hover() ? theme.text : theme.textMuted}>reverted</text>
+                              <text fg={theme.textMuted}>
+                                {revert()!.reverted.length} message{revert()!.reverted.length !== 1 ? "s" : ""}
+                              </text>
+                            </box>
+                            <box paddingTop={1} paddingBottom={1} paddingLeft={3} flexShrink={0}>
                               <text fg={theme.textMuted}>
                                 <span style={{ fg: theme.text }}>{keybind.print("messages_redo")}</span> or /redo to
                                 restore
                               </text>
                               <Show when={revert()!.diffFiles?.length}>
-                                <box marginTop={1}>
+                                <box paddingTop={1}>
                                   <For each={revert()!.diffFiles}>
                                     {(file) => (
                                       <text fg={theme.text}>
@@ -1142,6 +1145,7 @@ export function Session() {
                                 </box>
                               </Show>
                             </box>
+                            <Rule color={hover() ? theme.borderActive : theme.border} />
                           </box>
                         )
                       })()}
@@ -1229,7 +1233,7 @@ export function Session() {
                 alignItems="flex-end"
                 backgroundColor={RGBA.fromInts(0, 0, 0, 70)}
               >
-                <Sidebar sessionID={route.sessionID} />
+                <Sidebar sessionID={route.sessionID} overlay />
               </box>
             </Match>
           </Switch>
@@ -1275,37 +1279,58 @@ function UserMessage(props: {
   const queued = createMemo(() => props.pending && props.message.id > props.pending)
   const color = createMemo(() => local.agent.color(props.message.agent))
   const queuedFg = createMemo(() => selectedForeground(theme, color()))
-  const metadataVisible = createMemo(() => queued() || ctx.showTimestamps())
 
   const compaction = createMemo(() => props.parts.find((x) => x.type === "compaction"))
+
+  // Marginalia counter: nth user message in this session.
+  const userIndex = createMemo(() => {
+    const list = ctx.sync.data.message[ctx.sessionID]
+    if (!list) return 1
+    let n = 0
+    for (const m of list) {
+      if (m.role === "user") n++
+      if (m.id === props.message.id) return n
+    }
+    return n
+  })
 
   return (
     <>
       <Show when={text()}>
-        <box
-          id={props.message.id}
-          border={["left"]}
-          borderColor={color()}
-          customBorderChars={SplitBorder.customBorderChars}
-          marginTop={props.index === 0 ? 0 : 1}
-        >
+        <box id={props.message.id} marginTop={props.index === 0 ? 0 : 1} flexShrink={0} flexDirection="row">
+          {/* Inline marginalia at column 0 of body. The agent-color middle dot
+              · carries the speaker identity color. Fixed marginRight=1 so the
+              body column always starts at the same indent regardless of digit
+              count in the index. */}
+          <text fg={hover() ? theme.text : theme.textMuted} flexShrink={0} marginRight={1}>
+            u<span style={{ fg: color() }}>·</span>
+            {userIndex()}
+          </text>
+          {/* Body column */}
           <box
-            onMouseOver={() => {
-              setHover(true)
-            }}
-            onMouseOut={() => {
-              setHover(false)
-            }}
+            flexGrow={1}
+            flexShrink={1}
+            onMouseOver={() => setHover(true)}
+            onMouseOut={() => setHover(false)}
             onMouseUp={props.onMouseUp}
-            paddingTop={1}
-            paddingBottom={1}
-            paddingLeft={2}
-            backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
-            flexShrink={0}
           >
-            <text fg={theme.text}>{text()}</text>
+            <box flexDirection="row" justifyContent="space-between" gap={1}>
+              <text fg={theme.text} flexShrink={1} wrapMode="word">
+                {text()}
+              </text>
+              <Show when={queued()}>
+                <text flexShrink={0}>
+                  <span style={{ bg: color(), fg: queuedFg(), bold: true }}> queued </span>
+                </text>
+              </Show>
+              <Show when={!queued() && ctx.showTimestamps()}>
+                <text flexShrink={0} fg={theme.textMuted}>
+                  {Locale.todayTimeOrDateTime(props.message.time.created)}
+                </text>
+              </Show>
+            </box>
             <Show when={files().length}>
-              <box flexDirection="row" paddingBottom={metadataVisible() ? 1 : 0} paddingTop={1} gap={1} flexWrap="wrap">
+              <box flexDirection="row" paddingTop={1} gap={1} flexWrap="wrap">
                 <For each={files()}>
                   {(file) => {
                     const bg = createMemo(() => {
@@ -1322,22 +1347,6 @@ function UserMessage(props: {
                   }}
                 </For>
               </box>
-            </Show>
-            <Show
-              when={queued()}
-              fallback={
-                <Show when={ctx.showTimestamps()}>
-                  <text fg={theme.textMuted}>
-                    <span style={{ fg: theme.textMuted }}>
-                      {Locale.todayTimeOrDateTime(props.message.time.created)}
-                    </span>
-                  </text>
-                </Show>
-              }
-            >
-              <text fg={theme.textMuted}>
-                <span style={{ bg: color(), fg: queuedFg(), bold: true }}> QUEUED </span>
-              </text>
             </Show>
           </box>
         </box>
@@ -1377,71 +1386,96 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
 
   const keybind = useKeybind()
 
+  // Marginalia counter: nth assistant message in this session.
+  const assistantIndex = createMemo(() => {
+    const list = messages()
+    let n = 0
+    for (const m of list) {
+      if (m.role === "assistant") n++
+      if (m.id === props.message.id) return n
+    }
+    return n
+  })
+
+  const agentColor = createMemo(() => local.agent.color(props.message.agent))
+  const aborted = createMemo(() => props.message.error?.name === "MessageAbortedError")
+  const hasVisibleParts = createMemo(() =>
+    props.parts.some((x) => x.type === "text" || x.type === "tool" || x.type === "reasoning"),
+  )
+
   return (
     <>
-      <For each={props.parts}>
-        {(part, index) => {
-          const component = createMemo(() => PART_MAPPING[part.type as keyof typeof PART_MAPPING])
-          return (
-            <Show when={component()}>
-              <Dynamic
-                last={index() === props.parts.length - 1}
-                component={component()}
-                part={part as any}
-                message={props.message}
-              />
-            </Show>
-          )
-        }}
-      </For>
-      <Show when={props.parts.some((x) => x.type === "tool" && x.tool === "task")}>
-        <box paddingTop={1} paddingLeft={3}>
-          <text fg={theme.text}>
-            {keybind.print("session_child_first")}
-            <span style={{ fg: theme.textMuted }}> view subagents</span>
+      <Show when={hasVisibleParts()}>
+        <box flexDirection="row" flexShrink={0} paddingTop={1}>
+          {/* Inline marginalia at column 0 of the body — same pattern as user
+              messages. The agent-color middle dot signals which agent
+              produced this turn. Body parts render in the column to the
+              right; their existing internal paddings stay (text/reasoning/
+              tool blocks know how to indent themselves under the message
+              wrapper). */}
+          <text fg={theme.textMuted} flexShrink={0} marginRight={1}>
+            a<span style={{ fg: agentColor() }}>·</span>
+            {assistantIndex()}
           </text>
-        </box>
-      </Show>
-      <Show when={props.message.error && props.message.error.name !== "MessageAbortedError"}>
-        <box
-          border={["left"]}
-          paddingTop={1}
-          paddingBottom={1}
-          paddingLeft={2}
-          marginTop={1}
-          backgroundColor={theme.backgroundPanel}
-          customBorderChars={SplitBorder.customBorderChars}
-          borderColor={theme.error}
-        >
-          <text fg={theme.textMuted}>{props.message.error?.data.message}</text>
-        </box>
-      </Show>
-      <Switch>
-        <Match when={props.last || final() || props.message.error?.name === "MessageAbortedError"}>
-          <box paddingLeft={3}>
-            <text marginTop={1}>
-              <span
-                style={{
-                  fg:
-                    props.message.error?.name === "MessageAbortedError"
-                      ? theme.textMuted
-                      : local.agent.color(props.message.agent),
-                }}
-              >
-                ▣{" "}
-              </span>{" "}
-              <span style={{ fg: theme.text }}>{Locale.titlecase(props.message.mode)}</span>
-              <span style={{ fg: theme.textMuted }}> · {model()}</span>
-              <Show when={duration()}>
-                <span style={{ fg: theme.textMuted }}> · {Locale.duration(duration())}</span>
-              </Show>
-              <Show when={props.message.error?.name === "MessageAbortedError"}>
-                <span style={{ fg: theme.textMuted }}> · interrupted</span>
-              </Show>
-            </text>
+          <box flexGrow={1} flexShrink={1}>
+            <For each={props.parts}>
+              {(part, index) => {
+                const component = createMemo(() => PART_MAPPING[part.type as keyof typeof PART_MAPPING])
+                return (
+                  <Show when={component()}>
+                    <Dynamic
+                      last={index() === props.parts.length - 1}
+                      component={component()}
+                      part={part as any}
+                      message={props.message}
+                    />
+                  </Show>
+                )
+              }}
+            </For>
+            <Show when={props.parts.some((x) => x.type === "tool" && x.tool === "task")}>
+              <box paddingTop={1}>
+                <text fg={theme.text}>
+                  {keybind.print("session_child_first")}
+                  <span style={{ fg: theme.textMuted }}> view subagents</span>
+                </text>
+              </box>
+            </Show>
+            <Show when={props.message.error && props.message.error.name !== "MessageAbortedError"}>
+              <box paddingTop={1} flexShrink={0}>
+                <text fg={theme.error}>{props.message.error?.data.message}</text>
+              </box>
+            </Show>
+            {/* Closing summary right-pinned, no rule. modelID + duration
+                muted; only the agent name carries color. Wraps gracefully on
+                narrow widths via flex-wrap on the row. */}
+            <Switch>
+              <Match when={props.last || final() || aborted()}>
+                <box flexDirection="row" justifyContent="flex-end" marginTop={1} flexShrink={0} flexWrap="wrap">
+                  <text>
+                    <span
+                      style={{
+                        fg: aborted() ? theme.textMuted : agentColor(),
+                        bold: !aborted(),
+                      }}
+                    >
+                      {props.message.mode}
+                    </span>
+                    <span style={{ fg: theme.textMuted }}> · </span>
+                    <span style={{ fg: theme.textMuted }}>{props.message.modelID}</span>
+                    <Show when={duration()}>
+                      <span style={{ fg: theme.textMuted }}> · {Locale.duration(duration())}</span>
+                    </Show>
+                    <Show when={aborted()}>
+                      <span style={{ fg: theme.textMuted }}> · interrupted</span>
+                    </Show>
+                  </text>
+                </box>
+              </Match>
+            </Switch>
           </box>
-        </Match>
-      </Switch>
+        </box>
+      </Show>
     </>
   )
 }
@@ -1464,10 +1498,10 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
     <Show when={content() && ctx.showThinking()}>
       <box
         id={"text-" + props.part.id}
-        paddingLeft={2}
         marginTop={1}
         flexDirection="column"
         border={["left"]}
+        paddingLeft={1}
         customBorderChars={SplitBorder.customBorderChars}
         borderColor={theme.backgroundElement}
       >
@@ -1490,7 +1524,7 @@ function TextPart(props: { last: boolean; part: TextPart; message: AssistantMess
   const { theme, syntax } = useTheme()
   return (
     <Show when={props.part.text.trim()}>
-      <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0}>
+      <box id={"text-" + props.part.id} marginTop={1} flexShrink={0}>
         <Switch>
           <Match when={Flag.OPENCODE_EXPERIMENTAL_MARKDOWN}>
             <markdown
@@ -1630,13 +1664,14 @@ function GenericTool(props: ToolProps<any>) {
     <Show
       when={props.output && ctx.showGenericToolOutput()}
       fallback={
-        <InlineTool icon="⚙" pending="Writing command..." complete={true} part={props.part}>
-          {props.tool} {input(props.input)}
+        <InlineTool label={props.tool} pending="Writing command..." complete={true} part={props.part}>
+          {input(props.input)}
         </InlineTool>
       }
     >
       <BlockTool
-        title={`# ${props.tool} ${input(props.input)}`}
+        label={props.tool}
+        target={input(props.input)}
         part={props.part}
         onClick={overflow() ? () => setExpanded((prev) => !prev) : undefined}
       >
@@ -1652,8 +1687,7 @@ function GenericTool(props: ToolProps<any>) {
 }
 
 function InlineTool(props: {
-  icon: string
-  iconColor?: RGBA
+  label: string
   complete: any
   pending: string
   spinner?: boolean
@@ -1674,7 +1708,13 @@ function InlineTool(props: {
     return callID === props.part.callID
   })
 
-  const fg = createMemo(() => {
+  const labelFg = createMemo(() => {
+    if (permission()) return theme.warning
+    if (hover() && props.onClick) return theme.text
+    return theme.textMuted
+  })
+
+  const bodyFg = createMemo(() => {
     if (permission()) return theme.warning
     if (hover() && props.onClick) return theme.text
     if (props.complete) return theme.textMuted
@@ -1694,7 +1734,6 @@ function InlineTool(props: {
   return (
     <box
       marginTop={margin()}
-      paddingLeft={3}
       onMouseOver={() => props.onClick && setHover(true)}
       onMouseOut={() => setHover(false)}
       onMouseUp={() => {
@@ -1726,12 +1765,18 @@ function InlineTool(props: {
     >
       <Switch>
         <Match when={props.spinner}>
-          <Spinner color={fg()} children={props.children} />
+          <Spinner color={bodyFg()}>
+            <span style={{ fg: labelFg() }}>{props.label}</span>
+            <span style={{ fg: theme.border }}>{" · "}</span>
+            {props.children}
+          </Spinner>
         </Match>
         <Match when={true}>
-          <text paddingLeft={3} fg={fg()} attributes={denied() ? TextAttributes.STRIKETHROUGH : undefined}>
-            <Show fallback={<>~ {props.pending}</>} when={props.complete}>
-              <span style={{ fg: props.iconColor }}>{props.icon}</span> {props.children}
+          <text fg={bodyFg()} attributes={denied() ? TextAttributes.STRIKETHROUGH : undefined}>
+            <Show fallback={<>{props.pending}</>} when={props.complete}>
+              <span style={{ fg: labelFg() }}>{props.label}</span>
+              <span style={{ fg: theme.border }}>{" · "}</span>
+              {props.children}
             </Show>
           </text>
         </Match>
@@ -1744,8 +1789,10 @@ function InlineTool(props: {
 }
 
 function BlockTool(props: {
-  title: string
-  children: JSX.Element
+  label: string
+  target?: string
+  meta?: JSX.Element
+  children?: JSX.Element
   onClick?: () => void
   part?: ToolPart
   spinner?: boolean
@@ -1754,17 +1801,15 @@ function BlockTool(props: {
   const renderer = useRenderer()
   const [hover, setHover] = createSignal(false)
   const error = createMemo(() => (props.part?.state.status === "error" ? props.part.state.error : undefined))
+
+  const dotColor = createMemo(() => (hover() && props.onClick ? theme.text : theme.border))
+  const labelFg = createMemo(() => (hover() && props.onClick ? theme.text : theme.textMuted))
+
   return (
     <box
-      border={["left"]}
-      paddingTop={1}
-      paddingBottom={1}
-      paddingLeft={2}
       marginTop={1}
       gap={1}
-      backgroundColor={hover() ? theme.backgroundMenu : theme.backgroundPanel}
-      customBorderChars={SplitBorder.customBorderChars}
-      borderColor={theme.background}
+      flexShrink={0}
       onMouseOver={() => props.onClick && setHover(true)}
       onMouseOut={() => setHover(false)}
       onMouseUp={() => {
@@ -1772,17 +1817,27 @@ function BlockTool(props: {
         props.onClick?.()
       }}
     >
-      <Show
-        when={props.spinner}
-        fallback={
-          <text paddingLeft={3} fg={theme.textMuted}>
-            {props.title}
-          </text>
-        }
-      >
-        <Spinner color={theme.textMuted}>{props.title.replace(/^# /, "")}</Spinner>
+      {/* Header: label · target · meta. Middle-dot separators (not ─────
+          rule) match the visual language of the agent meta strip and read
+          as one labeled item with metadata, not a heavy divider. */}
+      <box flexDirection="row" gap={1} alignItems="center" flexShrink={0} flexWrap="wrap">
+        <Show when={props.spinner} fallback={<text fg={labelFg()}>{props.label}</text>}>
+          <Spinner color={labelFg()}>{props.label}</Spinner>
+        </Show>
+        <Show when={props.target}>
+          <text fg={dotColor()}>·</text>
+          <text fg={theme.text}>{props.target}</text>
+        </Show>
+        <Show when={props.meta}>
+          <text fg={dotColor()}>·</text>
+          <text>{props.meta}</text>
+        </Show>
+      </box>
+      <Show when={props.children}>
+        <box paddingLeft={2} flexShrink={0}>
+          {props.children}
+        </box>
       </Show>
-      {props.children}
       <Show when={error()}>
         <text fg={theme.error}>{error()}</text>
       </Show>
@@ -1820,19 +1875,20 @@ function Shell(props: ToolProps<typeof ShellTool>) {
     return match ? absolute.replace(home, "~") : absolute
   })
 
-  const title = createMemo(() => {
+  const description = createMemo(() => {
     const desc = props.input.description ?? "Shell"
     const wd = workdirDisplay()
-    if (!wd) return `# ${desc}`
-    if (desc.includes(wd)) return `# ${desc}`
-    return `# ${desc} in ${wd}`
+    if (!wd) return desc
+    if (desc.includes(wd)) return desc
+    return `${desc} in ${wd}`
   })
 
   return (
     <Switch>
       <Match when={props.metadata.output !== undefined}>
         <BlockTool
-          title={title()}
+          label="shell"
+          target={description()}
           part={props.part}
           spinner={isRunning()}
           onClick={overflow() ? () => setExpanded((prev) => !prev) : undefined}
@@ -1849,8 +1905,8 @@ function Shell(props: ToolProps<typeof ShellTool>) {
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="$" pending="Writing command..." complete={props.input.command} part={props.part}>
-          {props.input.command}
+        <InlineTool label="shell" pending="Writing command..." complete={props.input.command} part={props.part}>
+          $ {props.input.command}
         </InlineTool>
       </Match>
     </Switch>
@@ -1867,7 +1923,7 @@ function Write(props: ToolProps<typeof WriteTool>) {
   return (
     <Switch>
       <Match when={props.metadata.diagnostics !== undefined}>
-        <BlockTool title={"# Wrote " + normalizePath(props.input.filePath!)} part={props.part}>
+        <BlockTool label="wrote" target={normalizePath(props.input.filePath!)} part={props.part}>
           <line_number fg={theme.textMuted} minWidth={3} paddingRight={1}>
             <code
               conceal={false}
@@ -1881,8 +1937,8 @@ function Write(props: ToolProps<typeof WriteTool>) {
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="←" pending="Preparing write..." complete={props.input.filePath} part={props.part}>
-          Write {normalizePath(props.input.filePath!)}
+        <InlineTool label="write" pending="Preparing write..." complete={props.input.filePath} part={props.part}>
+          {normalizePath(props.input.filePath!)}
         </InlineTool>
       </Match>
     </Switch>
@@ -1891,8 +1947,8 @@ function Write(props: ToolProps<typeof WriteTool>) {
 
 function Glob(props: ToolProps<typeof GlobTool>) {
   return (
-    <InlineTool icon="✱" pending="Finding files..." complete={props.input.pattern} part={props.part}>
-      Glob "{props.input.pattern}" <Show when={props.input.path}>in {normalizePath(props.input.path)} </Show>
+    <InlineTool label="glob" pending="Finding files..." complete={props.input.pattern} part={props.part}>
+      "{props.input.pattern}" <Show when={props.input.path}>in {normalizePath(props.input.path)} </Show>
       <Show when={props.metadata.count}>
         ({props.metadata.count} {props.metadata.count === 1 ? "match" : "matches"})
       </Show>
@@ -1913,13 +1969,13 @@ function Read(props: ToolProps<typeof ReadTool>) {
   return (
     <>
       <InlineTool
-        icon="→"
+        label="read"
         pending="Reading file..."
         complete={props.input.filePath}
         spinner={isRunning()}
         part={props.part}
       >
-        Read {normalizePath(props.input.filePath!)} {input(props.input, ["filePath"])}
+        {normalizePath(props.input.filePath!)} {input(props.input, ["filePath"])}
       </InlineTool>
       <For each={loaded()}>
         {(filepath) => (
@@ -1936,8 +1992,8 @@ function Read(props: ToolProps<typeof ReadTool>) {
 
 function Grep(props: ToolProps<typeof GrepTool>) {
   return (
-    <InlineTool icon="✱" pending="Searching content..." complete={props.input.pattern} part={props.part}>
-      Grep "{props.input.pattern}" <Show when={props.input.path}>in {normalizePath(props.input.path)} </Show>
+    <InlineTool label="grep" pending="Searching content..." complete={props.input.pattern} part={props.part}>
+      "{props.input.pattern}" <Show when={props.input.path}>in {normalizePath(props.input.path)} </Show>
       <Show when={props.metadata.matches}>
         ({props.metadata.matches} {props.metadata.matches === 1 ? "match" : "matches"})
       </Show>
@@ -1947,8 +2003,8 @@ function Grep(props: ToolProps<typeof GrepTool>) {
 
 function WebFetch(props: ToolProps<typeof WebFetchTool>) {
   return (
-    <InlineTool icon="%" pending="Fetching from the web..." complete={props.input.url} part={props.part}>
-      WebFetch {props.input.url}
+    <InlineTool label="webfetch" pending="Fetching from the web..." complete={props.input.url} part={props.part}>
+      {props.input.url}
     </InlineTool>
   )
 }
@@ -1985,11 +2041,13 @@ function WebSearch(props: ToolProps<typeof WebSearchTool>) {
     <Switch>
       <Match when={results().length && expanded()}>
         <BlockTool
-          title={`◈ Web search: "${input.query}" — ${results().length} results`}
+          label="websearch"
+          target={`"${input.query}"`}
+          meta={<span style={{ fg: theme.textMuted }}>{results().length} results</span>}
           part={props.part}
           onClick={() => setExpanded(false)}
         >
-          <box gap={1} paddingLeft={1}>
+          <box gap={1}>
             <For each={results()}>
               {(r, i) => (
                 <box>
@@ -2007,25 +2065,23 @@ function WebSearch(props: ToolProps<typeof WebSearchTool>) {
               )}
             </For>
           </box>
-          <text paddingLeft={1} fg={theme.textMuted}>
-            Click to collapse
-          </text>
+          <text fg={theme.textMuted}>Click to collapse</text>
         </BlockTool>
       </Match>
       <Match when={results().length}>
         <BlockTool
-          title={`◈ Web search: "${input.query}" — ${results().length} results`}
+          label="websearch"
+          target={`"${input.query}"`}
+          meta={<span style={{ fg: theme.textMuted }}>{results().length} results</span>}
           part={props.part}
           onClick={() => setExpanded(true)}
         >
-          <text paddingLeft={1} fg={theme.textMuted}>
-            Click to view results
-          </text>
+          <text fg={theme.textMuted}>Click to view results</text>
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="◈" pending="Searching web..." complete={input.query} part={props.part}>
-          Web search "{input.query}"
+        <InlineTool label="websearch" pending="Searching web..." complete={input.query} part={props.part}>
+          "{input.query}"
         </InlineTool>
       </Match>
     </Switch>
@@ -2086,7 +2142,7 @@ function Task(props: ToolProps<typeof TaskTool>) {
 
   return (
     <InlineTool
-      icon="│"
+      label="task"
       spinner={isRunning()}
       complete={props.input.description}
       pending="Delegating..."
@@ -2117,37 +2173,53 @@ function Edit(props: ToolProps<typeof EditTool>) {
 
   const diffContent = createMemo(() => props.metadata.diff)
 
+  const diffMeta = createMemo(() => {
+    const fd = props.metadata.filediff as { additions?: number; deletions?: number } | undefined
+    const adds = fd?.additions ?? 0
+    const dels = fd?.deletions ?? 0
+    if (!adds && !dels) return undefined
+    return (
+      <>
+        <Show when={adds > 0}>
+          <span style={{ fg: theme.diffAdded }}>+{adds}</span>
+        </Show>
+        <Show when={adds > 0 && dels > 0}> </Show>
+        <Show when={dels > 0}>
+          <span style={{ fg: theme.diffRemoved }}>-{dels}</span>
+        </Show>
+      </>
+    )
+  })
+
   return (
     <Switch>
       <Match when={props.metadata.diff !== undefined}>
-        <BlockTool title={"← Edit " + normalizePath(props.input.filePath!)} part={props.part}>
-          <box paddingLeft={1}>
-            <diff
-              diff={diffContent()}
-              view={view()}
-              filetype={ft()}
-              syntaxStyle={syntax()}
-              showLineNumbers={true}
-              width="100%"
-              wrapMode={ctx.diffWrapMode()}
-              fg={theme.text}
-              addedBg={theme.diffAddedBg}
-              removedBg={theme.diffRemovedBg}
-              contextBg={theme.diffContextBg}
-              addedSignColor={theme.diffHighlightAdded}
-              removedSignColor={theme.diffHighlightRemoved}
-              lineNumberFg={theme.diffLineNumber}
-              lineNumberBg={theme.diffContextBg}
-              addedLineNumberBg={theme.diffAddedLineNumberBg}
-              removedLineNumberBg={theme.diffRemovedLineNumberBg}
-            />
-          </box>
+        <BlockTool label="edit" target={normalizePath(props.input.filePath!)} meta={diffMeta()} part={props.part}>
+          <diff
+            diff={diffContent()}
+            view={view()}
+            filetype={ft()}
+            syntaxStyle={syntax()}
+            showLineNumbers={true}
+            width="100%"
+            wrapMode={ctx.diffWrapMode()}
+            fg={theme.text}
+            addedBg={theme.diffAddedBg}
+            removedBg={theme.diffRemovedBg}
+            contextBg={theme.diffContextBg}
+            addedSignColor={theme.diffHighlightAdded}
+            removedSignColor={theme.diffHighlightRemoved}
+            lineNumberFg={theme.diffLineNumber}
+            lineNumberBg={theme.diffContextBg}
+            addedLineNumberBg={theme.diffAddedLineNumberBg}
+            removedLineNumberBg={theme.diffRemovedLineNumberBg}
+          />
           <Diagnostics diagnostics={props.metadata.diagnostics} filePath={props.input.filePath ?? ""} />
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="←" pending="Preparing edit..." complete={props.input.filePath} part={props.part}>
-          Edit {normalizePath(props.input.filePath!)} {input({ replaceAll: props.input.replaceAll })}
+        <InlineTool label="edit" pending="Preparing edit..." complete={props.input.filePath} part={props.part}>
+          {normalizePath(props.input.filePath!)} {input({ replaceAll: props.input.replaceAll })}
         </InlineTool>
       </Match>
     </Switch>
@@ -2168,35 +2240,38 @@ function ApplyPatch(props: ToolProps<typeof ApplyPatchTool>) {
 
   function Diff(p: { diff: string; filePath: string }) {
     return (
-      <box paddingLeft={1}>
-        <diff
-          diff={p.diff}
-          view={view()}
-          filetype={filetype(p.filePath)}
-          syntaxStyle={syntax()}
-          showLineNumbers={true}
-          width="100%"
-          wrapMode={ctx.diffWrapMode()}
-          fg={theme.text}
-          addedBg={theme.diffAddedBg}
-          removedBg={theme.diffRemovedBg}
-          contextBg={theme.diffContextBg}
-          addedSignColor={theme.diffHighlightAdded}
-          removedSignColor={theme.diffHighlightRemoved}
-          lineNumberFg={theme.diffLineNumber}
-          lineNumberBg={theme.diffContextBg}
-          addedLineNumberBg={theme.diffAddedLineNumberBg}
-          removedLineNumberBg={theme.diffRemovedLineNumberBg}
-        />
-      </box>
+      <diff
+        diff={p.diff}
+        view={view()}
+        filetype={filetype(p.filePath)}
+        syntaxStyle={syntax()}
+        showLineNumbers={true}
+        width="100%"
+        wrapMode={ctx.diffWrapMode()}
+        fg={theme.text}
+        addedBg={theme.diffAddedBg}
+        removedBg={theme.diffRemovedBg}
+        contextBg={theme.diffContextBg}
+        addedSignColor={theme.diffHighlightAdded}
+        removedSignColor={theme.diffHighlightRemoved}
+        lineNumberFg={theme.diffLineNumber}
+        lineNumberBg={theme.diffContextBg}
+        addedLineNumberBg={theme.diffAddedLineNumberBg}
+        removedLineNumberBg={theme.diffRemovedLineNumberBg}
+      />
     )
   }
 
-  function title(file: { type: string; relativePath: string; filePath: string; deletions: number }) {
-    if (file.type === "delete") return "# Deleted " + file.relativePath
-    if (file.type === "add") return "# Created " + file.relativePath
-    if (file.type === "move") return "# Moved " + normalizePath(file.filePath) + " → " + file.relativePath
-    return "← Patched " + file.relativePath
+  function fileLabel(file: { type: string }) {
+    if (file.type === "delete") return "deleted"
+    if (file.type === "add") return "created"
+    if (file.type === "move") return "moved"
+    return "patched"
+  }
+
+  function fileTarget(file: { type: string; relativePath: string; filePath: string }) {
+    if (file.type === "move") return `${normalizePath(file.filePath)} → ${file.relativePath}`
+    return file.relativePath
   }
 
   return (
@@ -2204,7 +2279,7 @@ function ApplyPatch(props: ToolProps<typeof ApplyPatchTool>) {
       <Match when={files().length > 0}>
         <For each={files()}>
           {(file) => (
-            <BlockTool title={title(file)} part={props.part}>
+            <BlockTool label={fileLabel(file)} target={fileTarget(file)} part={props.part}>
               <Show
                 when={file.type !== "delete"}
                 fallback={
@@ -2221,7 +2296,7 @@ function ApplyPatch(props: ToolProps<typeof ApplyPatchTool>) {
         </For>
       </Match>
       <Match when={true}>
-        <InlineTool icon="%" pending="Preparing patch..." complete={false} part={props.part}>
+        <InlineTool label="patch" pending="Preparing patch..." complete={false} part={props.part}>
           Patch
         </InlineTool>
       </Match>
@@ -2233,7 +2308,7 @@ function TodoWrite(props: ToolProps<typeof TodoWriteTool>) {
   return (
     <Switch>
       <Match when={props.metadata.todos?.length}>
-        <BlockTool title="# Todos" part={props.part}>
+        <BlockTool label="todos" part={props.part}>
           <box>
             <For each={props.input.todos ?? []}>
               {(todo) => <TodoItem status={todo.status} content={todo.content} />}
@@ -2242,7 +2317,7 @@ function TodoWrite(props: ToolProps<typeof TodoWriteTool>) {
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="⚙" pending="Updating todos..." complete={false} part={props.part}>
+        <InlineTool label="todos" pending="Updating todos..." complete={false} part={props.part}>
           Updating todos...
         </InlineTool>
       </Match>
@@ -2262,7 +2337,7 @@ function Question(props: ToolProps<typeof QuestionTool>) {
   return (
     <Switch>
       <Match when={props.metadata.answers}>
-        <BlockTool title="# Questions" part={props.part}>
+        <BlockTool label="questions" part={props.part}>
           <box gap={1}>
             <For each={props.input.questions ?? []}>
               {(q, i) => (
@@ -2276,7 +2351,7 @@ function Question(props: ToolProps<typeof QuestionTool>) {
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="→" pending="Asking questions..." complete={count()} part={props.part}>
+        <InlineTool label="question" pending="Asking questions..." complete={count()} part={props.part}>
           Asked {count()} question{count() !== 1 ? "s" : ""}
         </InlineTool>
       </Match>
@@ -2286,8 +2361,8 @@ function Question(props: ToolProps<typeof QuestionTool>) {
 
 function Skill(props: ToolProps<typeof SkillTool>) {
   return (
-    <InlineTool icon="→" pending="Loading skill..." complete={props.input.name} part={props.part}>
-      Skill "{props.input.name}"
+    <InlineTool label="skill" pending="Loading skill..." complete={props.input.name} part={props.part}>
+      "{props.input.name}"
     </InlineTool>
   )
 }

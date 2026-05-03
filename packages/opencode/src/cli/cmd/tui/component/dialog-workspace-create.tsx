@@ -136,9 +136,9 @@ export function DialogWorkspaceCreate(props: { onSelect: (workspaceID: string) =
     if (type) {
       return [
         {
-          title: `Creating ${type} workspace...`,
+          title: `creating ${type} workspace...`,
           value: "creating" as const,
-          description: "This can take a while for remote environments",
+          description: "this can take a while for remote environments",
         },
       ]
     }
@@ -146,9 +146,9 @@ export function DialogWorkspaceCreate(props: { onSelect: (workspaceID: string) =
     if (!list) {
       return [
         {
-          title: "Loading workspaces...",
+          title: "loading workspaces...",
           value: "loading" as const,
-          description: "Fetching available workspace adapters",
+          description: "fetching available workspace adapters",
         },
       ]
     }
@@ -188,7 +188,7 @@ export function DialogWorkspaceCreate(props: { onSelect: (workspaceID: string) =
 
   return (
     <DialogSelect
-      title={creating() ? "Creating Workspace" : "New Workspace"}
+      title={creating() ? "creating workspace" : "new workspace"}
       skipFilter={true}
       options={options()}
       onSelect={(option) => {

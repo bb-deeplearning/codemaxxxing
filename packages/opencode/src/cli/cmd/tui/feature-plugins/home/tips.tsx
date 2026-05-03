@@ -17,13 +17,13 @@ function View(props: { show: boolean; connected: boolean }) {
 const tui: TuiPlugin = async (api) => {
   api.command.register(() => [
     {
-      title: api.kv.get("tips_hidden", false) ? "Show tips" : "Hide tips",
+      title: api.kv.get("tips_hidden", true) ? "Show tips" : "Hide tips",
       value: "tips.toggle",
       keybind: "tips_toggle",
       category: "System",
       hidden: api.route.current.name !== "home",
       onSelect() {
-        api.kv.set("tips_hidden", !api.kv.get("tips_hidden", false))
+        api.kv.set("tips_hidden", !api.kv.get("tips_hidden", true))
         api.ui.dialog.clear()
       },
     },
@@ -33,7 +33,7 @@ const tui: TuiPlugin = async (api) => {
     order: 100,
     slots: {
       home_bottom() {
-        const hidden = createMemo(() => api.kv.get("tips_hidden", false))
+        const hidden = createMemo(() => api.kv.get("tips_hidden", true))
         const first = createMemo(() => api.state.session.count() === 0)
         const connected = createMemo(() =>
           api.state.provider.some(

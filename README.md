@@ -1,6 +1,6 @@
 # codemaxxxing
 
-An opinionated fork of [OpenCode](https://github.com/anomalyco/opencode) ([docs](https://opencode.ai/docs)), used internally for all development on [Clauseo](https://clauseo.chat) and other [bbdeeplearning.systems](https://bbdeeplearning.systems) projects.
+An opinionated, heavily-customized fork of [OpenCode](https://github.com/anomalyco/opencode) ([docs](https://opencode.ai/docs)), used internally for all development on [Clauseo](https://clauseo.chat) and other [bbdeeplearning.systems](https://bbdeeplearning.systems) projects.
 
 Rewritten system prompts, aggressive subagent parallelism, stricter permissions, and custom agents — including a [wave executor](#wave-executor-workflow) for breaking large tasks across fresh sessions. The prompts and agents are portable to stock OpenCode; the fork adds the prompt and agent changes that make them work well.
 
@@ -157,6 +157,7 @@ Read more: [Why waves instead of plan-and-build](./WAVES.md)
 - Custom ASCII art logo
 - Rebranded TUI sidebar and exit screen
 - Collapsible web search and code search result displays in TUI
+- New large-output rendering surfaces being tested in this iteration
 - `/execute-wave` (alias `/wave`) slash command — switches to build agent, opens new session with wave prompt and file context pre-filled
 
 ### Bug fixes

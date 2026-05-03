@@ -19,10 +19,10 @@ export function DialogMessage(props: {
 
   return (
     <DialogSelect
-      title="Message Actions"
+      title="message actions"
       options={[
         {
-          title: "Revert",
+          title: "revert",
           value: "session.revert",
           description: "undo messages and file changes",
           onSelect: (dialog) => {
@@ -53,7 +53,7 @@ export function DialogMessage(props: {
           },
         },
         {
-          title: "Copy",
+          title: "copy",
           value: "message.copy",
           description: "message text to clipboard",
           onSelect: async (dialog) => {
@@ -73,7 +73,7 @@ export function DialogMessage(props: {
           },
         },
         {
-          title: "Fork",
+          title: "fork",
           value: "session.fork",
           description: "create a new session",
           onSelect: async (dialog) => {
