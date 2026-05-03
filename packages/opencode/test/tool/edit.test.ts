@@ -4,13 +4,15 @@ import fs from "fs/promises"
 import { Effect, Layer, ManagedRuntime } from "effect"
 import { EditTool } from "../../src/tool/edit"
 import { Instance } from "../../src/project/instance"
-import { tmpdir } from "../fixture/fixture"
-import { FileTime } from "../../src/file/time"
-import { LSP } from "../../src/lsp"
-import { AppFileSystem } from "../../src/filesystem"
+import { WithInstance } from "../../src/project/with-instance"
+import { disposeAllInstances, tmpdir } from "../fixture/fixture"
+import { LSP } from "@/lsp/lsp"
+import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { Format } from "../../src/format"
+import { Agent } from "../../src/agent/agent"
 import { Bus } from "../../src/bus"
 import { BusEvent } from "../../src/bus/bus-event"
+import { Truncate } from "@/tool/truncate"
 import { SessionID, MessageID } from "../../src/session/schema"
 
 const ctx = {
@@ -25,16 +27,18 @@ const ctx = {
 }
 
 afterEach(async () => {
-  await Instance.disposeAll()
+  await disposeAllInstances()
 })
 
-async function touch(file: string, time: number) {
-  const date = new Date(time)
-  await fs.utimes(file, date, date)
-}
-
 const runtime = ManagedRuntime.make(
-  Layer.mergeAll(LSP.defaultLayer, FileTime.defaultLayer, AppFileSystem.defaultLayer, Format.defaultLayer, Bus.layer),
+  Layer.mergeAll(
+    LSP.defaultLayer,
+    AppFileSystem.defaultLayer,
+    Format.defaultLayer,
+    Bus.layer,
+    Truncate.defaultLayer,
+    Agent.defaultLayer,
+  ),
 )
 
 afterAll(async () => {
@@ -45,15 +49,24 @@ const resolve = () =>
   runtime.runPromise(
     Effect.gen(function* () {
       const info = yield* EditTool
-      return yield* Effect.promise(() => info.init())
+      return yield* info.init()
     }),
   )
 
-const readFileTime = (sessionID: SessionID, filepath: string) =>
-  runtime.runPromise(FileTime.Service.use((ft) => ft.read(sessionID, filepath)))
-
 const subscribeBus = <D extends BusEvent.Definition>(def: D, callback: () => unknown) =>
   runtime.runPromise(Bus.Service.use((bus) => bus.subscribeCallback(def, callback)))
+
+async function onceBus<D extends BusEvent.Definition>(def: D) {
+  const result = Promise.withResolvers<void>()
+  const unsub = await subscribeBus(def, () => {
+    unsub()
+    result.resolve()
+  })
+  return {
+    wait: result.promise,
+    unsub,
+  }
+}
 
 describe("tool.edit", () => {
   describe("creating new files", () => {
@@ -61,7 +74,7 @@ describe("tool.edit", () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "newfile.txt")
 
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
           const edit = await resolve()
@@ -84,11 +97,42 @@ describe("tool.edit", () => {
       })
     })
 
+    test("preserves BOM when oldString is empty on existing files", async () => {
+      await using tmp = await tmpdir()
+      const filepath = path.join(tmp.path, "existing.cs")
+      const bom = String.fromCharCode(0xfeff)
+      await fs.writeFile(filepath, `${bom}using System;\n`, "utf-8")
+
+      await WithInstance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const edit = await resolve()
+          const result = await Effect.runPromise(
+            edit.execute(
+              {
+                filePath: filepath,
+                oldString: "",
+                newString: "using Up;\n",
+              },
+              ctx,
+            ),
+          )
+
+          expect(result.metadata.diff).toContain("-using System;")
+          expect(result.metadata.diff).toContain("+using Up;")
+
+          const content = await fs.readFile(filepath, "utf-8")
+          expect(content.charCodeAt(0)).toBe(0xfeff)
+          expect(content.slice(1)).toBe("using Up;\n")
+        },
+      })
+    })
+
     test("creates new file with nested directories", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "nested", "dir", "file.txt")
 
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
           const edit = await resolve()
@@ -113,28 +157,30 @@ describe("tool.edit", () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "new.txt")
 
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
           const { FileWatcher } = await import("../../src/file/watcher")
 
-          const events: string[] = []
-          const unsubUpdated = await subscribeBus(FileWatcher.Event.Updated, () => events.push("updated"))
+          const updated = await onceBus(FileWatcher.Event.Updated)
 
-          const edit = await resolve()
-          await Effect.runPromise(
-            edit.execute(
-              {
-                filePath: filepath,
-                oldString: "",
-                newString: "content",
-              },
-              ctx,
-            ),
-          )
+          try {
+            const edit = await resolve()
+            await Effect.runPromise(
+              edit.execute(
+                {
+                  filePath: filepath,
+                  oldString: "",
+                  newString: "content",
+                },
+                ctx,
+              ),
+            )
 
-          expect(events).toContain("updated")
-          unsubUpdated()
+            await updated.wait
+          } finally {
+            updated.unsub()
+          }
         },
       })
     })
@@ -146,11 +192,9 @@ describe("tool.edit", () => {
       const filepath = path.join(tmp.path, "existing.txt")
       await fs.writeFile(filepath, "old content here", "utf-8")
 
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
-          await readFileTime(ctx.sessionID, filepath)
-
           const edit = await resolve()
           const result = await Effect.runPromise(
             edit.execute(
@@ -171,15 +215,45 @@ describe("tool.edit", () => {
       })
     })
 
+    test("replaces the first visible line in BOM files", async () => {
+      await using tmp = await tmpdir()
+      const filepath = path.join(tmp.path, "existing.cs")
+      const bom = String.fromCharCode(0xfeff)
+      await fs.writeFile(filepath, `${bom}using System;\nclass Test {}\n`, "utf-8")
+
+      await WithInstance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const edit = await resolve()
+          const result = await Effect.runPromise(
+            edit.execute(
+              {
+                filePath: filepath,
+                oldString: "using System;",
+                newString: "using Up;",
+              },
+              ctx,
+            ),
+          )
+
+          expect(result.metadata.diff).toContain("-using System;")
+          expect(result.metadata.diff).toContain("+using Up;")
+          expect(result.metadata.diff).not.toContain(bom)
+
+          const content = await fs.readFile(filepath, "utf-8")
+          expect(content.charCodeAt(0)).toBe(0xfeff)
+          expect(content.slice(1)).toBe("using Up;\nclass Test {}\n")
+        },
+      })
+    })
+
     test("throws error when file does not exist", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "nonexistent.txt")
 
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
-          await readFileTime(ctx.sessionID, filepath)
-
           const edit = await resolve()
           await expect(
             Effect.runPromise(
@@ -202,7 +276,7 @@ describe("tool.edit", () => {
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "content", "utf-8")
 
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
           const edit = await resolve()
@@ -227,11 +301,9 @@ describe("tool.edit", () => {
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "actual content", "utf-8")
 
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
-          await readFileTime(ctx.sessionID, filepath)
-
           const edit = await resolve()
           await expect(
             Effect.runPromise(
@@ -249,75 +321,14 @@ describe("tool.edit", () => {
       })
     })
 
-    test("throws error when file was not read first (FileTime)", async () => {
-      await using tmp = await tmpdir()
-      const filepath = path.join(tmp.path, "file.txt")
-      await fs.writeFile(filepath, "content", "utf-8")
-
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          const edit = await resolve()
-          await expect(
-            Effect.runPromise(
-              edit.execute(
-                {
-                  filePath: filepath,
-                  oldString: "content",
-                  newString: "modified",
-                },
-                ctx,
-              ),
-            ),
-          ).rejects.toThrow("You must read file")
-        },
-      })
-    })
-
-    test("throws error when file has been modified since read", async () => {
-      await using tmp = await tmpdir()
-      const filepath = path.join(tmp.path, "file.txt")
-      await fs.writeFile(filepath, "original content", "utf-8")
-      await touch(filepath, 1_000)
-
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          // Read first
-          await readFileTime(ctx.sessionID, filepath)
-
-          // Simulate external modification
-          await fs.writeFile(filepath, "modified externally", "utf-8")
-          await touch(filepath, 2_000)
-
-          // Try to edit with the new content
-          const edit = await resolve()
-          await expect(
-            Effect.runPromise(
-              edit.execute(
-                {
-                  filePath: filepath,
-                  oldString: "modified externally",
-                  newString: "edited",
-                },
-                ctx,
-              ),
-            ),
-          ).rejects.toThrow("modified since it was last read")
-        },
-      })
-    })
-
     test("replaces all occurrences with replaceAll option", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "foo bar foo baz foo", "utf-8")
 
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
-          await readFileTime(ctx.sessionID, filepath)
-
           const edit = await resolve()
           await Effect.runPromise(
             edit.execute(
@@ -342,30 +353,30 @@ describe("tool.edit", () => {
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "original", "utf-8")
 
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
-          await readFileTime(ctx.sessionID, filepath)
-
           const { FileWatcher } = await import("../../src/file/watcher")
 
-          const events: string[] = []
-          const unsubUpdated = await subscribeBus(FileWatcher.Event.Updated, () => events.push("updated"))
+          const updated = await onceBus(FileWatcher.Event.Updated)
 
-          const edit = await resolve()
-          await Effect.runPromise(
-            edit.execute(
-              {
-                filePath: filepath,
-                oldString: "original",
-                newString: "modified",
-              },
-              ctx,
-            ),
-          )
+          try {
+            const edit = await resolve()
+            await Effect.runPromise(
+              edit.execute(
+                {
+                  filePath: filepath,
+                  oldString: "original",
+                  newString: "modified",
+                },
+                ctx,
+              ),
+            )
 
-          expect(events).toContain("updated")
-          unsubUpdated()
+            await updated.wait
+          } finally {
+            updated.unsub()
+          }
         },
       })
     })
@@ -377,11 +388,9 @@ describe("tool.edit", () => {
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "line1\nline2\nline3", "utf-8")
 
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
-          await readFileTime(ctx.sessionID, filepath)
-
           const edit = await resolve()
           await Effect.runPromise(
             edit.execute(
@@ -405,11 +414,9 @@ describe("tool.edit", () => {
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "line1\r\nold\r\nline3", "utf-8")
 
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
-          await readFileTime(ctx.sessionID, filepath)
-
           const edit = await resolve()
           await Effect.runPromise(
             edit.execute(
@@ -433,7 +440,7 @@ describe("tool.edit", () => {
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "content", "utf-8")
 
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
           const edit = await resolve()
@@ -458,11 +465,9 @@ describe("tool.edit", () => {
       const dirpath = path.join(tmp.path, "adir")
       await fs.mkdir(dirpath)
 
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
-          await readFileTime(ctx.sessionID, dirpath)
-
           const edit = await resolve()
           await expect(
             Effect.runPromise(
@@ -485,11 +490,9 @@ describe("tool.edit", () => {
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "line1\nline2\nline3", "utf-8")
 
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
-          await readFileTime(ctx.sessionID, filepath)
-
           const edit = await resolve()
           const result = await Effect.runPromise(
             edit.execute(
@@ -556,12 +559,11 @@ describe("tool.edit", () => {
         },
       })
 
-      return await Instance.provide({
+      return await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
           const edit = await resolve()
           const filePath = path.join(tmp.path, "test.txt")
-          await readFileTime(ctx.sessionID, filePath)
           await Effect.runPromise(
             edit.execute(
               {
@@ -696,47 +698,56 @@ describe("tool.edit", () => {
   })
 
   describe("concurrent editing", () => {
-    test("serializes concurrent edits to same file", async () => {
+    test("preserves concurrent edits to different sections of the same file", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "file.txt")
-      await fs.writeFile(filepath, "0", "utf-8")
+      await fs.writeFile(filepath, "top = 0\nmiddle = keep\nbottom = 0\n", "utf-8")
 
-      await Instance.provide({
+      await WithInstance.provide({
         directory: tmp.path,
         fn: async () => {
-          await readFileTime(ctx.sessionID, filepath)
-
           const edit = await resolve()
+          let asks = 0
+          const firstAsk = Promise.withResolvers<void>()
+          const delayedCtx = {
+            ...ctx,
+            ask: () =>
+              Effect.gen(function* () {
+                asks++
+                if (asks !== 1) return
+                firstAsk.resolve()
+                yield* Effect.promise(() => Bun.sleep(50))
+              }),
+          }
 
-          // Two concurrent edits
           const promise1 = Effect.runPromise(
             edit.execute(
               {
                 filePath: filepath,
-                oldString: "0",
-                newString: "1",
+                oldString: "top = 0",
+                newString: "top = 1",
               },
-              ctx,
+              delayedCtx,
             ),
           )
 
-          // Need to read again since FileTime tracks per-session
-          await readFileTime(ctx.sessionID, filepath)
+          await firstAsk.promise
 
           const promise2 = Effect.runPromise(
             edit.execute(
               {
                 filePath: filepath,
-                oldString: "0",
-                newString: "2",
+                oldString: "bottom = 0",
+                newString: "bottom = 2",
               },
-              ctx,
+              delayedCtx,
             ),
           )
 
-          // Both should complete without error (though one might fail due to content mismatch)
           const results = await Promise.allSettled([promise1, promise2])
-          expect(results.some((r) => r.status === "fulfilled")).toBe(true)
+          expect(results[0]?.status).toBe("fulfilled")
+          expect(results[1]?.status).toBe("fulfilled")
+          expect(await fs.readFile(filepath, "utf-8")).toBe("top = 1\nmiddle = keep\nbottom = 2\n")
         },
       })
     })

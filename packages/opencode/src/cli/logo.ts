@@ -5,4 +5,9 @@ export const logo = {
   right: ["              ", "▀██▀ █▀▀▄ █▀▀▀", "_██_ █__█ █_▀█", "▄██▄ ▀~~▀ ▀▀▀▀"],
 }
 
-export const marks = "_^~"
+export const go = {
+  left: ["    ", "█▀▀▀", "█_^█", "▀▀▀▀"],
+  right: ["    ", "█▀▀█", "█__█", "▀▀▀▀"],
+}
+
+export const marks = "_^~,"

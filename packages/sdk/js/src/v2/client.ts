@@ -77,6 +77,31 @@ export function createOpencodeClient(config?: Config & { directory?: string; exp
       workspace: config?.experimental_workspaceID,
     }),
   )
-  const result = new OpencodeClient({ client })
-  return result
+  client.interceptors.response.use((response) => {
+    const contentType = response.headers.get("content-type")
+    if (contentType === "text/html")
+      throw new Error("Request is not supported by this version of OpenCode Server (Server responded with text/html)")
+
+    return response
+  })
+  // The generated client falls back to throwing a literal `{}` when the server
+  // responds with an empty / unparseable error body, which surfaces as a bare
+  // `{}` in TUI / CLI error output. Wrap ONLY that case in a real Error so
+  // downstream formatters get a useful message — but pass through any parsed
+  // JSON error body unchanged so existing consumers can still inspect fields.
+  client.interceptors.error.use((error, response, request) => {
+    const isEmpty =
+      error === undefined ||
+      error === null ||
+      error === "" ||
+      (typeof error === "object" && !(error instanceof Error) && Object.keys(error).length === 0)
+    if (!isEmpty) return error
+    const method = request?.method ?? "?"
+    const url = request?.url ?? "?"
+    if (!response) return new Error(`opencode server ${method} ${url}: network error (no response)`)
+    const status = response.status
+    const statusText = response.statusText ? " " + response.statusText : ""
+    return new Error(`opencode server ${method} ${url} → ${status}${statusText}: (empty response body)`)
+  })
+  return new OpencodeClient({ client })
 }

@@ -1,21 +1,22 @@
 import { afterEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { Agent } from "../../src/agent/agent"
-import { Config } from "../../src/config/config"
-import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
+import { Config } from "@/config/config"
+import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Instance } from "../../src/project/instance"
-import { Session } from "../../src/session"
+import { Session } from "@/session/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import type { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, PartID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { TaskTool, type TaskPromptOps } from "../../src/tool/task"
-import { ToolRegistry } from "../../src/tool/registry"
-import { provideTmpdirInstance } from "../fixture/fixture"
+import { Truncate } from "@/tool/truncate"
+import { ToolRegistry } from "@/tool/registry"
+import { disposeAllInstances, provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
 afterEach(async () => {
-  await Instance.disposeAll()
+  await disposeAllInstances()
 })
 
 const ref = {
@@ -29,6 +30,7 @@ const it = testEffect(
     Config.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
     Session.defaultLayer,
+    Truncate.defaultLayer,
     ToolRegistry.defaultLayer,
   ),
 )
@@ -74,7 +76,7 @@ function stubOps(opts?: { onPrompt?: (input: SessionPrompt.PromptInput) => void;
   }
 }
 
-function reply(input: Parameters<typeof SessionPrompt.prompt>[0], text: string): MessageV2.WithParts {
+function reply(input: SessionPrompt.PromptInput, text: string): MessageV2.WithParts {
   const id = MessageID.ascending()
   return {
     info: {
@@ -191,7 +193,7 @@ describe("tool.task", () => {
         const { chat, assistant } = yield* seed()
         const child = yield* sessions.create({ parentID: chat.id, title: "Existing child" })
         const tool = yield* TaskTool
-        const def = yield* Effect.promise(() => tool.init())
+        const def = yield* tool.init()
         let seen: SessionPrompt.PromptInput | undefined
         const promptOps = stubOps({ text: "resumed", onPrompt: (input) => (seen = input) })
 
@@ -229,7 +231,7 @@ describe("tool.task", () => {
       Effect.gen(function* () {
         const { chat, assistant } = yield* seed()
         const tool = yield* TaskTool
-        const def = yield* Effect.promise(() => tool.init())
+        const def = yield* tool.init()
         const calls: unknown[] = []
         const promptOps = stubOps()
 
@@ -278,7 +280,7 @@ describe("tool.task", () => {
         const sessions = yield* Session.Service
         const { chat, assistant } = yield* seed()
         const tool = yield* TaskTool
-        const def = yield* Effect.promise(() => tool.init())
+        const def = yield* tool.init()
         let seen: SessionPrompt.PromptInput | undefined
         const promptOps = stubOps({ text: "created", onPrompt: (input) => (seen = input) })
 
@@ -318,7 +320,7 @@ describe("tool.task", () => {
           const sessions = yield* Session.Service
           const { chat, assistant } = yield* seed()
           const tool = yield* TaskTool
-          const def = yield* Effect.promise(() => tool.init())
+          const def = yield* tool.init()
           let seen: SessionPrompt.PromptInput | undefined
           const promptOps = stubOps({ onPrompt: (input) => (seen = input) })
 
