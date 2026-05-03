@@ -367,73 +367,126 @@ export function createColors(options: KnightRiderOptions = {}): ColorGenerator {
   return createKnightRiderTrail(trailOptions)
 }
 
-// ── V12 with idle wave ────────────────────────────────────────────────────
+// ── Turbo spool spinner ───────────────────────────────────────────────────
 //
-// Two layers running simultaneously:
+// Six cells: compressor pair + turbine pair + 2-cell boost gauge. Inspired
+// by a snail-style turbocharger spooling up under load, peaking, then
+// bleeding off on lift.
 //
-// LAYER 1 — Idle wave: a slow sine-wave brightness pulse across all 12 cells.
-//   Two combined sinusoids (different frequencies, slight phase offset per cell)
-//   so the wave is never quite uniform — looks alive at idle even between
-//   firing events. Range ~10-50% alpha.
+// CELLS 0,1 — Compressor wheel: 2-cell motion-blur rotation. Each cell
+//   shows a successive frame of the 10-step braille spinner so within the
+//   wheel itself you see a leading edge + trailing afterimage.
 //
-// LAYER 2 — Cylinder firings: 12 cylinders fire in proper V12 firing order
-//   (1-12-5-8-3-10-6-7-2-11-4-9). Each firing peaks at 100% alpha and decays
-//   over 4 frames (1.0 → 0.75 → 0.5 → 0.25). New firing every 2 frames so
-//   2-3 cylinders are decaying simultaneously at any moment.
+// CELLS 2,3 — Turbine wheel: same 2-cell motion-blur rotation, phase-
+//   offset 5 frames (180°) so the two wheels never line up — feels like
+//   real twin-rotor hardware.
 //
-// CYCLE: 24 active frames + 6 rest frames = 30 frames/cycle. The rest phase
-// shows the wave only (no firings) — gives the eye a micro-breath between
-// V12 cycles. At ~60ms/frame ≈ 1.8s per cycle.
+// All four rotation cells use the 10-frame braille arc OR'd with dots 7,8
+// (⣋⣙⣹⣸⣼⣴⣦⣧⣇⣏) so every frame has a permanent bottom-row baseline.
+// This is the height-match trick: bottom-row dots align the rotation with
+// the gauge's bottom-anchored fill so all six cells share a visual floor.
 //
-// Combined alpha per cell = max(wave, firing). Glyph height encodes alpha
-// via Unicode block-eighths (▁..█). Color is the agent color throughout,
-// only alpha varies.
+// CELLS 4,5 — Boost gauge: 9-level vertical fill in 2 cells using full
+//   8-dot braille (⣀..⣿). Always shows at least the bottom baseline at
+//   idle, fills upward as pressure builds.
+//
+// Angular velocity is proportional to current boost: rotors crawl at idle,
+// spin ~4× faster at peak.
+//
+// CYCLE (28 frames @ 50ms ≈ 1.4s):
+//   - Idle (4f):    boost=0, rotors crawl
+//   - Spool (14f):  smoothstep 0→8, rotors accelerate, gauge fills
+//   - Peak (2f):    boost=8, BLOOM FLASH on all 6 cells (overshoot 1.15×)
+//   - Bleed (8f):   linear 8→0, rotors spin down, gauge drains
+//
+// Color is the agent color; only alpha + brightness vary. Background-
+// independent (alpha-only fade).
 
-const V12_FIRING_ORDER = [0, 11, 4, 7, 2, 9, 5, 6, 1, 10, 3, 8]
-const V12_INTERVAL = 2
-const V12_DECAY_ALPHAS = [1.0, 0.75, 0.5, 0.25]
-const V12_ACTIVE_FRAMES = V12_FIRING_ORDER.length * V12_INTERVAL // 24
-const V12_REST_FRAMES = 6
-const V12_TOTAL_FRAMES = V12_ACTIVE_FRAMES + V12_REST_FRAMES // 30
-const V12_WIDTH = V12_FIRING_ORDER.length // 12
-const V12_GLYPHS = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
+const TURBO_WIDTH = 6
+const TURBO_TOTAL_FRAMES = 28
+const TURBO_PEAK_START = 18
+const TURBO_PEAK_END = 19
+// Standard 10-frame braille spinner OR'd with dots 7,8 (⣀) for permanent
+// bottom-row baseline — matches gauge floor so all cells share a visual base.
+const TURBO_ROTATION = ["⣋", "⣙", "⣹", "⣸", "⣼", "⣴", "⣦", "⣧", "⣇", "⣏"]
+// 9-level 2-cell gauge, bottom-up fill, always anchored at bottom row.
+const TURBO_GAUGE_LEFT = ["⣀", "⣤", "⣤", "⣶", "⣶", "⣷", "⣷", "⣿", "⣿"]
+const TURBO_GAUGE_RIGHT = ["⣀", "⣀", "⣤", "⣤", "⣶", "⣶", "⣷", "⣷", "⣿"]
+const TURBO_GAUGE_MAX = TURBO_GAUGE_LEFT.length - 1
 
-function v12Alpha(frame: number, cell: number): number {
-  // Wave: dual-frequency sin/cos, phase-shifted per cell. Always present.
-  const wavePhase = ((frame * 6 + cell * 30) * Math.PI) / 180
-  const wave = 0.15 + 0.18 * Math.sin(wavePhase) + 0.08 * Math.cos(wavePhase * 0.7)
-
-  // Firing: check if this cell has fired in the current active cycle and is
-  // still in its 4-frame decay window.
-  let firing = 0
-  for (let i = 0; i < V12_FIRING_ORDER.length; i++) {
-    if (V12_FIRING_ORDER[i] !== cell) continue
-    const firingFrame = i * V12_INTERVAL
-    const timeSince = frame - firingFrame
-    if (timeSince < 0 || timeSince >= V12_DECAY_ALPHAS.length) continue
-    const a = V12_DECAY_ALPHAS[timeSince]
-    if (a > firing) firing = a
+function turboBoost(frame: number): number {
+  const f = frame % TURBO_TOTAL_FRAMES
+  if (f < 4) return 0
+  if (f < TURBO_PEAK_START) {
+    // Smoothstep ease 0→8 over 14 frames
+    const t = (f - 4) / 13
+    return TURBO_GAUGE_MAX * t * t * (3 - 2 * t)
   }
-
-  return Math.max(wave, firing)
+  if (f <= TURBO_PEAK_END) return TURBO_GAUGE_MAX
+  // Linear bleed 8→0 over 8 frames
+  return TURBO_GAUGE_MAX * (1 - (f - TURBO_PEAK_END) / 8)
 }
 
+function turboIsPeak(frame: number): boolean {
+  const f = frame % TURBO_TOTAL_FRAMES
+  return f === TURBO_PEAK_START || f === TURBO_PEAK_END
+}
+
+// Precomputed cumulative angular position per wheel (closed-form would be
+// messy because rotation speed depends on the non-linear boost curve).
+// a0 drives compressor pair, a1 drives turbine pair (5-frame / 180° offset).
+const TURBO_ANGLES = (() => {
+  const a0: number[] = []
+  const a1: number[] = []
+  let acc0 = 0
+  let acc1 = 5 // 180° phase offset (10-frame rotation, half = 5)
+  for (let f = 0; f < TURBO_TOTAL_FRAMES; f++) {
+    a0.push(acc0)
+    a1.push(acc1)
+    const speed = 1 + turboBoost(f) * 0.4 // 1.0 idle → ~4.2 at peak
+    acc0 += speed
+    acc1 += speed
+  }
+  return { a0, a1 }
+})()
+
 export function createV12Frames(): string[] {
-  return Array.from({ length: V12_TOTAL_FRAMES }, (_, frame) => {
-    let line = ""
-    for (let cell = 0; cell < V12_WIDTH; cell++) {
-      const a = v12Alpha(frame, cell)
-      const idx = Math.max(0, Math.min(V12_GLYPHS.length - 1, Math.floor(a * V12_GLYPHS.length)))
-      line += V12_GLYPHS[idx]
-    }
-    return line
+  const N = TURBO_ROTATION.length
+  return Array.from({ length: TURBO_TOTAL_FRAMES }, (_, f) => {
+    const a0 = Math.floor(TURBO_ANGLES.a0[f])
+    const a1 = Math.floor(TURBO_ANGLES.a1[f])
+    // Compressor: cell 0 leads, cell 1 trails by 1 frame (motion blur)
+    const c0 = TURBO_ROTATION[a0 % N]
+    const c1 = TURBO_ROTATION[(a0 + 1) % N]
+    // Turbine: same trick, phase-offset by 5 (180°)
+    const t0 = TURBO_ROTATION[a1 % N]
+    const t1 = TURBO_ROTATION[(a1 + 1) % N]
+    // Gauge: 2-cell vertical fill
+    const g = Math.min(TURBO_GAUGE_MAX, Math.round(turboBoost(f)))
+    return c0 + c1 + t0 + t1 + TURBO_GAUGE_LEFT[g] + TURBO_GAUGE_RIGHT[g]
   })
 }
 
 export function createV12Colors(brightColor: ColorInput): ColorGenerator {
   const baseRgba = brightColor instanceof RGBA ? brightColor : RGBA.fromHex(brightColor as string)
-  return (frameIndex: number, charIndex: number) => {
-    const a = v12Alpha(frameIndex, charIndex)
-    return RGBA.fromValues(baseRgba.r, baseRgba.g, baseRgba.b, Math.max(0.08, Math.min(1, a)))
+  return (frame: number, cell: number) => {
+    const f = frame % TURBO_TOTAL_FRAMES
+    const boost = turboBoost(f) / TURBO_GAUGE_MAX // 0..1
+
+    if (turboIsPeak(f)) {
+      // Bloom flash on all six cells: alpha pinned + brightness overshoot
+      return RGBA.fromValues(
+        Math.min(1, baseRgba.r * 1.15),
+        Math.min(1, baseRgba.g * 1.15),
+        Math.min(1, baseRgba.b * 1.15),
+        1,
+      )
+    }
+
+    // Rotors stay visible at idle; gauge starts dim and rises with pressure
+    const isGauge = cell >= 4
+    const alpha = isGauge ? 0.3 + boost * 0.7 : 0.55 + boost * 0.4
+
+    return RGBA.fromValues(baseRgba.r, baseRgba.g, baseRgba.b, alpha)
   }
 }

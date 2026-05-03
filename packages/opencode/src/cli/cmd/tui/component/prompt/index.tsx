@@ -1060,12 +1060,11 @@ export function Prompt(props: PromptProps) {
   // affordance carries state.
   const borderHighlight = createMemo(() => tint(theme.border, highlight(), agentMetaAlpha()))
 
-  // V12 spinner with idle wave. Two layers: a slow background sine wave that
-  // breathes across all 12 cells (engine "running at idle"), plus cylinder
-  // firings in proper V12 firing order (1-12-5-8-3-10-6-7-2-11-4-9) overlaid
-  // as bright peaks with 4-frame decay. New firing every 2 frames so 2-3
-  // cylinders are always decaying simultaneously. Cycle includes a 6-frame
-  // rest phase between V12 cycles for a micro-breath.
+  // Turbo spool spinner. Three cells: two braille turbines (compressor +
+  // turbine wheel, phase-offset 180°) and a boost gauge that fills as
+  // pressure builds. Cycle: idle → smoothstep spool-up → peak with bloom
+  // flash → linear bleed off. Rotation speed is proportional to current
+  // boost so turbines visibly accelerate under load. ~1.4s per cycle.
   // See ui/spinner.ts createV12Frames / createV12Colors.
   const v12Frames = createV12Frames()
   const sparkColor = createMemo(() => {
@@ -1073,7 +1072,7 @@ export function Prompt(props: PromptProps) {
     return agent ? local.agent.color(agent.name) : theme.border
   })
   const v12Colors = createMemo(() => createV12Colors(sparkColor()))
-  const V12_INTERVAL_MS = 60
+  const V12_INTERVAL_MS = 50
 
   const placeholderText = createMemo(() => {
     if (props.showPlaceholder === false) return undefined
