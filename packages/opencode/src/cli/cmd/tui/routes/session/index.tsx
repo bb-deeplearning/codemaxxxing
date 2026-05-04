@@ -2160,11 +2160,18 @@ function BlockTool(props: {
           <text>{props.meta}</text>
         </Show>
       </box>
-      <Show when={props.children}>
-        <box paddingLeft={2} flexShrink={0}>
-          {props.children}
-        </box>
-      </Show>
+      {/* Children render DIRECTLY in the outer box — no extra wrapper.
+          The fork previously wrapped children in <box paddingLeft={2}
+          flexShrink={0}>, which broke layout for tall children like
+          Write's <code> element rendering a multi-KB file (hundreds of
+          rows). opentui's flex pass on deeply-nested flexShrink={0}
+          boxes with massive intrinsic content silently truncates past
+          some internal measurement budget — subsequent siblings (the
+          next BlockTool / next AssistantMessage) then never paint
+          either, which is the "render frozen at markdownImage JSON"
+          bug. Upstream renders children directly inside the outer box;
+          we now do the same. */}
+      {props.children}
       <Show when={error()}>
         <text fg={theme.error}>{error()}</text>
       </Show>

@@ -650,7 +650,16 @@ export const layer: Layer.Layer<
           yield* bus.publish(Session.Event.Error, { sessionID: ctx.sessionID, error })
           return
         }
+        // Finalize the assistant message on disk so a TUI reload doesn't see
+        // it as forever-streaming. Without setting time.completed + persisting,
+        // the on-disk message has finish=undefined / time.completed=undefined,
+        // and any future TUI session that loads it (or this same TUI restarted)
+        // treats it as an active stream and hangs waiting for events that will
+        // never come. Affects both user-aborts and provider errors.
         ctx.assistantMessage.error = error
+        ctx.assistantMessage.time.completed = Date.now()
+        if (!ctx.assistantMessage.finish) ctx.assistantMessage.finish = "error"
+        yield* session.updateMessage(ctx.assistantMessage)
         yield* bus.publish(Session.Event.Error, {
           sessionID: ctx.assistantMessage.sessionID,
           error: ctx.assistantMessage.error,
