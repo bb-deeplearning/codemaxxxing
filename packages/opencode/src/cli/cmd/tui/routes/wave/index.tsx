@@ -107,7 +107,6 @@ export function Wave() {
     const isCursor = () => idx === cursor()
     const sessionDisplay = row.session_id ? row.session_id.slice(0, 16) + "…" : "—"
     const commitDisplay = row.commit_sha ?? "—"
-    const noteDisplay = createMemo(() => truncate(row.notes, noteWidth()))
     return (
       <box
         flexDirection="row"
@@ -120,7 +119,7 @@ export function Wave() {
         <text fg={c[row.status]}>{padRight(row.status, 11)}</text>
         <text fg={theme.textMuted}>{padRight(sessionDisplay, 20)}</text>
         <text fg={theme.textMuted}>{padRight(commitDisplay, 9)}</text>
-        <text fg={isCursor() ? theme.text : theme.textMuted}>{noteDisplay()}</text>
+        <text fg={isCursor() ? theme.text : theme.textMuted}>{truncate(row.notes, noteWidth())}</text>
       </box>
     )
   }
