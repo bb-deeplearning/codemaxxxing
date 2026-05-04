@@ -154,10 +154,19 @@ Read more: [Why waves instead of plan-and-build](./WAVES.md)
 
 ### UI
 
-- Custom ASCII art logo
-- Rebranded TUI sidebar and exit screen
-- Collapsible web search and code search result displays in TUI
-- New large-output rendering surfaces being tested in this iteration
+A holistic visual overhaul moving from "stacked rectangles with painted backgrounds" to a drafting-table architectural posture: edges over fills, typography over chrome, deliberate hierarchy.
+
+![codemaxxxing](./screenshot.png)
+
+- **Home logo** — animated figlet `slant` wordmark of "codemaxxxing" with an ignition→idle narrative; `xxx` breathes between primary↔primaryPeak on a 2.8s sin
+- **Turbo spool spinner** — two phase-offset braille turbines + 2-cell vertical boost gauge in the prompt hero; rotation speed proportional to current boost (~1× idle → ~4.2× peak)
+- **Prompt** — 1-cell `▎` accent (state-aware tint: leader / shell / agent), two-row status (identity row + ephemeral row) with `flexWrap`, 8-cell visual usage meter with thresholds (muted <70%, warning 70–90%, error >90%)
+- **Conversation surface** — inline `u·1` / `a·1` marginalia at column 0 signals speaker identity (no closing rules); tool calls become `label · target · meta` with middle-dot separators; shell blocks get a single-cell `│` left-rule gutter with `$` tinted accent+bold
+- **Sidebar** — 1-col `│` left rule replaces background fill; live session stats (messages / tokens / cost / duration); footer reads `codema(xxx)ing for clauseo`
+- **Dialogs** — standardized shape across the entire dialog system: header strip + Rule + body + Rule + footer, `▸` marker for selected list items, tracked small caps for category headers
+- **Other surfaces** — footer is a HUD strip with `│` segment separators; toast / permission / question / error get top + bottom rules in variant color; subagent footer gets an agent-color tinted top rule
+- **Brand** — `codema(xxx)ing for clauseo` in sidebar footer (xxx in brighter color); `by clauseo` in home footer; OSC terminal title `codemaxxxing` (home) or `cmx | <session>` (sessions)
+- Collapsible web search and code search result displays
 - `/execute-wave` (alias `/wave`) slash command — switches to build agent, opens new session with wave prompt and file context pre-filled
 
 ### Bug fixes
