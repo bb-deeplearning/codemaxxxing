@@ -42,6 +42,8 @@ import { SyncEvent } from "@/sync"
 import { ToolRegistry } from "@/tool/registry"
 import { lazy } from "@/util/lazy"
 import { Vcs } from "@/project/vcs"
+import { Wave } from "@/wave/wave"
+import { WaveLoop } from "@/wave/loop"
 import { Worktree } from "@/worktree"
 import { Workspace } from "@/control-plane/workspace"
 import { isAllowedCorsOrigin, type CorsOptions } from "@/server/cors"
@@ -66,6 +68,7 @@ import { sessionHandlers } from "./handlers/session"
 import { syncHandlers } from "./handlers/sync"
 import { tuiHandlers } from "./handlers/tui"
 import { v2Handlers } from "./handlers/v2"
+import { waveHandlers } from "./handlers/wave"
 import { workspaceHandlers } from "./handlers/workspace"
 import { instanceContextLayer, instanceRouterMiddleware } from "./middleware/instance-context"
 import { workspaceRouterMiddleware, workspaceRoutingLayer } from "./middleware/workspace-routing"
@@ -119,6 +122,8 @@ const instanceApiRoutes = HttpApiBuilder.layer(InstanceHttpApi).pipe(
     syncHandlers,
     v2Handlers,
     tuiHandlers,
+    v2Handlers,
+    waveHandlers,
     workspaceHandlers,
   ]),
 )
@@ -180,6 +185,8 @@ export function createRoutes(corsOptions?: CorsOptions) {
       Todo.defaultLayer,
       ToolRegistry.defaultLayer,
       Vcs.defaultLayer,
+      Wave.defaultLayer,
+      WaveLoop.defaultLayer,
       Workspace.defaultLayer,
       Worktree.appLayer,
       Bus.layer,

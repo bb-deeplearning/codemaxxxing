@@ -1,13 +1,10 @@
-import { Effect, Option } from "effect"
 import { batch, createSignal, onCleanup, onMount } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import * as Log from "@opencode-ai/core/util/log"
-import { AppRuntime } from "@/effect/app-runtime"
-import { Wave } from "@/wave/wave"
-import { WaveLoop } from "@/wave/loop"
 import type { State } from "@/wave/state"
 import { createSimpleContext } from "./helper"
 import { useEvent } from "./event"
+import { useSDK } from "./sdk"
 
 const log = Log.create({ service: "tui.wave" })
 
@@ -21,42 +18,53 @@ export interface WaveStore {
 
 const empty: WaveStore = { campaigns: [], active: null, state: null }
 
-const loadProgram = Effect.gen(function* () {
-  const wave = yield* Wave.Service
-  const campaigns = yield* wave.listCampaigns()
-  const activeOpt = yield* wave.getActive()
-  const stateOpt = yield* wave.readActive()
-  return {
-    campaigns,
-    active: Option.getOrNull(activeOpt),
-    state: Option.getOrNull(stateOpt),
-  } satisfies WaveStore
-})
-
-const loopAction = (fn: (s: WaveLoop.Interface) => Effect.Effect<void>) =>
-  Effect.gen(function* () {
-    const loop = yield* WaveLoop.Service
-    yield* fn(loop)
-  }).pipe(Effect.catch(() => Effect.void))
-
-const waveAction = (fn: (s: Wave.Interface) => Effect.Effect<unknown, unknown>) =>
-  Effect.gen(function* () {
-    const wave = yield* Wave.Service
-    return yield* fn(wave)
-  }).pipe(Effect.catch(() => Effect.void))
-
 export const { use: useWave, provider: WaveProvider } = createSimpleContext({
   name: "Wave",
   init: () => {
     const [store, setStore] = createStore<WaveStore>(empty)
     const [available, setAvailable] = createSignal(true)
     const event = useEvent()
+    const sdk = useSDK()
+
+    const headers = (): HeadersInit => {
+      const out: Record<string, string> = { "content-type": "application/json" }
+      if (sdk.directory) out["x-opencode-directory"] = encodeURIComponent(sdk.directory)
+      return out
+    }
+
+    const get = async <T,>(path: string): Promise<T> => {
+      const res = await sdk.fetch(`${sdk.url}${path}`, { headers: headers() })
+      if (!res.ok) throw new Error(`${path} → ${res.status}`)
+      return (await res.json()) as T
+    }
+
+    const post = async (path: string, body?: unknown): Promise<void> => {
+      const res = await sdk.fetch(`${sdk.url}${path}`, {
+        method: "POST",
+        headers: headers(),
+        body: body === undefined ? "{}" : JSON.stringify(body),
+      })
+      if (!res.ok) throw new Error(`${path} → ${res.status}`)
+    }
 
     const load = async () => {
       try {
-        const next = await AppRuntime.runPromise(loadProgram)
+        const [campaigns, active, stateRes] = await Promise.all([
+          get<{ campaigns: string[] }>("/wave/campaigns"),
+          get<{ campaign_id: string | null }>("/wave/active"),
+          get<{ state: State | null }>("/wave/active/state"),
+        ])
         batch(() => {
-          setStore(reconcile(next, { merge: true }))
+          setStore(
+            reconcile(
+              {
+                campaigns: campaigns.campaigns,
+                active: active.campaign_id,
+                state: stateRes.state,
+              },
+              { merge: true },
+            ),
+          )
           setAvailable(true)
         })
       } catch (err) {
@@ -71,8 +79,8 @@ export const { use: useWave, provider: WaveProvider } = createSimpleContext({
     onMount(() => {
       void load()
       timer = setInterval(() => void load(), REFRESH_INTERVAL_MS)
-      // Bus events flow over SSE; SDK type union doesn't include wave.* (no
-      // SDK regen). Subscribe loosely and runtime-check the type string.
+      // Bus events flow over SSE; SDK type union doesn't include wave.* events
+      // (no SDK regen). Subscribe loosely and runtime-check the type string.
       unsubEvents = event.subscribe((evt) => {
         const type = evt.type as string
         if (type === "wave.updated" || type === "wave.active_changed") void load()
@@ -84,20 +92,25 @@ export const { use: useWave, provider: WaveProvider } = createSimpleContext({
       unsubEvents?.()
     })
 
+    const swallow = (p: Promise<unknown>) =>
+      p.catch((err) => {
+        log.warn("wave action failed", { err })
+      }) as Promise<void>
+
     return {
       get data() {
         return store
       },
       available,
       refresh: load,
-      arm: () => AppRuntime.runPromise(loopAction((s) => s.arm())),
-      pause: () => AppRuntime.runPromise(loopAction((s) => s.pause())),
-      resume: () => AppRuntime.runPromise(loopAction((s) => s.resume())),
-      interrupt: () => AppRuntime.runPromise(loopAction((s) => s.interrupt())),
-      stop: () => AppRuntime.runPromise(loopAction((s) => s.stop())),
-      next: () => AppRuntime.runPromise(loopAction((s) => s.next())),
-      switchTo: (id: string) => AppRuntime.runPromise(waveAction((s) => s.setActive(id))),
-      archive: () => AppRuntime.runPromise(waveAction((s) => s.setActive(null))),
+      arm: () => swallow(post("/wave/loop/arm")),
+      pause: () => swallow(post("/wave/loop/pause")),
+      resume: () => swallow(post("/wave/loop/resume")),
+      interrupt: () => swallow(post("/wave/loop/interrupt")),
+      stop: () => swallow(post("/wave/loop/stop")),
+      next: () => swallow(post("/wave/loop/next")),
+      switchTo: (id: string) => swallow(post("/wave/active", { campaign_id: id })),
+      archive: () => swallow(post("/wave/active", { campaign_id: null })),
     }
   },
 })
