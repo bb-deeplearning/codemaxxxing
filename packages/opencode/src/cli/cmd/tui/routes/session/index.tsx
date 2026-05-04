@@ -1652,6 +1652,31 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[] }) {
   // Memoized error-display predicate. Was inline in the JSX → re-evaluated
   // the error name on every reactive read.
   const hasUserError = createMemo(() => !!props.message.error && props.message.error.name !== "MessageAbortedError")
+
+  // Combined render array — parts plus the trailing slots (task hint,
+  // user error, closing summary). Rendered as a single <For> in the
+  // body so order is stable against opentui's late-mount quirks (see
+  // the JSX comment in the body for the full rationale).
+  //
+  // Type discriminator on the union ensures each item knows what to
+  // render. We use a tagged-union shape rather than a Symbol/sentinel
+  // so it's serializable and easy to debug.
+  type RenderItem =
+    | { kind: "part"; part: Part; last: boolean }
+    | { kind: "task" }
+    | { kind: "error" }
+    | { kind: "summary" }
+  const renderable = createMemo<RenderItem[]>(() => {
+    const items: RenderItem[] = []
+    const parts = props.parts
+    for (let i = 0; i < parts.length; i++) {
+      items.push({ kind: "part", part: parts[i], last: i === parts.length - 1 })
+    }
+    if (hasTaskTool()) items.push({ kind: "task" })
+    if (hasUserError()) items.push({ kind: "error" })
+    if (final() || aborted()) items.push({ kind: "summary" })
+    return items
+  })
   // NOTE: previously this body was wrapped in <Show when={hasVisibleParts()}>
   // where hasVisibleParts checked for text|tool|reasoning. Streaming assistant
   // messages always start with a `step-start` part (which doesn't qualify),
@@ -1732,75 +1757,66 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[] }) {
             {assistantIndex()}
           </text>
         </Show>
-        <For each={props.parts}>
-          {(part, index) => {
-            // PART_MAPPING is a frozen module-scope object; lookup is O(1)
-            // and stable for the lifetime of the part.
-            const component = PART_MAPPING[part.type as keyof typeof PART_MAPPING]
-            if (!component) return null
+        {/* Single <For> renders parts + the trailing slots (task hint,
+            user error, closing summary) so order is determined by array
+            index — not by mount timing. opentui's late-mount ordering
+            for sibling <For>/<Switch>/<Show> is unreliable when items
+            mount asynchronously (parts streaming, summary flipping
+            visible mid-stream): late children can land BEFORE earlier
+            ones in the rendered output, producing the
+            "summary-above-text" bug.
+
+            Combining everything into one <For> over a derived array
+            makes opentui's reconciliation key-stable: the array index
+            IS the order, and items are added/removed at their array
+            position. */}
+        <For each={renderable()}>
+          {(item) => {
+            if (item.kind === "part") {
+              const component = PART_MAPPING[item.part.type as keyof typeof PART_MAPPING]
+              if (!component) return null
+              return <Dynamic last={item.last} component={component} part={item.part as any} message={props.message} />
+            }
+            if (item.kind === "task")
+              return (
+                <box paddingTop={1}>
+                  <text fg={theme.text}>
+                    {keybind.print("session_child_first")}
+                    <span style={{ fg: theme.textMuted }}> view subagents</span>
+                  </text>
+                </box>
+              )
+            if (item.kind === "error")
+              return (
+                <box paddingTop={1} flexShrink={0}>
+                  <text fg={theme.error}>{props.message.error?.data.message}</text>
+                </box>
+              )
+            // item.kind === "summary"
             return (
-              <Dynamic
-                last={index() === props.parts.length - 1}
-                component={component}
-                part={part as any}
-                message={props.message}
-              />
+              <box flexDirection="row" justifyContent="flex-end" marginTop={1} flexShrink={0} flexWrap="wrap">
+                <text>
+                  <span
+                    style={{
+                      fg: aborted() ? theme.textMuted : agentColor(),
+                      bold: !aborted(),
+                    }}
+                  >
+                    {props.message.mode}
+                  </span>
+                  <span style={{ fg: theme.textMuted }}> · </span>
+                  <span style={{ fg: theme.textMuted }}>{props.message.modelID}</span>
+                  <Show when={duration()}>
+                    <span style={{ fg: theme.textMuted }}> · {Locale.duration(duration())}</span>
+                  </Show>
+                  <Show when={aborted()}>
+                    <span style={{ fg: theme.textMuted }}> · interrupted</span>
+                  </Show>
+                </text>
+              </box>
             )
           }}
         </For>
-        <Show when={hasTaskTool()}>
-          <box paddingTop={1}>
-            <text fg={theme.text}>
-              {keybind.print("session_child_first")}
-              <span style={{ fg: theme.textMuted }}> view subagents</span>
-            </text>
-          </box>
-        </Show>
-        <Show when={hasUserError()}>
-          <box paddingTop={1} flexShrink={0}>
-            <text fg={theme.error}>{props.message.error?.data.message}</text>
-          </box>
-        </Show>
-        {/* Closing summary right-pinned, no rule. modelID + duration
-            muted; only the agent name carries color.
-
-            The OUTER box is always mounted at this JSX position so that
-            opentui never appends late-arriving children (like the text
-            part finishing streaming) AFTER it. Previously this was a
-            <Switch>/<Match> that conditionally mounted the box; under
-            streaming, `final()` flipped true after the message metadata
-            arrived but before all parts had finished mounting in the
-            For above, so opentui mounted the summary then later
-            appended the text part to the END of the parent — visually
-            the summary appeared above the text on first open, and the
-            order only corrected on session reopen (when all children
-            mount in a single batch).
-
-            Now the box is always there as a slot. The inner Show toggles
-            the actual text content. Empty box collapses to 0 height so
-            no visual gap when the message is still streaming. */}
-        <box flexDirection="row" justifyContent="flex-end" flexShrink={0} flexWrap="wrap">
-          <Show when={final() || aborted()}>
-            <text marginTop={1}>
-              <span
-                style={{
-                  fg: aborted() ? theme.textMuted : agentColor(),
-                  bold: !aborted(),
-                }}
-              >
-                {props.message.mode}
-              </span>
-              <span style={{ fg: theme.textMuted }}> · </span>
-              <span style={{ fg: theme.textMuted }}>{props.message.modelID}</span>
-              <Show when={duration()}>
-                <span style={{ fg: theme.textMuted }}> · {Locale.duration(duration())}</span>
-              </Show>
-              <Show when={aborted()}>
-                <span style={{ fg: theme.textMuted }}> · interrupted</span>
-              </Show>
-            </text>
-          </Show>
-        </box>
       </box>
     </>
   )

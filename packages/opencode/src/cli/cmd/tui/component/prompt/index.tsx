@@ -115,39 +115,54 @@ function formatEditorContext(selection: EditorSelection) {
 
 let stashed: { prompt: PromptInfo; cursor: number } | undefined
 
-// 8-cell visual usage meter. Calm by default — colors only appear when
-// usage approaches the limit. < 70% uses theme.border (subtle, blends with
-// chrome). 70-90% warning (yellow). > 90% error (red). The numeric overlay
-// always sits beside it in textMuted with two-space breathing room. Square
-// glyphs (■/□) — flat, architectural.
-const METER_WIDTH = 8
+// Context usage bar. 6-cell width matches the turbo spinner exactly so the
+// two are visually balanced when both share the status row (spinner left,
+// bar right). Half-height: uses `▄` (LOWER HALF BLOCK) so the bar reads as
+// a thin band along the bottom of the row — visually lighter than a full-
+// height ▌▎ bar, more present than a single line ─.
+//
+// Fills RIGHT-TO-LEFT: the filled portion grows from the right edge inward
+// as usage rises. Reads as "how much of the limit have I consumed", with
+// the right edge being the limit. Empty (unconsumed) capacity sits on the
+// left in muted border color.
+//
+// Single uniform color per render, tier-based:
+//   < 70%: theme.textMuted (calm chrome)
+//   70-90%: theme.warning  (yellow)
+//   > 90%:  theme.error    (red)
+//
+// Performance:
+//   - Single pre-built lookup table (BAR_LINE[N]) shared by filled +
+//     unfilled spans. Per-render cost is two array lookups + two spans.
+//   - Color is one tier check per pct change (memoized). No interpolation.
+const BAR_WIDTH = 6
+const BAR_LINE: readonly string[] = Object.freeze(Array.from({ length: BAR_WIDTH + 1 }, (_, i) => "▄".repeat(i)))
 
-// Pre-built lookup tables for the 9 possible fill states (0..METER_WIDTH).
-// Avoids `"■".repeat(n)` allocation on every percentage tick during
-// streaming. Module-scope so cost is paid once at module load.
-const METER_FILLED: readonly string[] = Object.freeze(Array.from({ length: METER_WIDTH + 1 }, (_, i) => "■".repeat(i)))
-const METER_EMPTY: readonly string[] = Object.freeze(Array.from({ length: METER_WIDTH + 1 }, (_, i) => "□".repeat(i)))
-
-function UsageMeter(props: { pct: number; numeric: string }) {
+function ContextBar(props: { pct: number }) {
   const { theme } = useTheme()
-  // Memoize: filled() and color() were getter functions that ran twice per
-  // render (once for filled, once for METER_WIDTH - filled). Now both are
-  // memoized — single computation per pct change with value-equality
-  // short-circuit.
-  const filled = createMemo(() => Math.max(0, Math.min(METER_WIDTH, Math.round((props.pct / 100) * METER_WIDTH))))
-  const color = createMemo(() => {
+  // Round UP for any non-zero pct so a 1% reading still shows one filled
+  // cell — without it the bar would render empty for the entire 0-16%
+  // range (6-cell granularity = 16.67% per cell), which is misleading.
+  const filled = createMemo(() => {
+    if (props.pct <= 0) return 0
+    return Math.max(1, Math.min(BAR_WIDTH, Math.ceil((props.pct / 100) * BAR_WIDTH)))
+  })
+  const fillColor = createMemo(() => {
     if (props.pct > 90) return theme.error
     if (props.pct > 70) return theme.warning
     return theme.textMuted
   })
   return (
     <text wrapMode="none" flexShrink={0}>
-      <span style={{ fg: color() }}>{METER_FILLED[filled()]}</span>
-      <span style={{ fg: theme.border }}>{METER_EMPTY[METER_WIDTH - filled()]}</span>
-      <span style={{ fg: theme.textMuted }}>{"  " + props.numeric}</span>
+      <span style={{ fg: theme.border }}>{BAR_LINE[BAR_WIDTH - filled()]}</span>
+      <span style={{ fg: fillColor() }}>{BAR_LINE[filled()]}</span>
     </text>
   )
 }
+
+// (Old 8-cell ■/□ UsageMeter removed — usage now renders as plain
+// `tokens · pct% · cost` text on the identity row, with ContextBar pinned
+// to the right side of the status row, same width as the turbo spinner.)
 
 // Hoisted to module scope: frames are pure data with no theme/runtime
 // dependency, so building them per Prompt mount allocated 28 fresh strings
@@ -318,13 +333,9 @@ export function Prompt(props: PromptProps) {
     return t > 0 ? Locale.number(t) : ""
   })
 
-  const usageContext = createMemo(() => {
-    const t = usageTokens()
-    if (t <= 0) return ""
-    const f = Locale.number(t)
-    const p = usagePct()
-    return p !== undefined ? `${f} (${p}%)` : f
-  })
+  // (Old usageContext memo removed — the strip now renders tokens, pct,
+  // and cost as separate fields rather than a combined `tokens (pct%)`
+  // string. Saves a memo + a `Locale.number()` call per delta.)
 
   const usageCost = createMemo<string | undefined>(() => {
     const c = usageSource()?.cost ?? 0
@@ -1114,7 +1125,7 @@ export function Prompt(props: PromptProps) {
   )
   // borderHighlight = tint of theme.border toward highlight() (which is the
   // state-driven color: agent / shell-mode primary / leader-dim border).
-  // Used on the 1-cell ▎ accent at the start of the textarea so the prompt's
+  // Used on the 1-cell ● accent at the start of the textarea so the prompt's
   // affordance carries state.
   const borderHighlight = createMemo(() => tint(theme.border, highlight(), agentMetaAlpha()))
 
@@ -1168,14 +1179,17 @@ export function Prompt(props: PromptProps) {
         promptPartTypeId={() => promptPartTypeId}
       />
       <box ref={(r) => (anchor = r)} visible={props.visible !== false}>
-        {/* Input row. The ▎ accent at col 4 absolute (session paddingLeft 2 +
-            this paddingLeft 2) is the agent-color state indicator. Textarea
-            content sits immediately after at col 5 — aligns column-for-column
-            with the message body indent above. alignItems=flex-start keeps
-            the ▎ pinned to the first row when textarea grows multi-line. */}
+        {/* Input row. The ● accent at col 4 absolute (session paddingLeft 2 +
+            this paddingLeft 2) is the agent-color state indicator. Single
+            character, color is the affordance — replaces the previous
+            ▎ thin block which read as a structural rule rather than an
+            accent. Textarea content sits immediately after at col 5,
+            aligning column-for-column with the message body indent.
+            alignItems=flex-start keeps the dot pinned to the first row
+            when textarea grows multi-line. */}
         <box paddingLeft={2} paddingRight={0} paddingTop={1} flexShrink={0} flexDirection="row" alignItems="flex-start">
-          <text fg={borderHighlight()} flexShrink={0}>
-            ▎
+          <text fg={borderHighlight()} flexShrink={0} marginRight={1}>
+            ●
           </text>
           <box flexGrow={1} flexShrink={1}>
             <textarea
@@ -1423,16 +1437,25 @@ export function Prompt(props: PromptProps) {
               )}
             </Show>
           </box>
-          <box flexDirection="row" gap={2} alignItems="center" flexShrink={0}>
+          <box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
+            {/* Right side of identity row: token-count · pct · cost. The
+                visual bar lives in the row BELOW (where the breathing
+                row used to be) so this strip stays a clean text band.
+                Spacing is tight (gap={1} + a single ` · ` between
+                chunks) — no parentheses around the percentage. */}
             <Show when={hasUsage()}>
               <Show
                 when={usageLimit() && usagePct() !== undefined}
                 fallback={<text fg={theme.textMuted}>{usageTokensFormatted()}</text>}
               >
-                <UsageMeter pct={usagePct()!} numeric={usageContext()} />
+                <text fg={theme.textMuted}>
+                  {usageTokensFormatted()} <span style={{ fg: theme.textMuted }}>·</span> {usagePct()}%
+                </text>
               </Show>
               <Show when={usageCost()}>
-                <text fg={theme.textMuted}>· {usageCost()}</text>
+                <text fg={theme.textMuted}>
+                  <span style={{ fg: theme.textMuted }}>·</span> {usageCost()}
+                </text>
               </Show>
             </Show>
             <Show when={hasRightContent()}>
@@ -1443,7 +1466,8 @@ export function Prompt(props: PromptProps) {
           </box>
         </box>
         {/* Breathing row between identity and status so they read as paired
-            but distinct surfaces, not crammed together. */}
+            but distinct surfaces. The bar moved to the status row's right
+            side (next to the turbo spinner) for visual symmetry. */}
         <box height={1} flexShrink={0} />
         {/* Status row. Spark spinner + state on the LEFT when busy/retry,
             keybind hints when idle. Editor file context pinned RIGHT when
@@ -1546,18 +1570,27 @@ export function Prompt(props: PromptProps) {
               </text>
             </box>
           </Show>
-          <Show when={editorFileLabelDisplay()}>
-            {(file) => (
-              <text
-                fg={theme.secondary}
-                onMouseOver={() => setEditorContextHover(true)}
-                onMouseOut={() => setEditorContextHover(false)}
-                onMouseUp={dismissEditorContext}
-              >
-                {editorContextHover() ? `x ${file()}` : file()}
-              </text>
-            )}
-          </Show>
+          <box flexDirection="row" gap={2} alignItems="center" flexShrink={0}>
+            <Show when={editorFileLabelDisplay()}>
+              {(file) => (
+                <text
+                  fg={theme.secondary}
+                  onMouseOver={() => setEditorContextHover(true)}
+                  onMouseOut={() => setEditorContextHover(false)}
+                  onMouseUp={dismissEditorContext}
+                >
+                  {editorContextHover() ? `x ${file()}` : file()}
+                </text>
+              )}
+            </Show>
+            {/* Context bar pinned RIGHT, same row + width as the turbo
+                spinner (6 cells + brackets) for visual symmetry. Hidden
+                if no usage data (no model bound or no context limit
+                known). */}
+            <Show when={hasUsage() && usageLimit() && usagePct() !== undefined}>
+              <ContextBar pct={usagePct()!} />
+            </Show>
+          </box>
         </box>
       </box>
     </>
