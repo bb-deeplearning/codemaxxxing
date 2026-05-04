@@ -154,18 +154,16 @@ Read more: [Why waves instead of plan-and-build](./WAVES.md)
 
 ### UI
 
-A holistic visual overhaul moving from "stacked rectangles with painted backgrounds" to a drafting-table architectural posture: edges over fills, typography over chrome, deliberate hierarchy.
+Lighter, more information-dense chrome — easier to read over mosh + tmux on smaller windows, and personal preference. Not a feature, just my taste.
 
 ![codemaxxxing](./screenshot.png)
 
-- **Home logo** — animated figlet `slant` wordmark of "codemaxxxing" with an ignition→idle narrative; `xxx` breathes between primary↔primaryPeak on a 2.8s sin
-- **Turbo spool spinner** — two phase-offset braille turbines + 2-cell vertical boost gauge in the prompt hero; rotation speed proportional to current boost (~1× idle → ~4.2× peak)
-- **Prompt** — 1-cell `▎` accent (state-aware tint: leader / shell / agent), two-row status (identity row + ephemeral row) with `flexWrap`, 8-cell visual usage meter with thresholds (muted <70%, warning 70–90%, error >90%)
-- **Conversation surface** — inline `u·1` / `a·1` marginalia at column 0 signals speaker identity (no closing rules); tool calls become `label · target · meta` with middle-dot separators; shell blocks get a single-cell `│` left-rule gutter with `$` tinted accent+bold
-- **Sidebar** — 1-col `│` left rule replaces background fill; live session stats (messages / tokens / cost / duration); footer reads `codema(xxx)ing for clauseo`
-- **Dialogs** — standardized shape across the entire dialog system: header strip + Rule + body + Rule + footer, `▸` marker for selected list items, tracked small caps for category headers
-- **Other surfaces** — footer is a HUD strip with `│` segment separators; toast / permission / question / error get top + bottom rules in variant color; subagent footer gets an agent-color tinted top rule
-- **Brand** — `codema(xxx)ing for clauseo` in sidebar footer (xxx in brighter color); `by clauseo` in home footer; OSC terminal title `codemaxxxing` (home) or `cmx | <session>` (sessions)
+Most of it is subtraction: panels lose their backgrounds and become single-cell left rules, message blocks lose their closing rules, tool calls collapse to `label · target · meta` instead of labeled separator lines. Speaker identity moves to a `u·1` / `a·1` mark in the left margin. Sidebar gains a small live stats block (messages / tokens / cost / duration). Prompt has a state-aware `▎` accent and a two-row status (identity + ephemeral hints) with a small usage meter.
+
+Logo is a `slant`-figlet wordmark with a subtle ignition→idle animation; the prompt spinner is a turbo spool (two braille turbines + boost gauge) instead of the upstream V12. Sidebar footer reads `codema(xxx)ing for clauseo`, home footer `by clauseo`, OSC terminal title `codemaxxxing` (home) or `cmx | <session>` (sessions).
+
+Also:
+
 - Collapsible web search and code search result displays
 - `/execute-wave` (alias `/wave`) slash command — switches to build agent, opens new session with wave prompt and file context pre-filled
 
