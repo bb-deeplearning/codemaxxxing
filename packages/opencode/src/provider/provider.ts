@@ -147,6 +147,25 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
           headers: {
             "anthropic-beta": "interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14",
           },
+          // @ai-sdk/anthropic auto-injects `structured-outputs-2025-11-13` for any model
+          // whose ID matches `claude-opus-4-7`/4-6/4-5 etc. when function tools are passed
+          // (see anthropic-prepare-tools.ts). Anthropic now rejects this beta — Structured
+          // Outputs went GA on 2026-01-29 with a renamed `output_config.format` parameter —
+          // so strip it before the request leaves.
+          fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+            const headers = new Headers(init?.headers)
+            const beta = headers.get("anthropic-beta")
+            if (beta) {
+              const filtered = beta
+                .split(",")
+                .map((v) => v.trim())
+                .filter((v) => v !== "" && v !== "structured-outputs-2025-11-13")
+                .join(",")
+              if (filtered) headers.set("anthropic-beta", filtered)
+              else headers.delete("anthropic-beta")
+            }
+            return fetch(input, { ...init, headers })
+          },
         },
       }),
     opencode: Effect.fnUntraced(function* (input: Info) {
