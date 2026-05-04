@@ -146,6 +146,9 @@ const context = createContext<{
     // to find its parent user message in O(1) instead of walking the
     // whole list per assistant per render.
     user_by_id: ReadonlyMap<string, UserMessage>
+    // Set of assistant message ids that are the FIRST assistant of their
+    // turn — only these render the marginalia pill in the gutter.
+    first_in_turn: ReadonlySet<string>
   }
 }>()
 
@@ -257,30 +260,39 @@ export function Session() {
     user: Map<string, number>
     assistant: Map<string, number>
     user_by_id: Map<string, UserMessage>
+    // Set of assistant message ids that are the FIRST assistant of their
+    // turn (i.e. the message immediately following a user prompt). Only
+    // these get marginalia; later assistants in the same turn (tool-call
+    // continuations, multi-step responses) render without to avoid
+    // visual repetition like `a·1 a·1 a·1 a·1` down the gutter.
+    first_in_turn: Set<string>
   }>(() => {
-    // Tracking `messageCount()` (a primitive) means this memo only
-    // re-runs when length changes — Solid's value-equality on the
-    // primitive short-circuits the per-delta message-content updates.
-    // We then snapshot the list once via untrack (we already know it
-    // changed via length) — no redundant reactive subscription.
     void messageCount()
     const list = messages()
     const user = new Map<string, number>()
     const assistant = new Map<string, number>()
     const user_by_id = new Map<string, UserMessage>()
-    let u = 0
-    let a = 0
+    const first_in_turn = new Set<string>()
+    let turn = 0
+    let lastRole: string | undefined
     for (const m of list) {
       if (m.role === "user") {
-        u++
-        user.set(m.id, u)
+        turn++
+        user.set(m.id, turn)
         user_by_id.set(m.id, m as UserMessage)
       } else if (m.role === "assistant") {
-        a++
-        assistant.set(m.id, a)
+        // Inherit the turn of the user that started this thread.
+        const parent = m.parentID
+        const fromParent = parent ? user.get(parent) : undefined
+        assistant.set(m.id, fromParent ?? turn)
+        // First assistant after a user (or after a non-assistant role) is
+        // first-in-turn. Sequential assistants within the same turn are
+        // continuations and skip the marginalia.
+        if (lastRole !== "assistant") first_in_turn.add(m.id)
       }
+      lastRole = m.role
     }
-    return { user, assistant, user_by_id }
+    return { user, assistant, user_by_id, first_in_turn }
   })
   const permissions = createMemo(() => {
     if (session()?.parentID) return []
@@ -1528,58 +1540,59 @@ function UserMessage(props: {
   return (
     <>
       <Show when={text()}>
-        <box id={props.message.id} marginTop={props.index === 0 ? 0 : 1} flexShrink={0} flexDirection="row">
-          {/* Inline marginalia at column 0 of body. The agent-color middle dot
-              · carries the speaker identity color. Fixed `width={5}` (vs
-              flex-measured intrinsic width) so opentui's flex pass doesn't
-              have to remeasure the marginalia text per streaming delta. */}
-          <text fg={hover() ? theme.text : theme.textMuted} flexShrink={0} width={5}>
+        {/* Marginalia 'u·N' as an absolutely-positioned overlay in the
+            left gutter — same pattern as AssistantMessage. paddingLeft
+            reserves the gutter; the marginalia <text> sits in it via
+            position="absolute" so it doesn't participate in flex flow.
+            See AssistantMessage for full rationale (flex-row + tall
+            content = opentui layout blowup). */}
+        <box
+          id={props.message.id}
+          marginTop={props.index === 0 ? 0 : 1}
+          flexShrink={0}
+          paddingLeft={5}
+          onMouseOver={() => setHover(true)}
+          onMouseOut={() => setHover(false)}
+          onMouseUp={props.onMouseUp}
+        >
+          <text position="absolute" left={0} top={0} fg={hover() ? theme.text : theme.textMuted}>
             u<span style={{ fg: color() }}>·</span>
             {userIndex()}
           </text>
-          {/* Body column */}
-          <box
-            flexGrow={1}
-            flexShrink={1}
-            onMouseOver={() => setHover(true)}
-            onMouseOut={() => setHover(false)}
-            onMouseUp={props.onMouseUp}
-          >
-            <box flexDirection="row" justifyContent="space-between" gap={1}>
-              <text fg={theme.text} flexShrink={1} wrapMode="word">
-                {text()}
+          <box flexDirection="row" justifyContent="space-between" gap={1}>
+            <text fg={theme.text} flexShrink={1} wrapMode="word">
+              {text()}
+            </text>
+            <Show when={queued()}>
+              <text flexShrink={0}>
+                <span style={{ bg: color(), fg: queuedFg(), bold: true }}> queued </span>
               </text>
-              <Show when={queued()}>
-                <text flexShrink={0}>
-                  <span style={{ bg: color(), fg: queuedFg(), bold: true }}> queued </span>
-                </text>
-              </Show>
-              <Show when={!queued() && ctx.showTimestamps()}>
-                <text flexShrink={0} fg={theme.textMuted}>
-                  {Locale.todayTimeOrDateTime(props.message.time.created)}
-                </text>
-              </Show>
-            </box>
-            <Show when={files().length}>
-              <box flexDirection="row" paddingTop={1} gap={1} flexWrap="wrap">
-                <For each={files()}>
-                  {(file) => {
-                    const bg = createMemo(() => {
-                      if (file.mime.startsWith("image/")) return theme.accent
-                      if (file.mime === "application/pdf") return theme.primary
-                      return theme.secondary
-                    })
-                    return (
-                      <text fg={theme.text}>
-                        <span style={{ bg: bg(), fg: theme.background }}> {MIME_BADGE[file.mime] ?? file.mime} </span>
-                        <span style={{ bg: theme.backgroundElement, fg: theme.textMuted }}> {file.filename} </span>
-                      </text>
-                    )
-                  }}
-                </For>
-              </box>
+            </Show>
+            <Show when={!queued() && ctx.showTimestamps()}>
+              <text flexShrink={0} fg={theme.textMuted}>
+                {Locale.todayTimeOrDateTime(props.message.time.created)}
+              </text>
             </Show>
           </box>
+          <Show when={files().length}>
+            <box flexDirection="row" paddingTop={1} gap={1} flexWrap="wrap">
+              <For each={files()}>
+                {(file) => {
+                  const bg = createMemo(() => {
+                    if (file.mime.startsWith("image/")) return theme.accent
+                    if (file.mime === "application/pdf") return theme.primary
+                    return theme.secondary
+                  })
+                  return (
+                    <text fg={theme.text}>
+                      <span style={{ bg: bg(), fg: theme.background }}> {MIME_BADGE[file.mime] ?? file.mime} </span>
+                      <span style={{ bg: theme.backgroundElement, fg: theme.textMuted }}> {file.filename} </span>
+                    </text>
+                  )
+                }}
+              </For>
+            </box>
+          </Show>
         </box>
       </Show>
       <Show when={compaction()}>
@@ -1625,6 +1638,10 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[] }) {
   // Marginalia counter: nth assistant message in this session. O(1)
   // lookup against the route-level message_meta cache. See UserMessage.
   const assistantIndex = createMemo(() => ctx.message_meta().assistant.get(props.message.id) ?? 1)
+  // Only the first assistant message of a turn shows marginalia. Continuation
+  // assistants (subsequent tool-call rounds within the same turn) skip it
+  // so the gutter doesn't repeat `a·N a·N a·N` down the page.
+  const showMarginalia = createMemo(() => ctx.message_meta().first_in_turn.has(props.message.id))
 
   const agentColor = createMemo(() => local.agent.color(props.message.agent))
   const aborted = createMemo(() => props.message.error?.name === "MessageAbortedError")
@@ -1648,8 +1665,6 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[] }) {
   // Fix: render the body unconditionally (matches upstream). The marginalia
   // pill renders next to a possibly-empty body for a beat — that's fine; the
   // streaming <code> element keeps its incremental state across deltas.
-  // See log analysis on session ses_20e6b1c48ffeJKO2R6OGDPzq6T msg
-  // msg_df4908253001s5Rnrz0hNteWbk for the smoking-gun trace.
 
   // ── instrumentation ────────────────────────────────────────────────────
   if (RENDER_DEBUG) {
@@ -1689,86 +1704,102 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[] }) {
 
   return (
     <>
-      <box flexDirection="row" flexShrink={0} paddingTop={1}>
-        {/* Inline marginalia at column 0 of the body — same pattern as user
-            messages. The agent-color middle dot signals which agent
-            produced this turn. Body parts render in the column to the
-            right; their existing internal paddings stay (text/reasoning/
-            tool blocks know how to indent themselves under the message
-            wrapper).
-            FIXED width on the marginalia text — opentui's flex pass
-            doesn't have to measure the text's intrinsic width per
-            streaming delta when the parent is a flex row. 5 cols fits
-            "a·999" comfortably (3 digits = 9999 messages). */}
-        <text fg={theme.textMuted} flexShrink={0} width={5}>
-          a<span style={{ fg: agentColor() }}>·</span>
-          {assistantIndex()}
-        </text>
-        <box flexGrow={1} flexShrink={1}>
-          <For each={props.parts}>
-            {(part, index) => {
-              // PART_MAPPING is a frozen module-scope object; lookup is O(1)
-              // and stable for the lifetime of the part. The previous
-              // createMemo wrapper was pure overhead per <For> child.
-              const component = PART_MAPPING[part.type as keyof typeof PART_MAPPING]
-              if (!component) return null
-              return (
-                <Dynamic
-                  last={index() === props.parts.length - 1}
-                  component={component}
-                  part={part as any}
-                  message={props.message}
-                />
-              )
-            }}
-          </For>
-          <Show when={hasTaskTool()}>
-            <box paddingTop={1}>
-              <text fg={theme.text}>
-                {keybind.print("session_child_first")}
-                <span style={{ fg: theme.textMuted }}> view subagents</span>
-              </text>
-            </box>
+      {/* Marginalia 'a·N' as an absolutely-positioned overlay in the
+          left gutter. The outer column gets paddingLeft={5} to reserve
+          the gutter; the marginalia <text> is position="absolute" so it
+          doesn't participate in flex flow.
+
+          Why not flex-row + fixed-width child: opentui can't lay out a
+          flex-row whose body cell contains very tall content (e.g. a
+          write tool's syntax-highlighted multi-KB file rendered as
+          hundreds of rows). Once that body cell exceeds opentui's
+          internal measurement budget the row's layout breaks and every
+          subsequent sibling stops painting — visually the render
+          "freezes" mid-message and no later message ever appears.
+          Absolute positioning sidesteps the flex pass entirely so tall
+          children never trigger the layout blowup. */}
+      <box paddingLeft={5} flexShrink={0} marginTop={1}>
+        <Show when={showMarginalia()}>
+          {/* top={1}, not top={0}, because every part component
+              (TextPart/ToolPart/ReasoningPart) has its own
+              marginTop={1} pushing the first part to internal row 1.
+              UserMessage's first child is a row box with no marginTop,
+              so it can use top={0}; AssistantMessage's first child is
+              always a part-component with leading marginTop, so we
+              shift the marginalia down 1 to match. */}
+          <text position="absolute" left={0} top={1} fg={theme.textMuted}>
+            a<span style={{ fg: agentColor() }}>·</span>
+            {assistantIndex()}
+          </text>
+        </Show>
+        <For each={props.parts}>
+          {(part, index) => {
+            // PART_MAPPING is a frozen module-scope object; lookup is O(1)
+            // and stable for the lifetime of the part.
+            const component = PART_MAPPING[part.type as keyof typeof PART_MAPPING]
+            if (!component) return null
+            return (
+              <Dynamic
+                last={index() === props.parts.length - 1}
+                component={component}
+                part={part as any}
+                message={props.message}
+              />
+            )
+          }}
+        </For>
+        <Show when={hasTaskTool()}>
+          <box paddingTop={1}>
+            <text fg={theme.text}>
+              {keybind.print("session_child_first")}
+              <span style={{ fg: theme.textMuted }}> view subagents</span>
+            </text>
+          </box>
+        </Show>
+        <Show when={hasUserError()}>
+          <box paddingTop={1} flexShrink={0}>
+            <text fg={theme.error}>{props.message.error?.data.message}</text>
+          </box>
+        </Show>
+        {/* Closing summary right-pinned, no rule. modelID + duration
+            muted; only the agent name carries color.
+
+            The OUTER box is always mounted at this JSX position so that
+            opentui never appends late-arriving children (like the text
+            part finishing streaming) AFTER it. Previously this was a
+            <Switch>/<Match> that conditionally mounted the box; under
+            streaming, `final()` flipped true after the message metadata
+            arrived but before all parts had finished mounting in the
+            For above, so opentui mounted the summary then later
+            appended the text part to the END of the parent — visually
+            the summary appeared above the text on first open, and the
+            order only corrected on session reopen (when all children
+            mount in a single batch).
+
+            Now the box is always there as a slot. The inner Show toggles
+            the actual text content. Empty box collapses to 0 height so
+            no visual gap when the message is still streaming. */}
+        <box flexDirection="row" justifyContent="flex-end" flexShrink={0} flexWrap="wrap">
+          <Show when={final() || aborted()}>
+            <text marginTop={1}>
+              <span
+                style={{
+                  fg: aborted() ? theme.textMuted : agentColor(),
+                  bold: !aborted(),
+                }}
+              >
+                {props.message.mode}
+              </span>
+              <span style={{ fg: theme.textMuted }}> · </span>
+              <span style={{ fg: theme.textMuted }}>{props.message.modelID}</span>
+              <Show when={duration()}>
+                <span style={{ fg: theme.textMuted }}> · {Locale.duration(duration())}</span>
+              </Show>
+              <Show when={aborted()}>
+                <span style={{ fg: theme.textMuted }}> · interrupted</span>
+              </Show>
+            </text>
           </Show>
-          <Show when={hasUserError()}>
-            <box paddingTop={1} flexShrink={0}>
-              <text fg={theme.error}>{props.message.error?.data.message}</text>
-            </box>
-          </Show>
-          {/* Closing summary right-pinned, no rule. modelID + duration
-              muted; only the agent name carries color. Wraps gracefully on
-              narrow widths via flex-wrap on the row.
-              Gate is `final() || aborted()` only — removed the previous
-              `props.last` clause that made the summary appear on the latest
-              assistant before it was actually done (visually noisy: a half-
-              rendered "build · model · 0s" line dangling under a streaming
-              message). Now the summary only shows when the message is truly
-              done, which also kills the per-delta re-evaluation cost on
-              `lastAssistantID()` flips. */}
-          <Switch>
-            <Match when={final() || aborted()}>
-              <box flexDirection="row" justifyContent="flex-end" marginTop={1} flexShrink={0} flexWrap="wrap">
-                <text>
-                  <span
-                    style={{
-                      fg: aborted() ? theme.textMuted : agentColor(),
-                      bold: !aborted(),
-                    }}
-                  >
-                    {props.message.mode}
-                  </span>
-                  <span style={{ fg: theme.textMuted }}> · </span>
-                  <span style={{ fg: theme.textMuted }}>{props.message.modelID}</span>
-                  <Show when={duration()}>
-                    <span style={{ fg: theme.textMuted }}> · {Locale.duration(duration())}</span>
-                  </Show>
-                  <Show when={aborted()}>
-                    <span style={{ fg: theme.textMuted }}> · interrupted</span>
-                  </Show>
-                </text>
-              </box>
-            </Match>
-          </Switch>
         </box>
       </box>
     </>
