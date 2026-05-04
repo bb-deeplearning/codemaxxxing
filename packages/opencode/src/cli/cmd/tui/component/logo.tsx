@@ -1,6 +1,7 @@
 import { RGBA } from "@opentui/core"
 import { For, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import { useTheme, tint } from "@tui/context/theme"
+import { useKV } from "@tui/context/kv"
 import { go, logo, type ColorRole, type LogoShape } from "@/cli/logo"
 
 // Logo — figlet `slant` two-line italic ASCII wordmark for the codemaxxxing
@@ -41,7 +42,15 @@ const BREATHE_PERIOD_MS = 2800 // faster than before so the pulse is felt
 const BREATHE_MIN_ALPHA = 0.45 // deeper trough for visible swing
 const BREATHE_MAX_ALPHA = 1.0
 const BREATHE_PEAK_TINT = 0.35 // how far primary tints toward primaryPeak at breathe peak
-const TICK_MS = 33 // ~30fps
+// Terminal cells repaint at the host's frame rate; pushing >15 FPS just
+// burns CPU and floods opentui's scheduler. 16 FPS (66ms) is well under
+// human flicker threshold for slow-changing colour and saves ~50% of the
+// per-frame allocations the old 30 FPS loop was doing.
+const TICK_MS = 66
+
+// All ColorRoles the logo shape uses. Module-scope frozen list so the
+// per-tick role iteration doesn't re-allocate the array every frame.
+const ALL_ROLES: readonly ColorRole[] = Object.freeze(["primary", "secondary", "accent", "text", "textMuted", "border"])
 
 function clamp(n: number, lo = 0, hi = 1): number {
   return Math.max(lo, Math.min(hi, n))
@@ -118,9 +127,40 @@ function staticColour(elapsed: number, base: RGBA, bg: RGBA): RGBA {
 export function Logo(props: { shape?: LogoShape; ink?: RGBA } = {}) {
   const shape = props.shape ?? logo
   const { theme } = useTheme()
+  const kv = useKV()
   const [now, setNow] = createSignal(performance.now())
-  const animated = !props.ink
+  // Honour the global animations_enabled toggle so disabling animations
+  // truly silences the home screen (no 30fps redraw stream over mosh).
+  const animated = !props.ink && kv.get("animations_enabled", true)
   let mountedAt = performance.now()
+
+  // ── per-frame colour pipeline ─────────────────────────────────────────
+  // Old shape: each of ~576 cells had its own createMemo recomputing
+  // xxxColour/staticColour every tick → ~2300 RGBA allocations/frame.
+  //
+  // New shape: ONE memo per ColorRole (6 total) computes the role's colour
+  // for the current frame; per-cell render just looks the role up. Cuts the
+  // per-frame work to ~24 RGBA allocations regardless of shape size.
+  const peak = createMemo(() => primaryPeak(theme))
+  const colorByRole = createMemo(() => {
+    const out = new Map<ColorRole, RGBA>()
+    if (props.ink) {
+      for (const role of ALL_ROLES) out.set(role, props.ink)
+      return out
+    }
+    if (!animated) {
+      for (const role of ALL_ROLES) out.set(role, inkFor(role, theme))
+      return out
+    }
+    const elapsed = now() - mountedAt
+    const bg = theme.background
+    const pk = peak()
+    for (const role of ALL_ROLES) {
+      const base = inkFor(role, theme)
+      out.set(role, role === "primary" ? xxxColour(elapsed, base, pk, bg) : staticColour(elapsed, base, bg))
+    }
+    return out
+  })
 
   let timer: ReturnType<typeof setInterval> | undefined
   onMount(() => {
@@ -138,23 +178,11 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA } = {}) {
         {(row) => (
           <box flexDirection="row">
             <For each={row}>
-              {(seg) => {
-                const base = props.ink ?? inkFor(seg.ink, theme)
-                const peak = createMemo(() => primaryPeak(theme))
-                const fg = createMemo(() => {
-                  if (props.ink) return base
-                  const elapsed = now() - mountedAt
-                  if (seg.ink === "primary") {
-                    return xxxColour(elapsed, base, peak(), theme.background)
-                  }
-                  return staticColour(elapsed, base, theme.background)
-                })
-                return (
-                  <text fg={fg()} selectable={false}>
-                    {seg.chars}
-                  </text>
-                )
-              }}
+              {(seg) => (
+                <text fg={colorByRole().get(seg.ink) ?? theme.text} selectable={false}>
+                  {seg.chars}
+                </text>
+              )}
             </For>
           </box>
         )}

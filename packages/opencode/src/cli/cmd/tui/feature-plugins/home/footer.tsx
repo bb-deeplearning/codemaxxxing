@@ -1,5 +1,5 @@
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
-import { createMemo, Match, Show, Switch } from "solid-js"
+import { createMemo, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import { Global } from "@opencode-ai/core/global"
 import { useWave } from "@tui/context/wave"
 import { useRoute } from "@tui/context/route"
@@ -50,6 +50,17 @@ function WavePill(props: { api: TuiPluginApi }) {
   const theme = () => props.api.theme.current
   const wave = useWave()
   const route = useRoute()
+  // Engage the (otherwise inert) wave context only when the home footer
+  // is mounted and we want to show pill state. One discovery fetch +
+  // arms polling for live updates while home is open. release() on
+  // cleanup stops polling when leaving home — sessions never need wave
+  // traffic competing with streaming deltas.
+  onMount(() => {
+    void wave.refresh()
+  })
+  onCleanup(() => {
+    wave.release()
+  })
   const state = createMemo(() => wave.data.state)
   const onClick = () => route.navigate({ type: "wave" })
 

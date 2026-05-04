@@ -61,6 +61,18 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
       queue.push(event)
       const elapsed = Date.now() - last
 
+      // Backstop: if events flood faster than the timer can fire (LLM streaming
+      // can starve setTimeout under heavy IPC load), flush synchronously once
+      // the queue exceeds a hard cap so the UI never stalls.
+      if (queue.length >= 32) {
+        if (timer) {
+          clearTimeout(timer)
+          timer = undefined
+        }
+        flush()
+        return
+      }
+
       if (timer) return
       // If we just flushed recently (within 16ms), batch this with future events
       // Otherwise, process immediately to avoid latency

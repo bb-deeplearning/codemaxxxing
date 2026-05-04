@@ -3,65 +3,114 @@ import { useRouteData } from "@tui/context/route"
 import { useSync } from "@tui/context/sync"
 import { useTheme, tint } from "@tui/context/theme"
 import { Rule } from "@tui/component/border"
-import type { AssistantMessage } from "@opencode-ai/sdk/v2"
+import type { AssistantMessage, Message } from "@opencode-ai/sdk/v2"
 import { useCommandDialog } from "@tui/component/dialog-command"
 import { useKeybind } from "../../context/keybind"
 import { useLocal } from "@tui/context/local"
 import { Locale } from "@/util/locale"
 import { useTerminalDimensions } from "@opentui/solid"
 
+// Module-scope so we don't recompile per render. Title format is set by
+// the orchestrator and stable for the lifetime of a session.
+const AGENT_TITLE_RE = /@(\w+) subagent/
+
+// Module-scope formatter. Was previously allocated INSIDE the usage memo
+// → fresh Intl.NumberFormat per streaming delta.
+const MONEY = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })
+
+// Frozen empty messages sentinel — keeps reference identity stable when
+// no messages exist yet so downstream memos don't see a fresh `[]` per call.
+const EMPTY_MESSAGES: readonly Message[] = Object.freeze([]) as readonly Message[]
+
 export function SubagentFooter() {
   const route = useRouteData("session")
   const sync = useSync()
   const local = useLocal()
-  const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
   const session = createMemo(() => sync.session.get(route.sessionID))
 
-  // Parse the agent name out of the title; we use it both for the label
-  // and for tinting the top rule so the surface itself signals "you are
-  // in a subagent under <agent>".
-  const agentMatch = createMemo(() => session()?.title.match(/@(\w+) subagent/))
-  const agentName = createMemo(() => agentMatch()?.[1])
+  // Title-derived agent name. Single regex, cached against title identity
+  // (titles never change in normal operation, and even when they do the
+  // regex is O(title-length).)
+  const agentName = createMemo<string | undefined>(() => {
+    const t = session()?.title
+    if (!t) return undefined
+    const m = t.match(AGENT_TITLE_RE)
+    return m?.[1]
+  })
 
+  // Subagent positional info. Filter+sort runs only when sync.data.session
+  // OR session() reference changes — both stable across streaming deltas
+  // (deltas update messages/parts, not the session list). The cost is
+  // amortized across the lifetime of the subagent surface, not per delta.
   const subagentInfo = createMemo(() => {
     const s = session()
     if (!s) return { label: "subagent", index: 0, total: 0 }
     const name = agentName()
     const label = name ? Locale.titlecase(name) : "Subagent"
-
     if (!s.parentID) return { label, index: 0, total: 0 }
-
-    const siblings = sync.data.session
-      .filter((x) => x.parentID === s.parentID)
-      .toSorted((a, b) => a.time.created - b.time.created)
-    const index = siblings.findIndex((x) => x.id === s.id)
-
-    return { label, index: index + 1, total: siblings.length }
+    let total = 0
+    let index = 0
+    // Single pass — count siblings and rank-by-creation-time without an
+    // intermediate filtered+sorted array.
+    for (const x of sync.data.session) {
+      if (x.parentID !== s.parentID) continue
+      total++
+      if (x.time.created < s.time.created) index++
+    }
+    return { label, index: index + 1, total }
   })
 
-  const usage = createMemo(() => {
-    const msg = messages()
-    const last = msg.findLast((item): item is AssistantMessage => item.role === "assistant" && item.tokens.output > 0)
-    if (!last) return
-
+  // Usage strip — split per-field like the prompt's main usage strip so a
+  // streaming delta only invalidates the field that actually moved. Single
+  // walk source produces primitives; per-field memos format and short-
+  // circuit on equality. Walks BACKWARD and breaks on first assistant with
+  // tokens — O(1) at the tail (the common case during streaming and
+  // immediately post-turn). cost still requires a forward sum but that's a
+  // single arithmetic pass with no allocation.
+  const messages = createMemo(() => sync.data.message[route.sessionID] ?? (EMPTY_MESSAGES as Message[]))
+  const usageSource = createMemo(() => {
+    const list = messages()
+    if (list.length === 0) return undefined
+    let last: AssistantMessage | undefined
+    for (let i = list.length - 1; i >= 0; i--) {
+      const item = list[i]
+      if (item.role === "assistant" && item.tokens.output > 0) {
+        last = item as AssistantMessage
+        break
+      }
+    }
+    if (!last) return undefined
+    let cost = 0
+    for (const item of list) {
+      if (item.role === "assistant") cost += item.cost
+    }
     const tokens =
       last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
-    if (tokens <= 0) return
-
-    const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
-    const pct = model?.limit.context ? `${Math.round((tokens / model.limit.context) * 100)}%` : undefined
-    const cost = msg.reduce((sum, item) => sum + (item.role === "assistant" ? item.cost : 0), 0)
-
-    const money = new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-    })
-
-    return {
-      context: pct ? `${Locale.number(tokens)} (${pct})` : Locale.number(tokens),
-      cost: cost > 0 ? money.format(cost) : undefined,
-    }
+    return { tokens, providerID: last.providerID, modelID: last.modelID, cost }
   })
+
+  const usagePctNum = createMemo<number | undefined>(() => {
+    const s = usageSource()
+    if (!s) return undefined
+    const limit = sync.data.provider.find((p) => p.id === s.providerID)?.models[s.modelID]?.limit.context
+    if (!limit) return undefined
+    return Math.round((s.tokens / limit) * 100)
+  })
+
+  const usageContext = createMemo<string | undefined>(() => {
+    const s = usageSource()
+    if (!s || s.tokens <= 0) return undefined
+    const f = Locale.number(s.tokens)
+    const p = usagePctNum()
+    return p !== undefined ? `${f} (${p}%)` : f
+  })
+
+  const usageCost = createMemo<string | undefined>(() => {
+    const c = usageSource()?.cost ?? 0
+    return c > 0 ? MONEY.format(c) : undefined
+  })
+
+  const hasUsage = createMemo(() => usageContext() !== undefined)
 
   const { theme } = useTheme()
   const keybind = useKeybind()
@@ -94,24 +143,16 @@ export function SubagentFooter() {
                 ({subagentInfo().index} of {subagentInfo().total})
               </text>
             </Show>
-            <Show when={usage()}>
-              {(item) => (
-                <>
-                  <text fg={theme.border}>│</text>
-                  <text fg={theme.textMuted} wrapMode="none">
-                    <span style={{ fg: theme.textMuted }}>tokens</span>{" "}
-                    <span style={{ fg: theme.text }}>{item().context}</span>
-                    <Show when={item().cost}>
-                      {(cost) => (
-                        <>
-                          <span style={{ fg: theme.textMuted }}> · </span>
-                          <span style={{ fg: theme.text }}>{cost()}</span>
-                        </>
-                      )}
-                    </Show>
-                  </text>
-                </>
-              )}
+            <Show when={hasUsage()}>
+              <text fg={theme.border}>│</text>
+              <text fg={theme.textMuted} wrapMode="none">
+                <span style={{ fg: theme.textMuted }}>tokens</span>{" "}
+                <span style={{ fg: theme.text }}>{usageContext()}</span>
+                <Show when={usageCost()}>
+                  <span style={{ fg: theme.textMuted }}> · </span>
+                  <span style={{ fg: theme.text }}>{usageCost()}</span>
+                </Show>
+              </text>
             </Show>
           </box>
           <box flexDirection="row" alignItems="center" gap={2}>

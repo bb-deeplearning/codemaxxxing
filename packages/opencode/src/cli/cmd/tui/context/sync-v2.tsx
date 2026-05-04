@@ -143,6 +143,27 @@ export const { use: useSyncV2, provider: SyncProviderV2 } = createSimpleContext(
               currentAssistant.snapshot = { ...currentAssistant.snapshot, end: event.properties.snapshot }
           })
           break
+        // codemaxxxing fork: upstream's `session.next.step.failed` was
+        // dropped by the processor refactor (errors now flow through the
+        // bus's `session.error` event instead). Without a handler, the
+        // failed assistant message stays "active" indefinitely (no
+        // time.completed set), which makes activeAssistant()'s
+        // findLastIndex match it forever and turn every subsequent SSE
+        // event for the session into an O(N) walk.
+        case "session.error":
+          if (!event.properties.sessionID) break
+          update(event.properties.sessionID, (draft) => {
+            const currentAssistant = activeAssistant(draft)
+            if (!currentAssistant) return
+            currentAssistant.time.completed = Date.now()
+            currentAssistant.finish = "error"
+            const err = event.properties.error
+            if (err) {
+              const msg = typeof err === "string" ? err : ((err as { message?: string }).message ?? String(err))
+              currentAssistant.error = msg
+            }
+          })
+          break
         case "session.next.text.started":
           update(event.properties.sessionID, (draft) => {
             activeAssistant(draft)?.content.push({ type: "text", text: "" })

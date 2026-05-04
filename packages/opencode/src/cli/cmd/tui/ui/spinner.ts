@@ -450,7 +450,7 @@ const TURBO_ANGLES = (() => {
   return { a0, a1 }
 })()
 
-export function createV12Frames(): string[] {
+export function createTurboFrames(): string[] {
   const N = TURBO_ROTATION.length
   return Array.from({ length: TURBO_TOTAL_FRAMES }, (_, f) => {
     const a0 = Math.floor(TURBO_ANGLES.a0[f])
@@ -467,26 +467,38 @@ export function createV12Frames(): string[] {
   })
 }
 
-export function createV12Colors(brightColor: ColorInput): ColorGenerator {
+export function createTurboColors(brightColor: ColorInput): ColorGenerator {
   const baseRgba = brightColor instanceof RGBA ? brightColor : RGBA.fromHex(brightColor as string)
-  return (frame: number, cell: number) => {
-    const f = frame % TURBO_TOTAL_FRAMES
-    const boost = turboBoost(f) / TURBO_GAUGE_MAX // 0..1
-
+  // Pre-compute the full per-(frame, cell) RGBA table once at construction.
+  // Output is purely a function of frame % TURBO_TOTAL_FRAMES and cell index,
+  // so there are only TURBO_TOTAL_FRAMES × TURBO_WIDTH = 168 possible
+  // outputs per agent color. Pre-computing them and returning by lookup
+  // turns ~120 RGBA allocations/sec on the streaming path into zero
+  // allocations after the first call. The closure-captured table is GC'd
+  // when the agent color changes.
+  const peakBloom = RGBA.fromValues(
+    Math.min(1, baseRgba.r * 1.15),
+    Math.min(1, baseRgba.g * 1.15),
+    Math.min(1, baseRgba.b * 1.15),
+    1,
+  )
+  const table: RGBA[][] = new Array(TURBO_TOTAL_FRAMES)
+  for (let f = 0; f < TURBO_TOTAL_FRAMES; f++) {
+    const row = new Array<RGBA>(TURBO_WIDTH)
     if (turboIsPeak(f)) {
-      // Bloom flash on all six cells: alpha pinned + brightness overshoot
-      return RGBA.fromValues(
-        Math.min(1, baseRgba.r * 1.15),
-        Math.min(1, baseRgba.g * 1.15),
-        Math.min(1, baseRgba.b * 1.15),
-        1,
-      )
+      for (let c = 0; c < TURBO_WIDTH; c++) row[c] = peakBloom
+    } else {
+      const boost = turboBoost(f) / TURBO_GAUGE_MAX
+      for (let c = 0; c < TURBO_WIDTH; c++) {
+        const isGauge = c >= 4
+        const alpha = isGauge ? 0.3 + boost * 0.7 : 0.55 + boost * 0.4
+        row[c] = RGBA.fromValues(baseRgba.r, baseRgba.g, baseRgba.b, alpha)
+      }
     }
-
-    // Rotors stay visible at idle; gauge starts dim and rises with pressure
-    const isGauge = cell >= 4
-    const alpha = isGauge ? 0.3 + boost * 0.7 : 0.55 + boost * 0.4
-
-    return RGBA.fromValues(baseRgba.r, baseRgba.g, baseRgba.b, alpha)
+    table[f] = row
+  }
+  return (frame: number, cell: number) => {
+    const f = ((frame % TURBO_TOTAL_FRAMES) + TURBO_TOTAL_FRAMES) % TURBO_TOTAL_FRAMES
+    return table[f][cell]
   }
 }

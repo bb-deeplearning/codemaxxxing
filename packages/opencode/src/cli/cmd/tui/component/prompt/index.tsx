@@ -34,7 +34,7 @@ import { iife } from "@/util/iife"
 import { Locale } from "@/util/locale"
 import { formatDuration } from "@/util/format"
 import { SP_FALLBACK } from "../spinner"
-import { createV12Colors, createV12Frames } from "../../ui/spinner.ts"
+import { createTurboColors, createTurboFrames } from "../../ui/spinner.ts"
 import { useDialog } from "@tui/ui/dialog"
 import { DialogProvider as DialogProviderConnect } from "../dialog-provider"
 import { DialogAlert } from "../../ui/dialog-alert"
@@ -122,22 +122,39 @@ let stashed: { prompt: PromptInfo; cursor: number } | undefined
 // glyphs (■/□) — flat, architectural.
 const METER_WIDTH = 8
 
+// Pre-built lookup tables for the 9 possible fill states (0..METER_WIDTH).
+// Avoids `"■".repeat(n)` allocation on every percentage tick during
+// streaming. Module-scope so cost is paid once at module load.
+const METER_FILLED: readonly string[] = Object.freeze(Array.from({ length: METER_WIDTH + 1 }, (_, i) => "■".repeat(i)))
+const METER_EMPTY: readonly string[] = Object.freeze(Array.from({ length: METER_WIDTH + 1 }, (_, i) => "□".repeat(i)))
+
 function UsageMeter(props: { pct: number; numeric: string }) {
   const { theme } = useTheme()
-  const filled = () => Math.max(0, Math.min(METER_WIDTH, Math.round((props.pct / 100) * METER_WIDTH)))
-  const color = () => {
+  // Memoize: filled() and color() were getter functions that ran twice per
+  // render (once for filled, once for METER_WIDTH - filled). Now both are
+  // memoized — single computation per pct change with value-equality
+  // short-circuit.
+  const filled = createMemo(() => Math.max(0, Math.min(METER_WIDTH, Math.round((props.pct / 100) * METER_WIDTH))))
+  const color = createMemo(() => {
     if (props.pct > 90) return theme.error
     if (props.pct > 70) return theme.warning
     return theme.textMuted
-  }
+  })
   return (
     <text wrapMode="none" flexShrink={0}>
-      <span style={{ fg: color() }}>{"■".repeat(filled())}</span>
-      <span style={{ fg: theme.border }}>{"□".repeat(METER_WIDTH - filled())}</span>
+      <span style={{ fg: color() }}>{METER_FILLED[filled()]}</span>
+      <span style={{ fg: theme.border }}>{METER_EMPTY[METER_WIDTH - filled()]}</span>
       <span style={{ fg: theme.textMuted }}>{"  " + props.numeric}</span>
     </text>
   )
 }
+
+// Hoisted to module scope: frames are pure data with no theme/runtime
+// dependency, so building them per Prompt mount allocated 28 fresh strings
+// for nothing. The colour ramp DOES depend on the theme/agent and stays
+// per-component.
+const TURBO_FRAMES = createTurboFrames()
+const TURBO_INTERVAL_MS = 50
 
 export function Prompt(props: PromptProps) {
   let input: TextareaRenderable
@@ -199,7 +216,10 @@ export function Prompt(props: PromptProps) {
   const [editorContextHover, setEditorContextHover] = createSignal(false)
   let lastSubmittedEditorSelectionKey: string | undefined
   const [auto, setAuto] = createSignal<AutocompleteRef>()
+  // Lower-cased provider label memoized — the JSX read previously called
+  // .toLowerCase() per render, allocating a fresh string each time.
   const currentProviderLabel = createMemo(() => local.model.parsed().provider)
+  const currentProviderLabelLower = createMemo(() => currentProviderLabel().toLowerCase())
   const hasRightContent = createMemo(() => Boolean(props.right))
 
   function promptModelWarning() {
@@ -250,30 +270,68 @@ export function Prompt(props: PromptProps) {
     return messages.findLast((m): m is UserMessage => m.role === "user")
   })
 
-  const usage = createMemo(() => {
-    if (!props.sessionID) return
-    const msg = sync.data.message[props.sessionID] ?? []
-    const last = msg.findLast((item): item is AssistantMessage => item.role === "assistant" && item.tokens.output > 0)
-    if (!last) return
-
+  // Usage strip — split into independent primitive memos so a streaming
+  // delta only invalidates the field that actually moved (typically tokens
+  // and pct; cost only commits on completion). Previously this was a single
+  // memo returning a fresh 7-field object → every `<Show when={u().X}>`
+  // downstream re-evaluated per delta because object identity changed.
+  //
+  // Single fold over messages once per delta produces the source primitives.
+  // Display formatting then sits behind per-field memos so Locale/money
+  // format calls fire only when their input number actually changes.
+  const usageSource = createMemo(() => {
+    if (!props.sessionID) return undefined
+    const list = sync.data.message[props.sessionID]
+    if (!list || list.length === 0) return undefined
+    let last: AssistantMessage | undefined
+    let cost = 0
+    for (const item of list) {
+      if (item.role !== "assistant") continue
+      cost += item.cost
+      if (item.tokens.output > 0) last = item
+    }
+    if (!last) return cost > 0 ? { tokens: 0, model: undefined, cost, providerID: "", modelID: "" } : undefined
     const tokens =
       last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
-    if (tokens <= 0) return
-
-    const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
-    const limit = model?.limit.context
-    const pct = limit ? Math.round((tokens / limit) * 100) : undefined
-    const cost = msg.reduce((sum, item) => sum + (item.role === "assistant" ? item.cost : 0), 0)
-    return {
-      tokens,
-      limit,
-      pct,
-      tokensFormatted: Locale.number(tokens),
-      pctFormatted: pct !== undefined ? `${pct}%` : undefined,
-      context: pct ? `${Locale.number(tokens)} (${pct}%)` : Locale.number(tokens),
-      cost: cost > 0 ? money.format(cost) : undefined,
-    }
+    return { tokens, providerID: last.providerID, modelID: last.modelID, cost, model: undefined as unknown }
   })
+
+  // Token total (number). Equality short-circuits identical values.
+  const usageTokens = createMemo(() => usageSource()?.tokens ?? 0)
+
+  // Context limit — only changes when the model changes (rare during a turn).
+  const usageLimit = createMemo<number | undefined>(() => {
+    const src = usageSource()
+    if (!src || !src.providerID) return undefined
+    return sync.data.provider.find((p) => p.id === src.providerID)?.models[src.modelID]?.limit.context
+  })
+
+  const usagePct = createMemo<number | undefined>(() => {
+    const t = usageTokens()
+    const limit = usageLimit()
+    if (!limit || t <= 0) return undefined
+    return Math.round((t / limit) * 100)
+  })
+
+  const usageTokensFormatted = createMemo(() => {
+    const t = usageTokens()
+    return t > 0 ? Locale.number(t) : ""
+  })
+
+  const usageContext = createMemo(() => {
+    const t = usageTokens()
+    if (t <= 0) return ""
+    const f = Locale.number(t)
+    const p = usagePct()
+    return p !== undefined ? `${f} (${p}%)` : f
+  })
+
+  const usageCost = createMemo<string | undefined>(() => {
+    const c = usageSource()?.cost ?? 0
+    return c > 0 ? money.format(c) : undefined
+  })
+
+  const hasUsage = createMemo(() => usageTokens() > 0 || usageCost() !== undefined)
 
   const [store, setStore] = createStore<{
     prompt: PromptInfo
@@ -1060,19 +1118,19 @@ export function Prompt(props: PromptProps) {
   // affordance carries state.
   const borderHighlight = createMemo(() => tint(theme.border, highlight(), agentMetaAlpha()))
 
-  // Turbo spool spinner. Three cells: two braille turbines (compressor +
+  // Turbo spool spinner. Six cells: two braille turbines (compressor +
   // turbine wheel, phase-offset 180°) and a boost gauge that fills as
   // pressure builds. Cycle: idle → smoothstep spool-up → peak with bloom
   // flash → linear bleed off. Rotation speed is proportional to current
   // boost so turbines visibly accelerate under load. ~1.4s per cycle.
-  // See ui/spinner.ts createV12Frames / createV12Colors.
-  const v12Frames = createV12Frames()
+  // See ui/spinner.ts createTurboFrames / createTurboColors. Frame strings
+  // are hoisted to module scope (TURBO_FRAMES); only the agent-tinted
+  // colour ramp recomputes per agent change.
   const sparkColor = createMemo(() => {
     const agent = local.agent.current()
     return agent ? local.agent.color(agent.name) : theme.border
   })
-  const v12Colors = createMemo(() => createV12Colors(sparkColor()))
-  const V12_INTERVAL_MS = 50
+  const turboColors = createMemo(() => createTurboColors(sparkColor()))
 
   const placeholderText = createMemo(() => {
     if (props.showPlaceholder === false) return undefined
@@ -1351,9 +1409,7 @@ export function Prompt(props: PromptProps) {
                       {local.model.parsed().modelID}
                     </text>
                     <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>·</text>
-                    <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>
-                      {currentProviderLabel().toLowerCase()}
-                    </text>
+                    <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>{currentProviderLabelLower()}</text>
                     <Show when={showVariant()}>
                       <text fg={fadeColor(theme.textMuted, variantMetaAlpha())}>·</text>
                       <text>
@@ -1368,20 +1424,16 @@ export function Prompt(props: PromptProps) {
             </Show>
           </box>
           <box flexDirection="row" gap={2} alignItems="center" flexShrink={0}>
-            <Show when={usage()}>
-              {(u) => (
-                <>
-                  <Show
-                    when={u().limit && u().pct !== undefined}
-                    fallback={<text fg={theme.textMuted}>{u().tokensFormatted}</text>}
-                  >
-                    <UsageMeter pct={u().pct!} numeric={u().context} />
-                  </Show>
-                  <Show when={u().cost}>
-                    <text fg={theme.textMuted}>· {u().cost}</text>
-                  </Show>
-                </>
-              )}
+            <Show when={hasUsage()}>
+              <Show
+                when={usageLimit() && usagePct() !== undefined}
+                fallback={<text fg={theme.textMuted}>{usageTokensFormatted()}</text>}
+              >
+                <UsageMeter pct={usagePct()!} numeric={usageContext()} />
+              </Show>
+              <Show when={usageCost()}>
+                <text fg={theme.textMuted}>· {usageCost()}</text>
+              </Show>
             </Show>
             <Show when={hasRightContent()}>
               <box flexDirection="row" gap={1} alignItems="center">
@@ -1426,7 +1478,7 @@ export function Prompt(props: PromptProps) {
           >
             <box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
               <Show when={kv.get("animations_enabled", true)} fallback={<text fg={sparkColor()}>{SP_FALLBACK}</text>}>
-                <spinner color={v12Colors()} frames={v12Frames} interval={V12_INTERVAL_MS} />
+                <spinner color={turboColors()} frames={TURBO_FRAMES} interval={TURBO_INTERVAL_MS} />
               </Show>
               <box flexDirection="row" gap={1} flexShrink={0}>
                 {(() => {

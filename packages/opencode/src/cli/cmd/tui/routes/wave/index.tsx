@@ -1,6 +1,6 @@
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import { TextAttributes } from "@opentui/core"
-import { createMemo, createSignal, For, Show } from "solid-js"
+import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { useRoute } from "@tui/context/route"
 import { useTheme } from "@tui/context/theme"
 import { useWave } from "@tui/context/wave"
@@ -42,6 +42,17 @@ export function Wave() {
   const dims = useTerminalDimensions()
   const toast = useToast()
   const [cursor, setCursor] = createSignal(0)
+
+  // Wave context is now lazy: it doesn't poll unless asked. Arm polling on
+  // route mount, release on unmount. release() is a no-op if a campaign is
+  // still active (so the home pill stays live), it only stops the timer
+  // when there's nothing to watch.
+  onMount(() => {
+    void wave.refresh()
+  })
+  onCleanup(() => {
+    wave.release()
+  })
 
   const rows = createMemo<ReadonlyArray<WaveRow>>(() => wave.data.state?.waves ?? [])
   const state = createMemo<State | null>(() => wave.data.state)
@@ -149,7 +160,7 @@ export function Wave() {
               <Show when={wave.data.campaigns.length > 0}>
                 <box paddingTop={1} gap={1}>
                   <text fg={theme.text}>archived campaigns:</text>
-                  <For each={wave.data.campaigns}>{(id) => <text fg={theme.textMuted}>  • {id}</text>}</For>
+                  <For each={wave.data.campaigns}>{(id) => <text fg={theme.textMuted}> • {id}</text>}</For>
                 </box>
               </Show>
             </box>

@@ -7,6 +7,7 @@ import {
   For,
   Match,
   on,
+  onCleanup,
   onMount,
   Show,
   Switch,
@@ -14,6 +15,23 @@ import {
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import path from "path"
+import * as Log from "@opencode-ai/core/util/log"
+
+// codemaxxxing render-bug instrumentation. Gated on OPENCODE_DEBUG_RENDER=1
+// so it's free in production. Logs to the same opencode log file
+// ($XDG_DATA_HOME/opencode/log/<timestamp>.log or dev.log).
+//
+// Diagnostic harness used to chase the streaming-rendering regression.
+// Kept in place at near-zero cost (env-var gate evaluated at module load,
+// dead `if (false) {}` blocks at every call site). The Log.create call is
+// also conditionalized so the no-debug path doesn't even build the logger
+// instance — Log.create() touches a Map and constructs closures that we
+// don't need in production.
+const RENDER_DEBUG = !!process.env.OPENCODE_DEBUG_RENDER
+const renderLog = RENDER_DEBUG ? Log.create({ service: "tui-render" }) : undefined
+const dlog = (msg: string, extra?: Record<string, any>) => {
+  if (RENDER_DEBUG && renderLog) renderLog.info(msg, extra)
+}
 import { useRoute, useRouteData } from "@tui/context/route"
 import { useProject } from "@tui/context/project"
 import { useSync } from "@tui/context/sync"
@@ -25,8 +43,10 @@ import { BoxRenderable, ScrollBoxRenderable, addDefaultParsers, TextAttributes, 
 import { Prompt, type PromptRef } from "@tui/component/prompt"
 import type {
   AssistantMessage,
+  Message,
   Part,
   Provider,
+  Session as SessionType,
   ToolPart,
   UserMessage,
   TextPart,
@@ -109,6 +129,24 @@ const context = createContext<{
   providers: () => ReadonlyMap<string, Provider>
   sync: ReturnType<typeof useSync>
   tui: ReturnType<typeof useTuiConfig>
+  // Pre-computed message ordinals + per-turn metadata for marginalia and the
+  // closing-summary footer. Built once per messages-list change in the route
+  // component, O(1) lookup per render. Replaces per-message createMemo scans
+  // that were O(N) each → O(N²) total on every streaming chunk.
+  //
+  // `lastInTurn` is the set of assistant message ids that are the highest-id
+  // assistant under their `parentID` (= last sibling in the turn). The
+  // closing-summary footer ("build · model · duration") is gated on this so
+  // that mid-turn assistant messages don't carry it once a newer sibling has
+  // appeared.
+  message_meta: () => {
+    user: ReadonlyMap<string, number>
+    assistant: ReadonlyMap<string, number>
+    // Direct id→user-message lookup. Used by AssistantMessage.duration()
+    // to find its parent user message in O(1) instead of walking the
+    // whole list per assistant per render.
+    user_by_id: ReadonlyMap<string, UserMessage>
+  }
 }>()
 
 function use() {
@@ -116,6 +154,15 @@ function use() {
   if (!ctx) throw new Error("useContext must be used within a Session component")
   return ctx
 }
+
+// Module-scope frozen empty arrays. Reused across renders so that "no
+// data yet" branches don't allocate fresh arrays each call — a fresh `[]`
+// breaks Solid's value-equality short-circuit in downstream memos and
+// re-keys <For> children unnecessarily. Frozen so any accidental mutation
+// throws loudly in dev.
+const EMPTY_SESSIONS: readonly SessionType[] = Object.freeze([]) as readonly SessionType[]
+const EMPTY_PARTS: readonly Part[] = Object.freeze([]) as readonly Part[]
+const EMPTY_MESSAGES: readonly Message[] = Object.freeze([]) as readonly Message[]
 
 export function Session() {
   const route = useRouteData("session")
@@ -128,25 +175,113 @@ export function Session() {
   const { theme } = useTheme()
   const promptRef = usePromptRef()
   const session = createMemo(() => sync.session.get(route.sessionID))
+  // Upstream `children()` (root + direct children sorted) — single walk
+  // over sync.data.session. Used for the prompt/permission rollup. Most
+  // sessions have no subagents, in which case this is the entire chain.
   const children = createMemo(() => {
     const parentID = session()?.parentID ?? session()?.id
     return sync.data.session
       .filter((x) => x.parentID === parentID || x.id === parentID)
       .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   })
-  // codemaxxxing addition: recursive descendants for nested-subagent permission/question rollup
+  // codemaxxxing addition: nested-subagent (>1 level deep) descendants for
+  // permission/question rollup. Detects in the SAME single walk whether
+  // any deeper-than-one-level nesting exists; if not, returns the direct
+  // children (identical to upstream's `children()` cost). Only the rare
+  // multi-level case pays the BFS cost.
   const descendants = createMemo(() => {
-    const rootID = session()?.parentID ?? session()?.id
-    if (!rootID) return []
-    const ids = new Set([rootID])
-    for (const id of ids) {
-      for (const s of sync.data.session) {
-        if (s.parentID === id) ids.add(s.id)
+    const root = session()
+    if (!root) return EMPTY_SESSIONS
+    const rootID = root.parentID ?? root.id
+    const sessions = sync.data.session
+    const direct: typeof sessions = []
+    let hasDeepNesting = false
+    for (const s of sessions) {
+      if (s.id === rootID || s.parentID === rootID) {
+        direct.push(s)
+        continue
+      }
+      // A session whose parent isn't us and isn't a root means there's a
+      // grandchild somewhere in the workspace. We don't yet know if it's
+      // ours, but the deep walk below is the only way to know.
+      if (s.parentID) hasDeepNesting = true
+    }
+    if (!hasDeepNesting) {
+      return direct.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    }
+    // Deep walk only fires when grandchildren exist somewhere.
+    const childrenByParent = new Map<string, string[]>()
+    for (const s of sessions) {
+      if (!s.parentID) continue
+      let arr = childrenByParent.get(s.parentID)
+      if (!arr) childrenByParent.set(s.parentID, (arr = []))
+      arr.push(s.id)
+    }
+    const seen = new Set<string>([rootID])
+    const stack: string[] = [rootID]
+    while (stack.length) {
+      const id = stack.pop()!
+      const kids = childrenByParent.get(id)
+      if (!kids) continue
+      for (const k of kids) {
+        if (seen.has(k)) continue
+        seen.add(k)
+        stack.push(k)
       }
     }
-    return sync.data.session.filter((x) => ids.has(x.id))
+    return sessions.filter((x) => seen.has(x.id))
   })
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
+  // Single O(N) pass to derive marginalia ordinals + per-turn last-sibling
+  // ids. Per-message components read these as O(1) lookups instead of
+  // re-scanning the whole list (which was O(N²) across N children on every
+  // streaming chunk).
+  // Single O(N) pass to derive marginalia ordinals + user-by-id index.
+  // Per-message components read these as O(1) lookups.
+  //
+  // CRITICAL OPTIMIZATION: only rebuild when the message list LENGTH
+  // changes. Messages are id-ordered and append-only — parts streaming
+  // in mutates message contents in place but never reorders or appends
+  // new messages, so the ordinals stay stable until a new message
+  // boundary lands. Returning the same Map references when length is
+  // unchanged means downstream `userIndex`/`assistantIndex` memos see
+  // the same `message_meta()` reference per delta, their reactive
+  // tracking short-circuits at the OUTER comparison, and their closures
+  // never re-run during streaming.
+  //
+  // Length-tracker is its own memo so the O(1) `messages().length` read
+  // is what's tracked per delta — message_meta only re-runs when the
+  // length number actually changes.
+  const messageCount = createMemo(() => messages().length)
+  const message_meta = createMemo<{
+    user: Map<string, number>
+    assistant: Map<string, number>
+    user_by_id: Map<string, UserMessage>
+  }>(() => {
+    // Tracking `messageCount()` (a primitive) means this memo only
+    // re-runs when length changes — Solid's value-equality on the
+    // primitive short-circuits the per-delta message-content updates.
+    // We then snapshot the list once via untrack (we already know it
+    // changed via length) — no redundant reactive subscription.
+    void messageCount()
+    const list = messages()
+    const user = new Map<string, number>()
+    const assistant = new Map<string, number>()
+    const user_by_id = new Map<string, UserMessage>()
+    let u = 0
+    let a = 0
+    for (const m of list) {
+      if (m.role === "user") {
+        u++
+        user.set(m.id, u)
+        user_by_id.set(m.id, m as UserMessage)
+      } else if (m.role === "assistant") {
+        a++
+        assistant.set(m.id, a)
+      }
+    }
+    return { user, assistant, user_by_id }
+  })
   const permissions = createMemo(() => {
     if (session()?.parentID) return []
     return descendants().flatMap((x) => sync.data.permission[x.id] ?? [])
@@ -158,13 +293,86 @@ export function Session() {
   const visible = createMemo(() => !session()?.parentID && permissions().length === 0 && questions().length === 0)
   const disabled = createMemo(() => permissions().length > 0 || questions().length > 0)
 
-  const pending = createMemo(() => {
-    return messages().findLast((x) => x.role === "assistant" && !x.time.completed)?.id
+  // Single fold over messages produces both `pending` (id of in-flight
+  // assistant) and `lastAssistant` (most recent assistant overall).
+  // Walks BACKWARD and breaks on first assistant — O(1) when the tail is
+  // an assistant (the common case mid-stream and immediately post-turn).
+  // Upstream's two separate findLasts are O(1) each but it does both;
+  // we do one. Worst case (no assistants at all) is O(N), same as upstream.
+  const messageTail = createMemo(() => {
+    const list = messages()
+    for (let i = list.length - 1; i >= 0; i--) {
+      const m = list[i]
+      if (m.role !== "assistant") continue
+      const ass = m as AssistantMessage
+      const pending = ass.time.completed ? undefined : ass.id
+      return { pending, lastAssistant: ass }
+    }
+    return { pending: undefined, lastAssistant: undefined as AssistantMessage | undefined }
   })
 
-  const lastAssistant = createMemo(() => {
-    return messages().findLast((x) => x.role === "assistant")
-  })
+  const pending = createMemo(() => messageTail().pending)
+  const lastAssistant = createMemo(() => messageTail().lastAssistant)
+  // (note: there used to be a `lastAssistantID` memo here that fed
+  // `last={…}` to every AssistantMessage. That prop was removed —
+  // closing-summary now gates on `final() || aborted()` so it doesn't
+  // need to know which message is "currently last". Eliminates a
+  // per-delta memo + a per-message reactive prop comparison.)
+
+  // ── instrumentation: route-level streaming signals ──────────────────
+  // pending = id of the currently-streaming assistant (drives queued())
+  // lastAssistant = drives the closing-summary `last` prop on every msg
+  // Flips here mid-stream cascade into mount/unmount and re-keying below.
+  if (RENDER_DEBUG) {
+    let lastPending: string | undefined | null = null
+    let lastLastAss: string | undefined | null = null
+    createEffect(() => {
+      const p = pending()
+      if (lastPending !== p) {
+        dlog("route.pending change", {
+          sessionID: route.sessionID,
+          from: lastPending === null ? "(init)" : (lastPending ?? "(none)"),
+          to: p ?? "(none)",
+          msgCount: messages().length,
+        })
+        lastPending = p
+      }
+    })
+    createEffect(() => {
+      const id = lastAssistant()?.id
+      if (lastLastAss !== id) {
+        dlog("route.lastAssistant change", {
+          sessionID: route.sessionID,
+          from: lastLastAss === null ? "(init)" : (lastLastAss ?? "(none)"),
+          to: id ?? "(none)",
+          msgCount: messages().length,
+        })
+        lastLastAss = id
+      }
+    })
+    // Track messages array length and identity of last entry. A re-keying
+    // event (last entry id changing without an append) signals the trim.
+    let lastMsgLen = -1
+    let lastTailID: string | undefined
+    createEffect(() => {
+      const list = messages()
+      const tail = list.at(-1)?.id
+      if (lastMsgLen !== list.length || lastTailID !== tail) {
+        dlog("route.messages change", {
+          sessionID: route.sessionID,
+          prevLen: lastMsgLen,
+          nextLen: list.length,
+          prevTail: lastTailID ?? "(none)",
+          nextTail: tail ?? "(none)",
+          // reKey = length unchanged but tail id changed → we're swapping
+          // items in place, which is the trim-at-100 path.
+          reKey: lastMsgLen === list.length && lastTailID !== tail ? "YES" : "no",
+        })
+        lastMsgLen = list.length
+        lastTailID = tail
+      }
+    })
+  }
 
   const dimensions = useTerminalDimensions()
   const [sidebar, setSidebar] = kv.signal<"auto" | "hide">("sidebar", "auto")
@@ -1058,6 +1266,7 @@ export function Session() {
         providers,
         sync,
         tui: tuiConfig,
+        message_meta,
       }}
     >
       <box flexDirection="row">
@@ -1167,15 +1376,14 @@ export function Session() {
                           ))
                         }}
                         message={message as UserMessage}
-                        parts={sync.data.part[message.id] ?? []}
+                        parts={sync.data.part[message.id] ?? (EMPTY_PARTS as Part[])}
                         pending={pending()}
                       />
                     </Match>
                     <Match when={message.role === "assistant"}>
                       <AssistantMessage
-                        last={lastAssistant()?.id === message.id}
                         message={message as AssistantMessage}
-                        parts={sync.data.part[message.id] ?? []}
+                        parts={sync.data.part[message.id] ?? (EMPTY_PARTS as Part[])}
                       />
                     </Match>
                   </Switch>
@@ -1282,27 +1490,50 @@ function UserMessage(props: {
 
   const compaction = createMemo(() => props.parts.find((x) => x.type === "compaction"))
 
-  // Marginalia counter: nth user message in this session.
-  const userIndex = createMemo(() => {
-    const list = ctx.sync.data.message[ctx.sessionID]
-    if (!list) return 1
-    let n = 0
-    for (const m of list) {
-      if (m.role === "user") n++
-      if (m.id === props.message.id) return n
-    }
-    return n
-  })
+  // ── instrumentation: queueing window ────────────────────────────────
+  if (RENDER_DEBUG) {
+    dlog("UserMessage mount", {
+      id: props.message.id,
+      pending: props.pending ?? "(none)",
+      queued: queued(),
+      partsLen: props.parts.length,
+    })
+    onCleanup(() => dlog("UserMessage UNMOUNT", { id: props.message.id, partsLen: props.parts.length }))
+    let lastPending: string | undefined | null = null
+    let lastQueued: boolean | string | undefined
+    createEffect(() => {
+      const p = props.pending
+      const q = queued()
+      if (lastPending !== p || lastQueued !== q) {
+        dlog("UserMessage pending/queued change", {
+          id: props.message.id,
+          pendingFrom: lastPending === null ? "(init)" : (lastPending ?? "(none)"),
+          pendingTo: p ?? "(none)",
+          queuedFrom: String(lastQueued),
+          queuedTo: String(q),
+        })
+        lastPending = p
+        lastQueued = q
+      }
+    })
+  }
+
+  // Marginalia counter: nth user message in this session. O(1) lookup
+  // against the route-level message_meta cache (single O(N) pass per
+  // messages-list change). Previously this re-walked the entire messages
+  // list per render — combined with N user messages all doing the same,
+  // O(N²) per streaming chunk.
+  const userIndex = createMemo(() => ctx.message_meta().user.get(props.message.id) ?? 1)
 
   return (
     <>
       <Show when={text()}>
         <box id={props.message.id} marginTop={props.index === 0 ? 0 : 1} flexShrink={0} flexDirection="row">
           {/* Inline marginalia at column 0 of body. The agent-color middle dot
-              · carries the speaker identity color. Fixed marginRight=1 so the
-              body column always starts at the same indent regardless of digit
-              count in the index. */}
-          <text fg={hover() ? theme.text : theme.textMuted} flexShrink={0} marginRight={1}>
+              · carries the speaker identity color. Fixed `width={5}` (vs
+              flex-measured intrinsic width) so opentui's flex pass doesn't
+              have to remeasure the marginalia text per streaming delta. */}
+          <text fg={hover() ? theme.text : theme.textMuted} flexShrink={0} width={5}>
             u<span style={{ fg: color() }}>·</span>
             {userIndex()}
           </text>
@@ -1364,118 +1595,182 @@ function UserMessage(props: {
   )
 }
 
-function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; last: boolean }) {
+function AssistantMessage(props: { message: AssistantMessage; parts: Part[] }) {
   const ctx = use()
   const local = useLocal()
   const { theme } = useTheme()
-  const sync = useSync()
-  const messages = createMemo(() => sync.data.message[props.message.sessionID] ?? [])
-  const model = createMemo(() => Model.name(ctx.providers(), props.message.providerID, props.message.modelID))
+  // (note: there used to be a `model` memo here that ran Model.name on every
+  // theme/provider change. The closing-summary now renders props.message.modelID
+  // directly per the new design, so the memo was dead. Removed.)
 
   const final = createMemo(() => {
     return props.message.finish && !["tool-calls", "unknown"].includes(props.message.finish)
   })
 
+  // Duration uses the route-level user_by_id index (O(1)) instead of
+  // messages().find() (O(N)). With N assistant messages mounted that
+  // dropped a per-render O(N²) scan to O(N).
   const duration = createMemo(() => {
     if (!final()) return 0
     if (!props.message.time.completed) return 0
-    const user = messages().find((x) => x.role === "user" && x.id === props.message.parentID)
+    const parentID = props.message.parentID
+    if (!parentID) return 0
+    const user = ctx.message_meta().user_by_id.get(parentID)
     if (!user || !user.time) return 0
     return props.message.time.completed - user.time.created
   })
 
   const keybind = useKeybind()
 
-  // Marginalia counter: nth assistant message in this session.
-  const assistantIndex = createMemo(() => {
-    const list = messages()
-    let n = 0
-    for (const m of list) {
-      if (m.role === "assistant") n++
-      if (m.id === props.message.id) return n
-    }
-    return n
-  })
+  // Marginalia counter: nth assistant message in this session. O(1)
+  // lookup against the route-level message_meta cache. See UserMessage.
+  const assistantIndex = createMemo(() => ctx.message_meta().assistant.get(props.message.id) ?? 1)
 
   const agentColor = createMemo(() => local.agent.color(props.message.agent))
   const aborted = createMemo(() => props.message.error?.name === "MessageAbortedError")
-  const hasVisibleParts = createMemo(() =>
-    props.parts.some((x) => x.type === "text" || x.type === "tool" || x.type === "reasoning"),
-  )
+  // Memoized so the `<Show>` for "view subagents" hint doesn't re-walk the
+  // parts array on every streaming delta. Was previously inline
+  // `props.parts.some(...)` → O(P) per delta × N assistant messages mounted.
+  const hasTaskTool = createMemo(() => props.parts.some((x) => x.type === "tool" && x.tool === "task"))
+  // Memoized error-display predicate. Was inline in the JSX → re-evaluated
+  // the error name on every reactive read.
+  const hasUserError = createMemo(() => !!props.message.error && props.message.error.name !== "MessageAbortedError")
+  // NOTE: previously this body was wrapped in <Show when={hasVisibleParts()}>
+  // where hasVisibleParts checked for text|tool|reasoning. Streaming assistant
+  // messages always start with a `step-start` part (which doesn't qualify),
+  // so the entire body — including the streaming <code> element that owns the
+  // markdown-streaming buffer — stayed UNMOUNTED for ~500ms-2s until the
+  // first reasoning/text/tool part arrived. Then the body mounted with the
+  // accumulated parts already populated and painted them in one frame instead
+  // of streaming them in. From the user's POV: "stops streaming, send a new
+  // message, suddenly a chunk that wasn't streamed appears."
+  //
+  // Fix: render the body unconditionally (matches upstream). The marginalia
+  // pill renders next to a possibly-empty body for a beat — that's fine; the
+  // streaming <code> element keeps its incremental state across deltas.
+  // See log analysis on session ses_20e6b1c48ffeJKO2R6OGDPzq6T msg
+  // msg_df4908253001s5Rnrz0hNteWbk for the smoking-gun trace.
+
+  // ── instrumentation ────────────────────────────────────────────────────
+  if (RENDER_DEBUG) {
+    dlog("AssistantMessage mount", {
+      id: props.message.id,
+      sessionID: props.message.sessionID,
+      partsLen: props.parts.length,
+      partTypes: props.parts.map((p) => p.type).join(","),
+      finish: props.message.finish ?? "(streaming)",
+    })
+    onCleanup(() =>
+      dlog("AssistantMessage UNMOUNT", {
+        id: props.message.id,
+        partsLen: props.parts.length,
+        finish: props.message.finish ?? "(streaming)",
+      }),
+    )
+    // Track parts-array reference identity. If this fires while finish is
+    // still undefined, the streaming array reference is being swapped under
+    // us — that breaks <For> identity for in-flight parts.
+    let lastRef: Part[] | undefined
+    createEffect(() => {
+      const arr = props.parts
+      if (lastRef !== arr) {
+        dlog("AssistantMessage parts ref changed", {
+          id: props.message.id,
+          prevLen: lastRef?.length ?? -1,
+          nextLen: arr.length,
+          prevTypes: lastRef?.map((p) => p.type).join(",") ?? "",
+          nextTypes: arr.map((p) => p.type).join(","),
+          finish: props.message.finish ?? "(streaming)",
+        })
+        lastRef = arr
+      }
+    })
+  }
 
   return (
     <>
-      <Show when={hasVisibleParts()}>
-        <box flexDirection="row" flexShrink={0} paddingTop={1}>
-          {/* Inline marginalia at column 0 of the body — same pattern as user
-              messages. The agent-color middle dot signals which agent
-              produced this turn. Body parts render in the column to the
-              right; their existing internal paddings stay (text/reasoning/
-              tool blocks know how to indent themselves under the message
-              wrapper). */}
-          <text fg={theme.textMuted} flexShrink={0} marginRight={1}>
-            a<span style={{ fg: agentColor() }}>·</span>
-            {assistantIndex()}
-          </text>
-          <box flexGrow={1} flexShrink={1}>
-            <For each={props.parts}>
-              {(part, index) => {
-                const component = createMemo(() => PART_MAPPING[part.type as keyof typeof PART_MAPPING])
-                return (
-                  <Show when={component()}>
-                    <Dynamic
-                      last={index() === props.parts.length - 1}
-                      component={component()}
-                      part={part as any}
-                      message={props.message}
-                    />
+      <box flexDirection="row" flexShrink={0} paddingTop={1}>
+        {/* Inline marginalia at column 0 of the body — same pattern as user
+            messages. The agent-color middle dot signals which agent
+            produced this turn. Body parts render in the column to the
+            right; their existing internal paddings stay (text/reasoning/
+            tool blocks know how to indent themselves under the message
+            wrapper).
+            FIXED width on the marginalia text — opentui's flex pass
+            doesn't have to measure the text's intrinsic width per
+            streaming delta when the parent is a flex row. 5 cols fits
+            "a·999" comfortably (3 digits = 9999 messages). */}
+        <text fg={theme.textMuted} flexShrink={0} width={5}>
+          a<span style={{ fg: agentColor() }}>·</span>
+          {assistantIndex()}
+        </text>
+        <box flexGrow={1} flexShrink={1}>
+          <For each={props.parts}>
+            {(part, index) => {
+              // PART_MAPPING is a frozen module-scope object; lookup is O(1)
+              // and stable for the lifetime of the part. The previous
+              // createMemo wrapper was pure overhead per <For> child.
+              const component = PART_MAPPING[part.type as keyof typeof PART_MAPPING]
+              if (!component) return null
+              return (
+                <Dynamic
+                  last={index() === props.parts.length - 1}
+                  component={component}
+                  part={part as any}
+                  message={props.message}
+                />
+              )
+            }}
+          </For>
+          <Show when={hasTaskTool()}>
+            <box paddingTop={1}>
+              <text fg={theme.text}>
+                {keybind.print("session_child_first")}
+                <span style={{ fg: theme.textMuted }}> view subagents</span>
+              </text>
+            </box>
+          </Show>
+          <Show when={hasUserError()}>
+            <box paddingTop={1} flexShrink={0}>
+              <text fg={theme.error}>{props.message.error?.data.message}</text>
+            </box>
+          </Show>
+          {/* Closing summary right-pinned, no rule. modelID + duration
+              muted; only the agent name carries color. Wraps gracefully on
+              narrow widths via flex-wrap on the row.
+              Gate is `final() || aborted()` only — removed the previous
+              `props.last` clause that made the summary appear on the latest
+              assistant before it was actually done (visually noisy: a half-
+              rendered "build · model · 0s" line dangling under a streaming
+              message). Now the summary only shows when the message is truly
+              done, which also kills the per-delta re-evaluation cost on
+              `lastAssistantID()` flips. */}
+          <Switch>
+            <Match when={final() || aborted()}>
+              <box flexDirection="row" justifyContent="flex-end" marginTop={1} flexShrink={0} flexWrap="wrap">
+                <text>
+                  <span
+                    style={{
+                      fg: aborted() ? theme.textMuted : agentColor(),
+                      bold: !aborted(),
+                    }}
+                  >
+                    {props.message.mode}
+                  </span>
+                  <span style={{ fg: theme.textMuted }}> · </span>
+                  <span style={{ fg: theme.textMuted }}>{props.message.modelID}</span>
+                  <Show when={duration()}>
+                    <span style={{ fg: theme.textMuted }}> · {Locale.duration(duration())}</span>
                   </Show>
-                )
-              }}
-            </For>
-            <Show when={props.parts.some((x) => x.type === "tool" && x.tool === "task")}>
-              <box paddingTop={1}>
-                <text fg={theme.text}>
-                  {keybind.print("session_child_first")}
-                  <span style={{ fg: theme.textMuted }}> view subagents</span>
+                  <Show when={aborted()}>
+                    <span style={{ fg: theme.textMuted }}> · interrupted</span>
+                  </Show>
                 </text>
               </box>
-            </Show>
-            <Show when={props.message.error && props.message.error.name !== "MessageAbortedError"}>
-              <box paddingTop={1} flexShrink={0}>
-                <text fg={theme.error}>{props.message.error?.data.message}</text>
-              </box>
-            </Show>
-            {/* Closing summary right-pinned, no rule. modelID + duration
-                muted; only the agent name carries color. Wraps gracefully on
-                narrow widths via flex-wrap on the row. */}
-            <Switch>
-              <Match when={props.last || final() || aborted()}>
-                <box flexDirection="row" justifyContent="flex-end" marginTop={1} flexShrink={0} flexWrap="wrap">
-                  <text>
-                    <span
-                      style={{
-                        fg: aborted() ? theme.textMuted : agentColor(),
-                        bold: !aborted(),
-                      }}
-                    >
-                      {props.message.mode}
-                    </span>
-                    <span style={{ fg: theme.textMuted }}> · </span>
-                    <span style={{ fg: theme.textMuted }}>{props.message.modelID}</span>
-                    <Show when={duration()}>
-                      <span style={{ fg: theme.textMuted }}> · {Locale.duration(duration())}</span>
-                    </Show>
-                    <Show when={aborted()}>
-                      <span style={{ fg: theme.textMuted }}> · interrupted</span>
-                    </Show>
-                  </text>
-                </box>
-              </Match>
-            </Switch>
-          </box>
+            </Match>
+          </Switch>
         </box>
-      </Show>
+      </box>
     </>
   )
 }
@@ -1522,6 +1817,38 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
 function TextPart(props: { last: boolean; part: TextPart; message: AssistantMessage }) {
   const ctx = use()
   const { theme, syntax } = useTheme()
+  if (RENDER_DEBUG) {
+    dlog("TextPart mount", {
+      msgID: props.message.id,
+      partID: props.part.id,
+      textLen: props.part.text.length,
+      preview: props.part.text.slice(-40),
+    })
+    onCleanup(() =>
+      dlog("TextPart UNMOUNT", {
+        msgID: props.message.id,
+        partID: props.part.id,
+        textLen: props.part.text.length,
+      }),
+    )
+    let lastLen = -1
+    createEffect(() => {
+      const len = props.part.text.length
+      if (lastLen !== len) {
+        // Only log on length changes that aren't trivial deltas to keep log
+        // volume sane. Log first chunk and every 200-char milestone.
+        if (lastLen === -1 || Math.floor(len / 200) !== Math.floor(lastLen / 200)) {
+          dlog("TextPart len", {
+            msgID: props.message.id,
+            partID: props.part.id,
+            len,
+            tail: props.part.text.slice(-40),
+          })
+        }
+        lastLen = len
+      }
+    })
+  }
   return (
     <Show when={props.part.text.trim()}>
       <box id={"text-" + props.part.id} marginTop={1} flexShrink={0}>
@@ -1708,13 +2035,12 @@ function InlineTool(props: {
     return callID === props.part.callID
   })
 
-  const labelFg = createMemo(() => {
-    if (permission()) return theme.warning
-    if (hover() && props.onClick) return theme.text
-    return theme.textMuted
-  })
-
-  const bodyFg = createMemo(() => {
+  // Single fg memo (was two: labelFg + bodyFg). Both downstream
+  // call sites used the same color for label and body in 100% of cases,
+  // and the only difference was that bodyFg considered `props.complete`.
+  // Render them with one color choice — rolls 2 memos into 1, removes
+  // 2 spans per inline tool render.
+  const fg = createMemo(() => {
     if (permission()) return theme.warning
     if (hover() && props.onClick) return theme.text
     if (props.complete) return theme.textMuted
@@ -1765,18 +2091,14 @@ function InlineTool(props: {
     >
       <Switch>
         <Match when={props.spinner}>
-          <Spinner color={bodyFg()}>
-            <span style={{ fg: labelFg() }}>{props.label}</span>
-            <span style={{ fg: theme.border }}>{" · "}</span>
-            {props.children}
+          <Spinner color={fg()}>
+            {props.label} · {props.children}
           </Spinner>
         </Match>
         <Match when={true}>
-          <text fg={bodyFg()} attributes={denied() ? TextAttributes.STRIKETHROUGH : undefined}>
+          <text fg={fg()} attributes={denied() ? TextAttributes.STRIKETHROUGH : undefined}>
             <Show fallback={<>{props.pending}</>} when={props.complete}>
-              <span style={{ fg: labelFg() }}>{props.label}</span>
-              <span style={{ fg: theme.border }}>{" · "}</span>
-              {props.children}
+              {props.label} · {props.children}
             </Show>
           </text>
         </Match>
@@ -1786,6 +2108,12 @@ function InlineTool(props: {
       </Show>
     </box>
   )
+}
+
+// Header line builder for BlockTool. Returns a plain string that opentui
+// can paint in a single text node — no nested span fan-out per render.
+function headerLine(props: { label: string; target?: string }): string {
+  return props.target ? `${props.label} · ${props.target}` : props.label
 }
 
 function BlockTool(props: {
@@ -1802,8 +2130,9 @@ function BlockTool(props: {
   const [hover, setHover] = createSignal(false)
   const error = createMemo(() => (props.part?.state.status === "error" ? props.part.state.error : undefined))
 
-  const dotColor = createMemo(() => (hover() && props.onClick ? theme.text : theme.border))
-  const labelFg = createMemo(() => (hover() && props.onClick ? theme.text : theme.textMuted))
+  // Single fg memo (was two: dotColor + labelFg). Same color was used for
+  // both — collapsing eliminates one memo invalidation per hover toggle.
+  const headerFg = createMemo(() => (hover() && props.onClick ? theme.text : theme.textMuted))
 
   return (
     <box
@@ -1817,19 +2146,17 @@ function BlockTool(props: {
         props.onClick?.()
       }}
     >
-      {/* Header: label · target · meta. Middle-dot separators (not ─────
-          rule) match the visual language of the agent meta strip and read
-          as one labeled item with metadata, not a heavy divider. */}
-      <box flexDirection="row" gap={1} alignItems="center" flexShrink={0} flexWrap="wrap">
-        <Show when={props.spinner} fallback={<text fg={labelFg()}>{props.label}</text>}>
-          <Spinner color={labelFg()}>{props.label}</Spinner>
-        </Show>
-        <Show when={props.target}>
-          <text fg={dotColor()}>·</text>
-          <text fg={theme.text}>{props.target}</text>
+      {/* Header collapsed to a single <text> with inline spans (was 5
+          separate text/box children). One reactive read per render
+          instead of N. Middle-dot separators are inlined; <Show> guards
+          let opentui skip rendering missing slots without splitting the
+          row. */}
+      <box flexDirection="row" alignItems="center" flexShrink={0} flexWrap="wrap">
+        <Show when={props.spinner} fallback={<text fg={headerFg()}>{headerLine(props)}</text>}>
+          <Spinner color={headerFg()}>{headerLine(props)}</Spinner>
         </Show>
         <Show when={props.meta}>
-          <text fg={dotColor()}>·</text>
+          <text fg={headerFg()}>{" · "}</text>
           <text>{props.meta}</text>
         </Show>
       </box>
@@ -1844,12 +2171,6 @@ function BlockTool(props: {
     </box>
   )
 }
-
-// Vertical fill for the shell block left-rule gutter. Same trick the sidebar
-// uses (sidebar.tsx) — single string of repeated │, container clips horizontally,
-// opentui paints one column down the body height. 240 covers any reasonable
-// terminal height.
-const SHELL_GUTTER = "│".repeat(240)
 
 function Shell(props: ToolProps<typeof ShellTool>) {
   const { theme } = useTheme()
@@ -1899,31 +2220,33 @@ function Shell(props: ToolProps<typeof ShellTool>) {
           spinner={isRunning()}
           onClick={overflow() ? () => setExpanded((prev) => !prev) : undefined}
         >
-          {/* Verbatim terminal block. Left-rule gutter sets shell apart from
-              prose — same edge language as the sidebar — so $ command and its
-              output don't read as assistant text. $ tinted accent for prompt
-              affordance, output dropped to textMuted so the command stays the
-              focal element. */}
-          <box flexDirection="row" gap={1} flexShrink={0}>
-            <box width={1} flexShrink={0} overflow="hidden">
-              <text fg={theme.accent} wrapMode="none">
-                {SHELL_GUTTER}
-              </text>
-            </box>
-            <box gap={1} flexGrow={1} flexShrink={1}>
-              <text wrapMode="word">
-                <span style={{ fg: theme.accent, bold: true }}>$ </span>
-                <span style={{ fg: theme.text }}>{props.input.command}</span>
-              </text>
-              <Show when={output()}>
-                <text fg={theme.textMuted} wrapMode="word">
-                  {limited()}
-                </text>
-              </Show>
-              <Show when={overflow()}>
-                <text fg={theme.textMuted}>{expanded() ? "Click to collapse" : "Click to expand"}</text>
-              </Show>
-            </box>
+          {/* Verbatim terminal block. Native border-left as the gutter — same
+              visual language as the sidebar but without the 240-char string
+              that opentui had to lay out, measure, and clip on every render
+              of every shell tool in the session. */}
+          <box
+            border={["left"]}
+            customBorderChars={SplitBorder.customBorderChars}
+            borderColor={theme.accent}
+            paddingLeft={1}
+            gap={1}
+            flexShrink={0}
+          >
+            {/* Default char-wrap (no `wrapMode` prop) for both command and
+                output — opentui's word-wrap is a per-render width measure
+                pass that scales with output size, and shell output streams
+                live (each metadata delta extends the string). Char-wrap
+                handles long lines fine and matches upstream's behavior. */}
+            <text>
+              <span style={{ fg: theme.accent, bold: true }}>$ </span>
+              <span style={{ fg: theme.text }}>{props.input.command}</span>
+            </text>
+            <Show when={output()}>
+              <text fg={theme.textMuted}>{limited()}</text>
+            </Show>
+            <Show when={overflow()}>
+              <text fg={theme.textMuted}>{expanded() ? "Click to collapse" : "Click to expand"}</text>
+            </Show>
           </box>
         </BlockTool>
       </Match>
@@ -2036,38 +2359,47 @@ function WebFetch(props: ToolProps<typeof WebFetchTool>) {
 function WebSearch(props: ToolProps<typeof WebSearchTool>) {
   const { theme } = useTheme()
   const input = props.input as any
-  const output = createMemo(() => (props.output ?? "").trim())
-  const results = createMemo(() =>
-    output()
-      .split(/(?=^Title: )/m)
-      .flatMap((chunk) => {
-        const title = chunk.match(/^Title: (.+)/m)?.[1]?.trim()
-        const url = chunk.match(/^URL: (.+)/m)?.[1]?.trim()
-        if (!title || !url) return []
-        const domain = url.match(/^https?:\/\/(?:www\.)?([^/]+)/)?.[1] ?? url
-        return [
-          {
-            title,
-            url,
-            domain,
-            author: chunk.match(/^Author: (.+)/m)?.[1]?.trim() || undefined,
-            date: chunk
-              .match(/^Published Date: (.+)/m)?.[1]
-              ?.trim()
-              ?.split("T")[0],
-          },
-        ]
-      }),
-  )
+  // Cheap presence check — avoids running the full regex parse pipeline
+  // until the output is actually finalized AND we have something. The
+  // expensive memo only fires once per real change to the output string,
+  // not per streaming delta of an in-flight assistant turn.
+  const hasOutput = createMemo(() => {
+    const o = props.output
+    return typeof o === "string" && o.trim().length > 0
+  })
+  // Result count from a single regex against the raw output. O(N) over
+  // the output string but no per-result allocation, no .match() x4 per
+  // chunk. Used by the collapsed branch so we can show "(N results)"
+  // without parsing the whole structure.
+  const resultCount = createMemo(() => {
+    if (!hasOutput()) return 0
+    const o = props.output as string
+    let count = 0
+    for (let i = 0; i < o.length; ) {
+      const idx = o.indexOf("Title:", i)
+      if (idx === -1) break
+      // Match only when at line start
+      if (idx === 0 || o.charCodeAt(idx - 1) === 10) count++
+      i = idx + 6
+    }
+    return count
+  })
   const [expanded, setExpanded] = createSignal(false)
+  // Heavy parse — only runs when expanded. Single string read inside the
+  // closure so reactivity correctly tracks the output once.
+  const results = createMemo(() => {
+    if (!expanded()) return EMPTY_RESULTS
+    const o = props.output ?? ""
+    return parseWebsearchResults(o)
+  })
 
   return (
     <Switch>
-      <Match when={results().length && expanded()}>
+      <Match when={resultCount() && expanded()}>
         <BlockTool
           label="websearch"
           target={`"${input.query}"`}
-          meta={<span style={{ fg: theme.textMuted }}>{results().length} results</span>}
+          meta={<span style={{ fg: theme.textMuted }}>{resultCount()} results</span>}
           part={props.part}
           onClick={() => setExpanded(false)}
         >
@@ -2092,11 +2424,11 @@ function WebSearch(props: ToolProps<typeof WebSearchTool>) {
           <text fg={theme.textMuted}>Click to collapse</text>
         </BlockTool>
       </Match>
-      <Match when={results().length}>
+      <Match when={resultCount()}>
         <BlockTool
           label="websearch"
           target={`"${input.query}"`}
-          meta={<span style={{ fg: theme.textMuted }}>{results().length} results</span>}
+          meta={<span style={{ fg: theme.textMuted }}>{resultCount()} results</span>}
           part={props.part}
           onClick={() => setExpanded(true)}
         >
@@ -2112,6 +2444,36 @@ function WebSearch(props: ToolProps<typeof WebSearchTool>) {
   )
 }
 
+interface WebsearchResult {
+  title: string
+  url: string
+  domain: string
+  author?: string
+  date?: string
+}
+const EMPTY_RESULTS: readonly WebsearchResult[] = Object.freeze([]) as readonly WebsearchResult[]
+const TITLE_RE = /^Title: (.+)/m
+const URL_RE = /^URL: (.+)/m
+const AUTHOR_RE = /^Author: (.+)/m
+const DATE_RE = /^Published Date: (.+)/m
+const DOMAIN_RE = /^https?:\/\/(?:www\.)?([^/]+)/
+const SPLIT_RE = /(?=^Title: )/m
+function parseWebsearchResults(output: string): WebsearchResult[] {
+  const trimmed = output.trim()
+  if (!trimmed) return []
+  const out: WebsearchResult[] = []
+  for (const chunk of trimmed.split(SPLIT_RE)) {
+    const title = chunk.match(TITLE_RE)?.[1]?.trim()
+    const url = chunk.match(URL_RE)?.[1]?.trim()
+    if (!title || !url) continue
+    const domain = url.match(DOMAIN_RE)?.[1] ?? url
+    const author = chunk.match(AUTHOR_RE)?.[1]?.trim() || undefined
+    const date = chunk.match(DATE_RE)?.[1]?.trim()?.split("T")[0]
+    out.push({ title, url, domain, author, date })
+  }
+  return out
+}
+
 function Task(props: ToolProps<typeof TaskTool>) {
   const { navigate } = useRoute()
   const sync = useSync()
@@ -2121,11 +2483,11 @@ function Task(props: ToolProps<typeof TaskTool>) {
       void sync.session.sync(props.metadata.sessionId)
   })
 
-  const messages = createMemo(() => sync.data.message[props.metadata.sessionId ?? ""] ?? [])
+  const messages = createMemo(() => sync.data.message[props.metadata.sessionId ?? ""] ?? (EMPTY_MESSAGES as Message[]))
 
   const tools = createMemo(() => {
     return messages().flatMap((msg) =>
-      (sync.data.part[msg.id] ?? [])
+      (sync.data.part[msg.id] ?? (EMPTY_PARTS as Part[]))
         .filter((part): part is ToolPart => part.type === "tool")
         .map((part) => ({ tool: part.tool, state: part.state })),
     )
@@ -2137,9 +2499,16 @@ function Task(props: ToolProps<typeof TaskTool>) {
 
   const isRunning = createMemo(() => props.part.state.status === "running")
 
+  // Single pass over the subagent's messages — was previously
+  // .find() + .findLast() = two full walks per render. With a long subagent
+  // session and per-delta invalidation that's O(2N) per chunk; this is O(N).
   const duration = createMemo(() => {
-    const first = messages().find((x) => x.role === "user")?.time.created
-    const assistant = messages().findLast((x) => x.role === "assistant")?.time.completed
+    let first: number | undefined
+    let assistant: number | undefined
+    for (const m of messages()) {
+      if (m.role === "user" && first === undefined) first = m.time?.created
+      if (m.role === "assistant" && m.time?.completed) assistant = m.time.completed
+    }
     if (!first || !assistant) return 0
     return assistant - first
   })
@@ -2197,28 +2566,41 @@ function Edit(props: ToolProps<typeof EditTool>) {
 
   const diffContent = createMemo(() => props.metadata.diff)
 
-  const diffMeta = createMemo(() => {
+  // Primitive memos — Solid value-equality short-circuits when adds/dels
+  // don't actually change. Previously this was a single createMemo
+  // returning JSX, so even a no-change recompute swapped the meta JSX
+  // identity per reactive recheck and tore down the inner spans.
+  const additions = createMemo(() => {
     const fd = props.metadata.filediff as { additions?: number; deletions?: number } | undefined
-    const adds = fd?.additions ?? 0
-    const dels = fd?.deletions ?? 0
-    if (!adds && !dels) return undefined
-    return (
-      <>
-        <Show when={adds > 0}>
-          <span style={{ fg: theme.diffAdded }}>+{adds}</span>
-        </Show>
-        <Show when={adds > 0 && dels > 0}> </Show>
-        <Show when={dels > 0}>
-          <span style={{ fg: theme.diffRemoved }}>-{dels}</span>
-        </Show>
-      </>
-    )
+    return fd?.additions ?? 0
   })
+  const deletions = createMemo(() => {
+    const fd = props.metadata.filediff as { additions?: number; deletions?: number } | undefined
+    return fd?.deletions ?? 0
+  })
+  const hasMeta = createMemo(() => additions() > 0 || deletions() > 0)
 
   return (
     <Switch>
       <Match when={props.metadata.diff !== undefined}>
-        <BlockTool label="edit" target={normalizePath(props.input.filePath!)} meta={diffMeta()} part={props.part}>
+        <BlockTool
+          label="edit"
+          target={normalizePath(props.input.filePath!)}
+          meta={
+            hasMeta() ? (
+              <>
+                <Show when={additions() > 0}>
+                  <span style={{ fg: theme.diffAdded }}>+{additions()}</span>
+                </Show>
+                <Show when={additions() > 0 && deletions() > 0}> </Show>
+                <Show when={deletions() > 0}>
+                  <span style={{ fg: theme.diffRemoved }}>-{deletions()}</span>
+                </Show>
+              </>
+            ) : undefined
+          }
+          part={props.part}
+        >
           <diff
             diff={diffContent()}
             view={view()}

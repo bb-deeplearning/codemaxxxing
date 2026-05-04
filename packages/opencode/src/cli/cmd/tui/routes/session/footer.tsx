@@ -1,11 +1,10 @@
-import { createMemo, For, Match, onCleanup, onMount, Show, Switch } from "solid-js"
+import { createMemo, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import { useTheme } from "../../context/theme"
 import { useSync } from "../../context/sync"
 import { useDirectory } from "../../context/directory"
 import { useConnected } from "../../component/use-connected"
 import { createStore } from "solid-js/store"
 import { useRoute } from "../../context/route"
-import type { RGBA } from "@opentui/core"
 
 export function Footer() {
   const { theme } = useTheme()
@@ -14,9 +13,9 @@ export function Footer() {
   const mcp = createMemo(() => Object.values(sync.data.mcp).filter((x) => x.status === "connected").length)
   const mcpError = createMemo(() => Object.values(sync.data.mcp).some((x) => x.status === "failed"))
   const lsp = createMemo(() => Object.keys(sync.data.lsp))
-  const permissions = createMemo(() => {
-    if (route.data.type !== "session") return []
-    return sync.data.permission[route.data.sessionID] ?? []
+  const permissionCount = createMemo(() => {
+    if (route.data.type !== "session") return 0
+    return sync.data.permission[route.data.sessionID]?.length ?? 0
   })
   const directory = useDirectory()
   const connected = useConnected()
@@ -49,32 +48,12 @@ export function Footer() {
     })
   })
 
-  // Each segment is a labeled field in the status strip. Visible only when
-  // its data is meaningful (e.g. mcp segment hides when mcp count is 0).
-  const segments = createMemo(() => {
-    const out: { label: string; value: string; valueFg?: RGBA }[] = []
-    if (permissions().length > 0) {
-      out.push({
-        label: "warn",
-        value: String(permissions().length),
-        valueFg: theme.warning,
-      })
-    }
-    out.push({
-      label: "lsp",
-      value: String(lsp().length),
-      valueFg: lsp().length > 0 ? theme.success : theme.textMuted,
-    })
-    if (mcp() > 0) {
-      out.push({
-        label: "mcp",
-        value: String(mcp()),
-        valueFg: mcpError() ? theme.error : theme.success,
-      })
-    }
-    return out
-  })
-
+  // Inline <Show> blocks instead of a derived segments array. Previously
+  // segments() returned a fresh array of objects with `valueFg` RGBA refs
+  // every time any of permissions/lsp/mcp/theme changed; the <For> then
+  // re-keyed and remounted every segment cell on each change. With three
+  // possible segments the array overhead dwarfs the work and the <For>
+  // child closure costs more than the visible content.
   return (
     <box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1} flexShrink={0}>
       <text fg={theme.textMuted}>
@@ -88,19 +67,24 @@ export function Footer() {
             </text>
           </Match>
           <Match when={connected()}>
-            <For each={segments()}>
-              {(seg, i) => (
-                <>
-                  <Show when={i() > 0}>
-                    <text fg={theme.border}>│</text>
-                  </Show>
-                  <text>
-                    <span style={{ fg: theme.textMuted }}>{seg.label}</span>{" "}
-                    <span style={{ fg: seg.valueFg ?? theme.text }}>{seg.value}</span>
-                  </text>
-                </>
-              )}
-            </For>
+            <Show when={permissionCount() > 0}>
+              <text>
+                <span style={{ fg: theme.textMuted }}>warn</span>{" "}
+                <span style={{ fg: theme.warning }}>{permissionCount()}</span>
+              </text>
+              <text fg={theme.border}>│</text>
+            </Show>
+            <text>
+              <span style={{ fg: theme.textMuted }}>lsp</span>{" "}
+              <span style={{ fg: lsp().length > 0 ? theme.success : theme.textMuted }}>{lsp().length}</span>
+            </text>
+            <Show when={mcp() > 0}>
+              <text fg={theme.border}>│</text>
+              <text>
+                <span style={{ fg: theme.textMuted }}>mcp</span>{" "}
+                <span style={{ fg: mcpError() ? theme.error : theme.success }}>{mcp()}</span>
+              </text>
+            </Show>
             <text fg={theme.border}>│</text>
             <text fg={theme.textMuted}>/status</text>
           </Match>
