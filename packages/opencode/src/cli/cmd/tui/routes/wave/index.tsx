@@ -104,18 +104,23 @@ export function Wave() {
 
   const renderRow = (row: WaveRow, idx: number) => {
     const c = colors()
-    const isCursor = idx === cursor()
+    const isCursor = () => idx === cursor()
     const sessionDisplay = row.session_id ? row.session_id.slice(0, 16) + "…" : "—"
     const commitDisplay = row.commit_sha ?? "—"
-    const noteDisplay = truncate(row.notes, noteWidth())
+    const noteDisplay = createMemo(() => truncate(row.notes, noteWidth()))
     return (
-      <box flexDirection="row" paddingLeft={2} paddingRight={2} backgroundColor={isCursor ? theme.backgroundElement : undefined}>
-        <text fg={theme.textMuted}>{isCursor ? "▸ " : "  "}</text>
-        <text fg={isCursor ? theme.text : theme.textMuted}>{padRight(String(row.n), 4)}</text>
+      <box
+        flexDirection="row"
+        paddingLeft={2}
+        paddingRight={2}
+        backgroundColor={isCursor() ? theme.backgroundElement : undefined}
+      >
+        <text fg={theme.textMuted}>{isCursor() ? "▸ " : "  "}</text>
+        <text fg={isCursor() ? theme.text : theme.textMuted}>{padRight(String(row.n), 4)}</text>
         <text fg={c[row.status]}>{padRight(row.status, 11)}</text>
         <text fg={theme.textMuted}>{padRight(sessionDisplay, 20)}</text>
         <text fg={theme.textMuted}>{padRight(commitDisplay, 9)}</text>
-        <text fg={isCursor ? theme.text : theme.textMuted}>{noteDisplay}</text>
+        <text fg={isCursor() ? theme.text : theme.textMuted}>{noteDisplay()}</text>
       </box>
     )
   }
