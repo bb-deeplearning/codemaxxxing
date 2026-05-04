@@ -95,6 +95,7 @@ function routeCurrent(route: ReturnType<typeof useRoute>): TuiPluginApi["route"]
       },
     }
   }
+  if (route.data.type === "wave") return { name: "wave" }
 
   return {
     name: route.data.id,

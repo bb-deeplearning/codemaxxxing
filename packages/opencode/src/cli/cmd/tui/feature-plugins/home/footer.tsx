@@ -1,6 +1,8 @@
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
 import { createMemo, Match, Show, Switch } from "solid-js"
 import { Global } from "@opencode-ai/core/global"
+import { useWave } from "@tui/context/wave"
+import { useRoute } from "@tui/context/route"
 
 const id = "internal:home-footer"
 
@@ -44,6 +46,57 @@ function Mcp(props: { api: TuiPluginApi }) {
   )
 }
 
+function WavePill(props: { api: TuiPluginApi }) {
+  const theme = () => props.api.theme.current
+  const wave = useWave()
+  const route = useRoute()
+  const state = createMemo(() => wave.data.state)
+  const onClick = () => route.navigate({ type: "wave" })
+
+  return (
+    <Show when={state()}>
+      {(s) => (
+        <Switch>
+          <Match when={s().wave_status === "failed" || s().wave_status === "running"}>
+            <Switch>
+              <Match when={s().wave_status === "failed"}>
+                <text fg={theme().error} onMouseDown={onClick}>
+                  ✗ wave {s().current_wave} failed
+                </text>
+              </Match>
+              <Match when={s().loop_state === "paused"}>
+                <text fg={theme().warning} onMouseDown={onClick}>
+                  ⏸ wave {s().current_wave}
+                </text>
+              </Match>
+              <Match when={true}>
+                <text fg={theme().primary} onMouseDown={onClick}>
+                  ▸ wave {s().current_wave}/{s().total_waves}
+                </text>
+              </Match>
+            </Switch>
+          </Match>
+          <Match when={s().wave_status === "all_complete"}>
+            <text fg={theme().success} onMouseDown={onClick}>
+              ✓ all waves done
+            </text>
+          </Match>
+          <Match when={s().loop_state !== "idle"}>
+            <text fg={theme().textMuted} onMouseDown={onClick}>
+              ○ wave {s().current_wave}/{s().total_waves} {s().loop_state}
+            </text>
+          </Match>
+          <Match when={true}>
+            <text fg={theme().textMuted} onMouseDown={onClick}>
+              wave {s().current_wave}/{s().total_waves}
+            </text>
+          </Match>
+        </Switch>
+      )}
+    </Show>
+  )
+}
+
 function Version(props: { api: TuiPluginApi }) {
   const theme = () => props.api.theme.current
 
@@ -68,6 +121,7 @@ function View(props: { api: TuiPluginApi }) {
     >
       <Directory api={props.api} />
       <Mcp api={props.api} />
+      <WavePill api={props.api} />
       <box flexGrow={1} />
       <Version api={props.api} />
     </box>

@@ -83,16 +83,38 @@ const parseYaml = (block: string): Record<string, string> =>
 
 const isRowStatus = (s: string): s is RowStatus => (ROW_STATUSES as readonly string[]).includes(s)
 
+// Split a table row on unescaped `|` so cells containing `\|` survive parse.
+const splitCells = (line: string): string[] => {
+  const cells: string[] = []
+  let buf = ""
+  let i = 0
+  while (i < line.length) {
+    const ch = line[i]
+    if (ch === "\\" && line[i + 1] === "|") {
+      buf += "|"
+      i += 2
+      continue
+    }
+    if (ch === "|") {
+      cells.push(buf.trim())
+      buf = ""
+      i += 1
+      continue
+    }
+    buf += ch
+    i += 1
+  }
+  cells.push(buf.trim())
+  return cells
+}
+
 const parseTable = (block: string): WaveRow[] =>
   block
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.startsWith("|"))
     .flatMap((line) => {
-      const cells = line
-        .slice(1, line.endsWith("|") ? -1 : undefined)
-        .split("|")
-        .map((c) => c.trim())
+      const cells = splitCells(line.slice(1, line.endsWith("|") ? -1 : undefined))
       if (cells.length < 5) return []
       const n = Number(cells[0])
       if (!Number.isFinite(n)) return []

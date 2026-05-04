@@ -44,6 +44,8 @@ import { KeybindProvider, useKeybind } from "@tui/context/keybind"
 import { ThemeProvider, useTheme } from "@tui/context/theme"
 import { Home } from "@tui/routes/home"
 import { Session } from "@tui/routes/session"
+import { Wave } from "@tui/routes/wave"
+import { WaveProvider, useWave } from "@tui/context/wave"
 import { PromptHistoryProvider } from "./component/prompt/history"
 import { FrecencyProvider } from "./component/prompt/frecency"
 import { PromptStashProvider } from "./component/prompt/stash"
@@ -178,11 +180,13 @@ export function tui(input: {
                                         <CommandProvider>
                                           <FrecencyProvider>
                                             <PromptHistoryProvider>
-                                              <PromptRefProvider>
-                                                <EditorContextProvider>
-                                                  <App onSnapshot={input.onSnapshot} />
-                                                </EditorContextProvider>
-                                              </PromptRefProvider>
+                                                  <PromptRefProvider>
+                                                    <EditorContextProvider>
+                                                      <WaveProvider>
+                                                        <App onSnapshot={input.onSnapshot} />
+                                                      </WaveProvider>
+                                                    </EditorContextProvider>
+                                                  </PromptRefProvider>
                                             </PromptHistoryProvider>
                                           </FrecencyProvider>
                                         </CommandProvider>
@@ -223,6 +227,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
   const themeState = useTheme()
   const { theme, mode, setMode, locked, lock, unlock } = themeState
   const sync = useSync()
+  const wave = useWave()
   const exit = useExit()
   const promptRef = usePromptRef()
   const routes: RouteMap = new Map()
@@ -444,46 +449,77 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     },
     // codemaxxxing addition — not in upstream OpenCode
     {
-      title: "Execute next wave",
-      value: "session.execute-wave",
-      category: "Session",
-      slash: {
-        name: "execute-wave",
-        aliases: ["wave"],
-      },
+      title: "Wave dashboard",
+      value: "wave.dashboard",
+      category: "Wave",
+      slash: { name: "wave" },
       onSelect: () => {
-        local.agent.set("build")
+        route.navigate({ type: "wave" })
+        dialog.clear()
+      },
+    },
+    {
+      title: "Wave: plan new campaign",
+      value: "wave.plan",
+      category: "Wave",
+      slash: { name: "wave-plan" },
+      onSelect: () => {
+        local.agent.set("wave_plan")
         route.navigate({ type: "home" })
         dialog.clear()
-        const file = ".wave/AGENT_INSTRUCTIONS.md"
-        const text = "Execute the next wave per "
-        const mention = "@" + file
-        const input = text + mention + " "
-        const baseDir = (sync.path.directory || process.cwd()).replace(/\/+$/, "")
-        const url = Bun.pathToFileURL(`${baseDir}/${file}`).href
-        // setTimeout(0) so Home component mounts and registers its prompt ref first
-        setTimeout(() => {
-          promptRef.current?.set({
-            input,
-            parts: [
-              {
-                type: "file",
-                mime: "text/plain",
-                filename: file,
-                url,
-                source: {
-                  type: "file",
-                  path: file,
-                  text: {
-                    start: text.length,
-                    end: text.length + mention.length,
-                    value: mention,
-                  },
-                },
-              },
-            ],
-          })
-        }, 0)
+        const text =
+          "Decompose a plan into a wave campaign. Tell me the plan path (e.g. .opencode/plans/foo.md), the executor agent, and the executor model."
+        setTimeout(() => promptRef.current?.set({ input: text, parts: [] }), 0)
+      },
+    },
+    {
+      title: "Wave: spawn next",
+      value: "wave.next",
+      category: "Wave",
+      slash: { name: "wave-next" },
+      onSelect: () => {
+        void wave.next()
+        dialog.clear()
+      },
+    },
+    {
+      title: "Wave: arm auto-loop",
+      value: "wave.run",
+      category: "Wave",
+      slash: { name: "wave-run", aliases: ["wave-arm"] },
+      onSelect: () => {
+        void wave.arm()
+        dialog.clear()
+      },
+    },
+    {
+      title: "Wave: pause auto-loop",
+      value: "wave.pause",
+      category: "Wave",
+      slash: { name: "wave-pause" },
+      onSelect: () => {
+        void wave.pause()
+        dialog.clear()
+      },
+    },
+    {
+      title: "Wave: interrupt current",
+      value: "wave.interrupt",
+      category: "Wave",
+      slash: { name: "wave-interrupt" },
+      onSelect: () => {
+        void wave.interrupt()
+        dialog.clear()
+      },
+    },
+    {
+      title: "Wave: stop loop + interrupt",
+      value: "wave.stop",
+      category: "Wave",
+      slash: { name: "wave-stop" },
+      onSelect: () => {
+        void wave.stop()
+        dialog.clear()
       },
     },
     {
@@ -947,6 +983,9 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
           </Match>
           <Match when={route.data.type === "session"}>
             <Session />
+          </Match>
+          <Match when={route.data.type === "wave"}>
+            <Wave />
           </Match>
         </Switch>
       </Show>
