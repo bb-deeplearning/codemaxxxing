@@ -10,16 +10,27 @@ import { Effect, Schema } from "effect"
 // waves (when wave_status is pending/complete), agent writes only during its
 // turn (when wave_status is running). No concurrent writers.
 
-export const WaveStatus = Schema.Literals(["pending", "running", "complete", "failed", "all_complete"])
+export const WaveStatus = Schema.Literals([
+  "pending",
+  "running",
+  "complete",
+  "failed",
+  "plan_undoable",
+  "awaiting_user",
+  "all_complete",
+])
 export type WaveStatus = Schema.Schema.Type<typeof WaveStatus>
 
 export const LoopState = Schema.Literals(["idle", "armed", "paused"])
 export type LoopState = Schema.Schema.Type<typeof LoopState>
 
-export const RowStatus = Schema.Literals(["pending", "running", "complete", "failed", "cancelled"])
+export const RowStatus = Schema.Literals(["pending", "running", "complete", "failed", "undoable", "paused", "cancelled"])
 export type RowStatus = Schema.Schema.Type<typeof RowStatus>
 
-const ROW_STATUSES = ["pending", "running", "complete", "failed", "cancelled"] as const
+const ROW_STATUSES = ["pending", "running", "complete", "failed", "undoable", "paused", "cancelled"] as const
+
+export const FailureKind = Schema.Literals(["", "transient", "undoable", "crash"])
+export type FailureKind = Schema.Schema.Type<typeof FailureKind>
 
 export class WaveRow extends Schema.Class<WaveRow>("@opencode/WaveRow")({
   n: Schema.Number,
@@ -37,6 +48,10 @@ export class State extends Schema.Class<State>("@opencode/WaveState")({
   executor_variant: Schema.String,
   current_wave: Schema.Number,
   wave_status: WaveStatus,
+  failure_kind: FailureKind,
+  retry_count: Schema.Number,
+  verify_count: Schema.Number,
+  user_question: Schema.String,
   loop_state: LoopState,
   active_session_id: Schema.NullOr(Schema.String),
   total_waves: Schema.Number,
@@ -130,15 +145,22 @@ const parseTable = (block: string): WaveRow[] =>
     })
     .sort((a, b) => a.n - b.n)
 
+const FAILURE_KINDS = ["", "transient", "undoable", "crash"] as const
+const isFailureKind = (s: string): s is FailureKind => (FAILURE_KINDS as readonly string[]).includes(s)
+
 const serializeYaml = (state: State) =>
   [
     `campaign_id: ${state.campaign_id}`,
     `plan_source: ${state.plan_source}`,
     `executor_agent: ${state.executor_agent}`,
-    `executor_model: ${state.executor_model}`,
-    `executor_variant: ${state.executor_variant}`,
+    `executor_model: ${quoteIfEmpty(state.executor_model)}`,
+    `executor_variant: ${quoteIfEmpty(state.executor_variant)}`,
     `current_wave: ${state.current_wave}`,
     `wave_status: ${state.wave_status}`,
+    `failure_kind: ${quoteIfEmpty(state.failure_kind)}`,
+    `retry_count: ${state.retry_count}`,
+    `verify_count: ${state.verify_count}`,
+    `user_question: ${quoteIfEmpty(state.user_question)}`,
     `loop_state: ${state.loop_state}`,
     `active_session_id: ${state.active_session_id ?? "null"}`,
     `total_waves: ${state.total_waves}`,
@@ -146,6 +168,8 @@ const serializeYaml = (state: State) =>
     `created: ${state.created}`,
     `last_updated: ${state.last_updated}`,
   ].join("\n")
+
+const quoteIfEmpty = (s: string) => (s === "" ? '""' : s)
 
 const escapeCell = (s: string) => s.replaceAll("|", "\\|").replaceAll("\n", " ")
 
@@ -170,6 +194,7 @@ export const parse = (text: string) =>
 
     const tableMatch = text.match(TABLE_RE)
     const session = yaml["active_session_id"]
+    const failureKindRaw = yaml["failure_kind"] ?? ""
     return new State({
       campaign_id: yaml["campaign_id"]!,
       plan_source: yaml["plan_source"]!,
@@ -178,6 +203,10 @@ export const parse = (text: string) =>
       executor_variant: yaml["executor_variant"] ?? "",
       current_wave: Number(yaml["current_wave"]),
       wave_status: yaml["wave_status"] as WaveStatus,
+      failure_kind: isFailureKind(failureKindRaw) ? failureKindRaw : "",
+      retry_count: Number(yaml["retry_count"] ?? "0"),
+      verify_count: Number(yaml["verify_count"] ?? "0"),
+      user_question: yaml["user_question"] ?? "",
       loop_state: (yaml["loop_state"] as LoopState) ?? "idle",
       active_session_id: !session || session === "null" || session === "—" ? null : session,
       total_waves: Number(yaml["total_waves"]),

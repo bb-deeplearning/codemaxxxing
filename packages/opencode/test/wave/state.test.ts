@@ -14,6 +14,10 @@ executor_model: anthropic/claude-opus-4-7
 executor_variant: 
 current_wave: 17
 wave_status: pending
+failure_kind: ""
+retry_count: 0
+verify_count: 1
+user_question: ""
 loop_state: armed
 active_session_id: null
 total_waves: 33
@@ -67,6 +71,10 @@ describe("wave state", () => {
       executor_variant: "",
       current_wave: 0,
       wave_status: "pending",
+      failure_kind: "",
+      retry_count: 0,
+      verify_count: 0,
+      user_question: "",
       loop_state: "idle",
       active_session_id: null,
       total_waves: 2,
@@ -94,6 +102,10 @@ describe("wave state", () => {
       executor_variant: "",
       current_wave: 0,
       wave_status: "pending",
+      failure_kind: "",
+      retry_count: 0,
+      verify_count: 0,
+      user_question: "",
       loop_state: "idle",
       active_session_id: null,
       total_waves: 1,

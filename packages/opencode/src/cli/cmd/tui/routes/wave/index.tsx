@@ -28,6 +28,8 @@ const STATUS_COLORS = (theme: ReturnType<typeof useTheme>["theme"]) =>
     running: theme.primary,
     complete: theme.success,
     failed: theme.error,
+    undoable: theme.error,
+    paused: theme.warning,
     cancelled: theme.warning,
   }) as Record<RowStatus, ReturnType<typeof useTheme>["theme"]["text"]>
 
@@ -208,6 +210,14 @@ export function Wave() {
                 <text fg={theme.textMuted}>·</text>
                 <text fg={theme.textMuted}>wave</text>
                 <text fg={colors()[normalizeStatus(s().wave_status)]}>{s().wave_status}</text>
+                <Show when={s().retry_count > 0}>
+                  <text fg={theme.textMuted}>·</text>
+                  <text fg={theme.warning}>retry {s().retry_count}/3</text>
+                </Show>
+                <Show when={s().verify_count > 0}>
+                  <text fg={theme.textMuted}>·</text>
+                  <text fg={theme.textMuted}>verify {s().verify_count}/3</text>
+                </Show>
                 <Show when={s().active_session_id}>
                   <text fg={theme.textMuted}>·</text>
                   <text fg={theme.textMuted}>session</text>
@@ -215,6 +225,29 @@ export function Wave() {
                 </Show>
               </box>
             </box>
+
+            <Show when={s().wave_status === "awaiting_user" && s().user_question}>
+              <box
+                paddingLeft={2}
+                paddingRight={2}
+                paddingTop={1}
+                paddingBottom={1}
+                marginTop={1}
+                marginLeft={2}
+                marginRight={2}
+                backgroundColor={theme.backgroundElement}
+                flexDirection="column"
+                gap={1}
+              >
+                <text fg={theme.warning} attributes={TextAttributes.BOLD}>
+                  USER ATTENTION NEEDED
+                </text>
+                <text fg={theme.text}>{s().user_question}</text>
+                <text fg={theme.textMuted}>
+                  Open the most recent wave session (↵ on the row below) to read full context and respond.
+                </text>
+              </box>
+            </Show>
 
             <box paddingTop={1} paddingLeft={2} paddingRight={2}>
               <text fg={theme.textMuted}>{TABLE_HEADER}</text>
@@ -238,5 +271,7 @@ export function Wave() {
 
 const normalizeStatus = (s: State["wave_status"]): RowStatus => {
   if (s === "all_complete") return "complete"
+  if (s === "plan_undoable") return "undoable"
+  if (s === "awaiting_user") return "paused"
   return s
 }

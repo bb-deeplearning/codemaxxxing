@@ -199,9 +199,11 @@ Sections you must include (adapt content to the project):
 - **Hard rules** — project-specific (visual rules, copy rules, code rules, "do not modify" lists)
 - **Dispatch protocol** — how to launch sub-agents, what to paste, parallelism rules
 - **Verification protocol** — what to run, what to check, what to capture (screenshots, byte limits, etc.)
-- **Commit protocol** — exact commit message format (`wave N: <desc>`), what to stage, never `--no-verify`, never push, never amend (unless explicitly asked)
-- **State update protocol** — exact format for updating STATE.md after a wave completes (see Step 8 for the format)
-- **Failure handling** — when to set `wave_status: failed`, what notes to record, when to print `WAVE FAILED` vs `WAVE COMPLETE`
+- **Commit protocol** — exact commit message format (`wave N: <desc>` on success, `wave N (failed): <reason>` / `wave N (undoable): <reason>` / `wave N (paused): <reason>` on non-success), what to stage, never `--no-verify`, never push, never amend
+- **State update protocol** — exact format for updating STATE.md (see Step 8 for the full schema)
+- **NOTES.md protocol** — write per-wave diagnostics to `waves/wave_N/NOTES.md` on any non-success outcome
+- **Retry handling** — what to do on entry when `NOTES.md` already exists from a prior attempt
+- **Failure handling** — when to print which set phrase (`WAVE COMPLETE`, `WAVE FAILED`, `PLAN UNDOABLE`, `USER QUESTION:`)
 - **The bar** — quality standard (project-specific framing, not boilerplate)
 
 Skeleton:
@@ -213,14 +215,18 @@ Skeleton:
 
 1. Read `STATE.md` (one level up from this file: `.wave/campaigns/<id>/STATE.md`).
 2. If `wave_status: all_complete` → print `WAVES DONE` and stop.
-3. If `wave_status: failed` → print failure notes from STATE.md and stop.
-4. Read `OVERVIEW.md` in full. Project context.
-5. Read any cross-cutting reference docs at this level that your wave needs (see per-wave instructions below).
-6. Read `waves/wave_{current_wave}/WAVE.md` in full.
-7. Read every other reference doc the WAVE.md tells you to read.
-8. Execute every task in the wave. Use parallel sub-agents per the dispatch protocol below.
-9. Run verification per the protocol below.
-10. On success: commit, update STATE.md, print `WAVE COMPLETE`. On failure: update STATE.md with failure notes, print `WAVE FAILED`. STOP either way.
+3. If `wave_status: awaiting_user` AND `user_question` is non-empty AND this is the FIRST turn of your session → defensive bail. The previous session of this wave is paused awaiting user input; you should not have been spawned. Print `UNEXPECTED RESPAWN: campaign is awaiting user; previous session must resolve first.` and stop. (If this is a resume turn — i.e. there is a recent user message in your context — see "Handling user replies" below; do not bail.)
+4. Check for `waves/wave_<current_wave>/NOTES.md`. If it exists, this is a retry. Read it in full (every prior attempt section). At the top of your new attempt section in NOTES.md (later in this protocol), record your decision:
+   - **reset** — `git revert --no-commit <sha>` for each prior failure commit of this wave (find them via `git log --oneline | grep "wave <N> ("`), commit nothing yet, restart the wave from the WAVE.md spec
+   - **continue** — leave the working tree as-is from the prior attempt, build on top
+   Choose based on whether the prior partial work is salvageable.
+5. Read `OVERVIEW.md` in full. Project context.
+6. Read any cross-cutting reference docs at this level that your wave needs (see per-wave instructions below).
+7. Read `waves/wave_{current_wave}/WAVE.md` in full.
+8. Read every other reference doc the WAVE.md tells you to read.
+9. Execute every task in the wave. Use parallel sub-agents per the dispatch protocol below.
+10. Run verification per the protocol below.
+11. Decide outcome and emit one of the four set phrases (see "Failure handling"). Always commit before stopping.
 
 ## Hard rules
 
@@ -229,8 +235,8 @@ Skeleton:
 ## Dispatch protocol
 
 - Send sub-agent dispatches in a SINGLE message (parallel) when WAVE.md says they're independent.
-- Each sub-agent prompt MUST include: the exact section of WAVE.md describing their task (paste it), the full list of reference docs they must read (absolute paths), constraint that they MUST NOT run `bun typecheck` or `bun lint` themselves UNLESS the WAVE.md task explicitly says so.
-- Sub-agents have ZERO context from your reading. Be explicit.
+- Each sub-agent prompt MUST include: the exact section of WAVE.md describing their task (paste it), the full list of reference docs they must read (absolute paths), constraint that they MUST NOT run global verification (`bun typecheck`, `bun lint`, full test suite) themselves UNLESS the WAVE.md task explicitly says so.
+- Sub-agents have ZERO context from your reading. Be explicit. Paste, don't summarize.
 
 ## Verification protocol
 
@@ -238,43 +244,152 @@ Skeleton:
 
 ## Commit protocol
 
-- Stage all changed/new files: `git add -A`
-- Commit format: `wave N: <short description>` (single line, lifted from STATE.md row Notes for this wave)
-- NEVER `--no-verify`, NEVER force push, NEVER amend
-- Capture commit SHA after: `git rev-parse HEAD` — write into the wave row's Commit column
+You commit on EVERY outcome (success, failure, undoable, paused). The working tree is always clean between sessions — that is the protocol's invariant. Failure commits are local audit trail; never pushed.
+
+- Stage: `git add -A`
+- Commit message format depends on outcome:
+  - Success → `wave N: <short description>`
+  - Transient failure → `wave N (failed): <one-line reason>`
+  - Plan undoable → `wave N (undoable): <one-line reason>`
+  - User question → `wave N (paused): user question`
+- Single line. NEVER `--no-verify`. NEVER force push. NEVER amend. NEVER push.
+- After committing, capture the SHA: `git rev-parse --short HEAD`. Write into the wave row's Commit column AND into the NOTES.md attempt section.
+- If nothing changed in the working tree (e.g. PLAN UNDOABLE detected before any sub-agent ran), skip `git add` and commit. STATE.md / NOTES.md edits in `.wave/` should themselves be staged and committed.
+
+## NOTES.md protocol
+
+Location: `waves/wave_<current_wave>/NOTES.md`. Append-only across attempts. Each attempt adds a new section.
+
+Required for every NON-success outcome (failed / undoable / user_question). Optional for success.
+
+Format for each attempt section:
+
+```markdown
+## Attempt <N> — <outcome>
+
+**Session:** <session_id>
+**Commit:** <short SHA>
+**Date:** <YYYY-MM-DD>
+**Decision on entry:** <reset | continue | first attempt>
+
+### What happened
+
+<narrative of what you did this turn>
+
+### What failed
+
+<exact commands run, exit codes, error output>
+
+### Diagnosis
+
+<your analysis of root cause: transient vs spec issue vs your own bug>
+
+### Tried in-session
+
+<fix attempts you made before giving up>
+
+### Recommendation
+
+<for the next attempt, the verifier, or the user>
+
+---
+```
+
+If outcome is success and a prior attempt failed, still append a brief success section noting what changed since the last attempt.
 
 ## State update protocol
 
-After a successful wave, edit `STATE.md`:
-1. Update the YAML block at the top:
+Edit `.wave/campaigns/<id>/STATE.md` after every wave turn.
+
+After a SUCCESSFUL wave:
+
+1. YAML block:
    - `current_wave: <N+1>`
    - `wave_status: pending` (or `all_complete` if N was the final wave)
    - `session_count: <session_count + 1>`
+   - `retry_count: 0`
+   - `failure_kind: ""`
    - `last_updated: <today YYYY-MM-DD>`
-   - Clear `active_session_id: null`
-2. Update the wave row in the progress table:
-   - `Status` → `complete`
-   - `Commit` → the SHA from `git rev-parse HEAD` (short, 7 chars)
-   - `Notes` → outcome summary (replace the pending placeholder text with what you actually shipped)
+   - `active_session_id: null`
+2. Wave row N: `Status: complete`, `Commit: <SHA>`, `Notes: <outcome summary>`.
 
-After a failed wave, edit `STATE.md`:
-1. Update the YAML block:
+After a TRANSIENT FAILURE (your own bug, not a spec issue):
+
+1. YAML block:
    - `wave_status: failed`
+   - `failure_kind: transient`
+   - `retry_count: <retry_count + 1>`
+   - `loop_state: idle` only if `retry_count` is now >= 3 (loop will then trigger verifier); otherwise leave loop_state as it was
    - `last_updated: <today>`
-2. Update the wave row:
-   - `Status` → `failed`
-   - `Notes` → detailed failure reason and what was tried
+   - `active_session_id: null`
+2. Wave row N: `Status: failed`, `Commit: <SHA>`, `Notes: <one-line reason; see NOTES.md>`.
+
+After PLAN UNDOABLE (the spec itself is wrong, no number of retries will help):
+
+1. YAML block:
+   - `wave_status: plan_undoable`
+   - `failure_kind: undoable`
+   - `loop_state: idle` (loop will trigger verifier)
+   - `last_updated: <today>`
+   - `active_session_id: null`
+2. Wave row N: `Status: undoable`, `Commit: <SHA>`, `Notes: <one-line reason; see NOTES.md>`.
+
+After USER QUESTION (you need user judgment):
+
+1. YAML block:
+   - `wave_status: awaiting_user`
+   - `user_question: "<one-line summary of the question>"` (full context goes in chat output)
+   - `last_updated: <today>`
+   - DO NOT change `loop_state` — leave it as it was. Your session is paused, not ended; the loop should resume automatically when the user's reply progresses the state.
+   - DO NOT clear `active_session_id` — the session is still alive. The loop will clear it when your session truly ends (after user reply resolves the question).
+2. Wave row N: `Status: paused`, `Commit: <SHA>`, `Notes: see user_question`.
+
+## Retry handling on entry
+
+The retry decision (reset vs continue) is recorded in NOTES.md at the top of your attempt section. Recipes:
+
+- **reset** — find each prior failure commit for this wave: `git log --oneline | grep -E "wave <N> \\("`. Revert each in reverse chronological order: `git revert --no-commit <sha>`. Stage nothing yet — these reverts will be folded into your eventual outcome commit. Then proceed with the wave from scratch.
+- **continue** — do nothing special. The working tree already has the partial work from the prior attempt.
+
+If `retry_count` is 0 in STATE.md (first attempt), there is no NOTES.md and no prior commits — proceed normally.
 
 ## Failure handling
 
-If verification fails or you cannot honestly attest:
-- Diagnose. Fix in this session if possible. Re-verify.
-- If unable to fix: update STATE.md per "After a failed wave" above, print `WAVE FAILED`, STOP. Do NOT advance the wave. Do NOT commit.
+Decide your outcome HONESTLY. Do not pretend a wave succeeded.
 
-If verification passes:
-- Commit per "Commit protocol".
-- Update STATE.md per "After a successful wave".
-- Print `WAVE COMPLETE`. STOP.
+- **WAVE COMPLETE** — verification passed, you committed, you updated STATE.md per "After a SUCCESSFUL wave". Print `WAVE COMPLETE` as the last line. Stop.
+- **WAVE FAILED** — your own bug, retryable. You tried to fix in-session and couldn't. The spec is fine; a fresh session might do better. Write NOTES.md, commit (`wave N (failed): ...`), update STATE.md per "After a TRANSIENT FAILURE". Print `WAVE FAILED` as the last line. Stop.
+- **PLAN UNDOABLE** — the spec itself is wrong. No amount of retrying will help. Examples: WAVE.md verification command is impossible to satisfy as written, OVERVIEW.md contradicts itself, a gotcha is hallucinated. Write NOTES.md with specifics on WHAT in the spec is wrong, commit (`wave N (undoable): ...`), update STATE.md per "After PLAN UNDOABLE". Print `PLAN UNDOABLE` as the last line. Stop.
+- **USER QUESTION** — you need user judgment to proceed. This pauses YOUR session, not ends it. Write NOTES.md with what you tried and what you need answered. Then write the FULL question in your chat output (preceding the set phrase): the context that led to the question, what you've already tried, the 2-3 concrete options the user can choose from, and any constraints they should know. The user opens this same session in chat to read this and reply. Commit (`wave N (paused): user question`), update STATE.md per "After USER QUESTION" (the `user_question` field gets the SHORT one-line summary used by the dashboard). Print `USER QUESTION: <one-line summary>` as the last line. Stop your turn. The user will reply in this session — see "Handling user replies" below for what to do when you resume.
+
+The four set phrases (`WAVE COMPLETE`, `WAVE FAILED`, `PLAN UNDOABLE`, `USER QUESTION: ...`) are pattern-matched by the loop. Print exactly one as your final line. No prose after the signal.
+
+For `USER QUESTION`: the chat output ABOVE the set phrase line is for the user — write a rich, contextual question there. The set phrase summary is for the dashboard. Do not duplicate effort: the chat carries depth, the set phrase carries the headline.
+
+## Handling user replies
+
+When you previously emitted `USER QUESTION` and stopped, your session paused. The user has now replied to you in chat — you are resuming the SAME session as a new turn. Read the user's reply at the top of your incoming context.
+
+Your job on resume:
+
+1. Parse the user's answer. They may have picked an option (A/B/C), given a free-form directive, or asked a clarifying question of their own.
+2. Take action based on what they said:
+   - If they picked an option that resolves the question → execute the implied work (apply the patch / continue the wave / etc.).
+   - If they want you to do something different → do it.
+   - If they asked for clarification → answer them and re-emit `USER QUESTION` with a refined question.
+3. Update STATE.md:
+   - Clear `user_question: ""`.
+   - Set `wave_status` to whatever now reflects the truth (`pending` if you've resolved and the wave can advance / be retried; `running` if you're going to keep working in this same turn before settling; `awaiting_user` again if you have another question).
+   - Update the wave row Notes to reflect the resolution (e.g. "user chose option B; applied <change>").
+4. Append a new attempt section to NOTES.md if appropriate (you are continuing the same attempt — the user's reply is part of it).
+5. Commit your changes if you modified anything: `wave N: resumed after user reply (<short summary>)` for in-progress work, or the standard outcome commit format if you're now finishing the wave.
+6. Emit the appropriate set phrase as the last line of this resumed turn:
+   - Wave is now done → `WAVE COMPLETE`
+   - Hit a transient failure → `WAVE FAILED`
+   - Spec is still broken → `PLAN UNDOABLE`
+   - Need more user input → `USER QUESTION: <new summary>`
+
+The loop watches your session settle on EVERY turn. Each turn ends with a set phrase; each turn's STATE.md update is what the loop reacts to.
 
 ## The bar
 
@@ -390,6 +505,10 @@ executor_model: ""    # empty string for default; or e.g. "anthropic/claude-sonn
 executor_variant: ""  # empty string if unused; or the variant key
 current_wave: 0
 wave_status: pending
+failure_kind: ""      # "" | "transient" | "undoable" | "crash" — set when wave_status is failed/plan_undoable
+retry_count: 0        # transient retries on the current wave; resets on advance or on verifier-applied amendment
+verify_count: 0       # number of verifier sessions completed against this campaign (initial review + any amendments)
+user_question: ""     # set by any agent emitting USER QUESTION; cleared by user response
 loop_state: idle
 active_session_id: null
 total_waves: <N>
@@ -407,18 +526,22 @@ last_updated: <today YYYY-MM-DD>
 | ...  | ...     | ...     | ...    | ...          |
 ````
 
-YAML field meanings (for the wave executor agent):
+YAML field meanings (for the wave executor agent and the verifier):
 
 - `current_wave` — index of the wave to execute next
-- `wave_status` — `pending` (idle, ready to spawn) | `running` (in-flight) | `complete` (just finished, advance imminent) | `failed` | `all_complete`
-- `loop_state` — `idle` | `armed` | `paused`. The TUI manages this; the executor agent reads it but does not change it. The exception: on wave failure, the executor sets `loop_state: idle` (and `wave_status: failed`).
+- `wave_status` — `pending` (idle, ready to spawn) | `running` (in-flight) | `complete` (just finished, advance imminent) | `failed` (transient, may retry) | `plan_undoable` (spec broken, awaiting verifier) | `awaiting_user` (blocking on a user question) | `all_complete`
+- `failure_kind` — `""` when not in a failure state; otherwise `transient` (executor's own bug, retryable), `undoable` (spec is wrong), or `crash` (session ended without state update; loop infers this)
+- `retry_count` — number of consecutive transient failures on the current wave. Loop auto-retries while `< 3`; at `>= 3` triggers the verifier. Resets to `0` on successful advance or after the verifier amends the spec.
+- `verify_count` — total verifier sessions completed against this campaign. Tracks how many times the verifier has been invoked (initial review + each post-execution amendment). Not capped — verifier decides itself whether to keep amending or escalate to user.
+- `user_question` — non-empty string (one-line summary) when an agent has surfaced a blocking question. The dashboard shows this. The full contextual question lives in the agent's chat output. The agent clears it as part of its resume-after-reply turn (see "Handling user replies" in AGENT_INSTRUCTIONS).
+- `loop_state` — `idle` | `armed` | `paused`. The TUI manages this; the executor agent reads it but does not change it. Exception: on wave failure or undoable outcome, the executor sets `loop_state: idle` (so the user sees the failure surfaced clearly). On `awaiting_user`, do NOT change `loop_state` — the user reply will resume the same session, and preserving loop_state lets the system continue without requiring a re-arm.
 - `active_session_id` — set by TUI when spawning, cleared by executor on completion
-- `total_waves` — count of waves in the campaign (does not change)
+- `total_waves` — count of waves in the campaign (changes only if the verifier rewrites the wave structure)
 - `session_count` — number of executor sessions completed (incremented on success, not on failure-retry)
 
 YAML formatting rules (avoid the loop crashing on parse):
 
-- For empty string fields (`executor_model`, `executor_variant`), write the literal `""`. **Never** write a bare `key:` with nothing after — YAML parses that as `null`, which breaks downstream consumers.
+- For empty string fields (`executor_model`, `executor_variant`, `failure_kind`, `user_question`), write the literal `""`. **Never** write a bare `key:` with nothing after — YAML parses that as `null`, which breaks downstream consumers.
 - `active_session_id: null` is the one place `null` is correct; everywhere else use `""` for empty.
 
 ## Step 9: Update `.gitignore`
@@ -488,6 +611,10 @@ If verification fails:
 
 # Completion
 
-Tell the user the campaign is ready and list the waves with their goals. Tell them the campaign-id and the executor agent + model that were configured. Remind them they can run waves from the TUI dashboard (`/wave`) or directly with:
+Tell the user the campaign is ready and list the waves with their goals. Tell them the campaign-id and the executor agent + model that were configured.
+
+The wave system will automatically run `wave_verify` against the new campaign before any wave executes — a fresh-session sanity check that probes reality (toolchain versions, lockfile names, command behavior) and either approves the campaign, patches it, rewrites it, or surfaces a question. The user does not need to invoke the verifier manually.
+
+Remind them they can run waves from the TUI dashboard (`/wave`) or directly with:
 
 > "Execute the next wave per @.wave/campaigns/<campaign-id>/plan/AGENT_INSTRUCTIONS.md"

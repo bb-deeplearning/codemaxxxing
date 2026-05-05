@@ -96,9 +96,13 @@ campaign_id: ${id}
 plan_source: .opencode/plans/marketing-rebuild.md
 executor_agent: caveman
 executor_model: anthropic/claude-opus-4-7
-executor_variant: 
+executor_variant: ""
 current_wave: 6
 wave_status: running
+failure_kind: ""
+retry_count: 0
+verify_count: 1
+user_question: ""
 loop_state: armed
 active_session_id: ses_01H7stu7stu7stu
 total_waves: ${waves.length}
