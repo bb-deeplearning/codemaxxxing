@@ -13,7 +13,9 @@ function falsy(key: string) {
 
 // Channels that default to the new effect-httpapi server backend. The legacy
 // hono backend remains the default for stable (`prod`/`latest`) installs.
-const HTTPAPI_DEFAULT_ON_CHANNELS = new Set(["dev", "beta", "local"])
+// `codemaxxxing` is included because this fork ships HttpApi-only features
+// (e.g. the wave dashboard) that have no Hono parity.
+const HTTPAPI_DEFAULT_ON_CHANNELS = new Set(["dev", "beta", "local", "codemaxxxing"])
 
 function number(key: string) {
   const value = process.env[key]
