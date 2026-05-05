@@ -1,14 +1,65 @@
 # TUI render-freeze investigation
 
-> **Status (as of 2026-05-05):** four fix commits landed but the bug is still
-> occurring. Latest repro: session `ses_20680f90dffeTHqjXupZN5kSRe`,
-> triggered after pasting a large user message into the prompt. Bug exists
-> only in the codemaxxxing fork; **upstream opencode renders the same
-> on-disk data correctly**. New hypothesis below; root cause has shifted at
-> least once during the investigation already, do not assume earlier
-> theories still hold.
+> **Status (as of 2026-05-06):** root cause identified and fix shipped.
+> The bug was a fork-only regression: a flex-row wrapping the body
+> `<text>` of `UserMessage`, plus `wrapMode="word"` on the body text
+> node — neither present in upstream. Confirmed via direct diff against
+> `upstream/dev`. See **The antipattern** section below for the
+> generalized lesson.
 
-## Symptom
+## TL;DR — the antipattern (read this first)
+
+> **In opentui, never put a flex container around a child whose content
+> can grow tall.** Any `flexDirection="row"` whose primary cell is a
+> `<text>` that can wrap to many rows, or a syntax-highlighted block,
+> or any other variable-tall content, will eventually exceed opentui's
+> internal layout-measurement budget. When it does, paint stalls past
+> the failing layout node and **everything subsequent** stops
+> rendering. The session looks frozen until something else triggers a
+> layout reset.
+
+We hit this exact bug class **three times** in this investigation:
+
+| # | Where | Trigger | Fixed in |
+|---|---|---|---|
+| 1 | AssistantMessage outer row wrapper (marginalia + body) | Write tool's 5KB syntax-highlighted file | `23e0e84f6` |
+| 2 | BlockTool inner padding wrapper | Same | `bf03d6396` |
+| 3 | UserMessage inner row wrapper (body + queued/timestamp pill) | Multi-KB pasted user text | (this session) |
+
+### Why the mistake keeps getting made
+
+Browser-CSS instinct. The canonical CSS pattern for "label left,
+metadata right, same baseline" is `<row><text/><pill/></row>` with
+`justifyContent="space-between"`. Browsers absorb this trivially —
+retained-mode compositing, GPU reflow, decades of constraint-solver
+optimization. opentui is naive measure-then-paint on a 2D character
+grid; the same pattern that's free in a browser is O(W × H) per render
+here, and silently fails past an undocumented budget.
+
+### Companion antipattern: `wrapMode="word"` on user-pastable content
+
+Runs a per-render word-boundary scan over the entire string. Already
+removed from Shell tool output in `581c33992`; got reapplied to
+UserMessage's body in the same fork-divergence wave. **Default
+`wrapMode` (no attribute) for any text node that can hold
+user-pastable / multi-KB content.** Upstream uses default wrap
+everywhere; the fork should too.
+
+### Audit checklist when touching the render hot path
+
+1. `rg 'flexDirection="row"' packages/opencode/src/cli/cmd/tui/routes/session/index.tsx` —
+   for each hit, ask "could the primary child of this row ever be
+   tall?" If yes, restructure as a column with vertical siblings, or
+   absolute-position the secondary content.
+2. `rg 'wrapMode="word"' packages/opencode/src/cli/cmd/tui/` —
+   for each hit, ask "can this text node ever hold user-pasted or
+   multi-KB content?" If yes, drop the attribute.
+3. `git diff upstream/dev..HEAD -- <file>` — if the fork has structural
+   nodes (boxes, rows, attributes) that upstream doesn't, in a
+   render-hot-path component, that's a regression suspect by default.
+   Burden of proof is on the fork to justify the divergence.
+
+## Symptom (historical)
 
 The TUI silently **stops painting** at some content boundary inside a
 session. Reactivity in the SDK/store keeps firing — new messages mount,
@@ -23,7 +74,12 @@ User-visible flavors of the same root bug:
 - "Open the session in cmx → see hung state. Send a message → the next
   chunk of the OLD message appears. Open same session in upstream
   opencode → everything renders correctly."
-- "I pasted a huge user message and now everything past it is frozen."
+- "I pasted a huge user message and now everything past it is frozen,
+  and the rest of my user message appeared as if it was streamed back
+  to me." (Render artifact: paint stalled mid-user-message; later
+  layout pass released the queue and the trailing characters appeared
+  alongside the assistant's response, looking like the model was
+  echoing the paste.)
 
 ## What we know for certain
 
@@ -240,27 +296,35 @@ suspects.
 
 > "I pasted a huge user message and now it froze."
 
-Specifically: a huge **single string of text** (the user's pasted
-input) inside a UserMessage's body — likely the
-`<text fg={theme.text} flexShrink={1} wrapMode="word">{text()}</text>`
-node at `routes/session/index.tsx` (in `UserMessage`).
+**Update (2026-05-06): hypothesis confirmed and fixed.** Root cause was
+exactly as predicted in this section, plus a second fork-only delta
+that compounded it. Both confirmed via `git diff upstream/dev..HEAD`:
 
-opentui's `wrapMode="word"` runs a per-render width-measurement pass
-on the entire string. For a multi-KB pasted block, that pass might
-hit the same internal measurement budget that the flex-row layout
-hit before. We already removed `wrapMode="word"` from Shell tool's
-output for the same reason (commit `581c33992`).
+1. UserMessage's body `<text>` had `wrapMode="word" flexShrink={1}` —
+   neither attribute is on the upstream node. `wrapMode="word"` runs a
+   per-render word-boundary scan; on a 4742-char paste it eats into the
+   layout-measurement budget.
+2. UserMessage wrapped its body text + queued/timestamp pill in a
+   `flexDirection="row" justifyContent="space-between"` — upstream has
+   no row wrapper at all (body, files, queued/timestamp stack
+   vertically). This was the bigger culprit: same row-with-tall-body
+   antipattern that broke AssistantMessage in `23e0e84f6`, just
+   reintroduced at a deeper nesting level.
 
-**Suggested first move next session**: drop `wrapMode="word"` from
-UserMessage's text node. Try the latest repro session
-(`ses_20680f90dffeTHqjXupZN5kSRe`) and see if the freeze stops past
-the pasted user message.
+Fix:
+- Dropped `wrapMode="word"` and `flexShrink={1}` from the body text
+  node (matches upstream).
+- Removed the inner row wrapper. Body text, files, queued, and
+  timestamp now stack as vertical siblings inside the column box.
+- Queued and timestamp render as their own right-aligned
+  `flexDirection="row" justifyContent="flex-end"` rows beneath the
+  body, mirroring AssistantMessage's closing-summary pattern. (Those
+  rows are safe because their primary cell is short fixed-width text,
+  not the multi-KB body.)
 
-If that doesn't fix it, the next suspect is `<text>` node size in
-general — pasted content blowing past whatever opentui's text-node
-layout budget is. Then the workaround is to chunk a long paste into
-multiple smaller `<text>` nodes (e.g., split on newlines), each with
-bounded length.
+The load-bearing comment in AssistantMessage's marginalia
+(`UserMessage's first child is a row box`) was updated to match the
+new shape.
 
 ## Diagnostic tools already in place
 

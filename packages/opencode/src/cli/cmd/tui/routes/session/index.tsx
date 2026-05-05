@@ -1544,8 +1544,17 @@ function UserMessage(props: {
             left gutter — same pattern as AssistantMessage. paddingLeft
             reserves the gutter; the marginalia <text> sits in it via
             position="absolute" so it doesn't participate in flex flow.
-            See AssistantMessage for full rationale (flex-row + tall
-            content = opentui layout blowup). */}
+
+            Body text, files, and queued/timestamp stack vertically as
+            siblings in this column box. They are NOT wrapped in a
+            flexDirection="row" — opentui can't lay out a flex row
+            whose body cell contains very tall content (a multi-KB
+            pasted block wraps to many rows). Once the row's measurement
+            blows past opentui's internal budget, paint stalls past the
+            row and the rest of the session appears frozen until a
+            later layout pass releases it. Queued/timestamp render as
+            their own right-aligned row at the bottom, mirroring the
+            pattern AssistantMessage uses for its closing summary. */}
         <box
           id={props.message.id}
           marginTop={props.index === 0 ? 0 : 1}
@@ -1559,21 +1568,7 @@ function UserMessage(props: {
             u<span style={{ fg: color() }}>·</span>
             {userIndex()}
           </text>
-          <box flexDirection="row" justifyContent="space-between" gap={1}>
-            <text fg={theme.text} flexShrink={1} wrapMode="word">
-              {text()}
-            </text>
-            <Show when={queued()}>
-              <text flexShrink={0}>
-                <span style={{ bg: color(), fg: queuedFg(), bold: true }}> queued </span>
-              </text>
-            </Show>
-            <Show when={!queued() && ctx.showTimestamps()}>
-              <text flexShrink={0} fg={theme.textMuted}>
-                {Locale.todayTimeOrDateTime(props.message.time.created)}
-              </text>
-            </Show>
-          </box>
+          <text fg={theme.text}>{text()}</text>
           <Show when={files().length}>
             <box flexDirection="row" paddingTop={1} gap={1} flexWrap="wrap">
               <For each={files()}>
@@ -1591,6 +1586,20 @@ function UserMessage(props: {
                   )
                 }}
               </For>
+            </box>
+          </Show>
+          <Show when={queued()}>
+            <box flexDirection="row" justifyContent="flex-end">
+              <text flexShrink={0}>
+                <span style={{ bg: color(), fg: queuedFg(), bold: true }}> queued </span>
+              </text>
+            </box>
+          </Show>
+          <Show when={!queued() && ctx.showTimestamps()}>
+            <box flexDirection="row" justifyContent="flex-end">
+              <text flexShrink={0} fg={theme.textMuted}>
+                {Locale.todayTimeOrDateTime(props.message.time.created)}
+              </text>
             </box>
           </Show>
         </box>
@@ -1748,10 +1757,10 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[] }) {
           {/* top={1}, not top={0}, because every part component
               (TextPart/ToolPart/ReasoningPart) has its own
               marginTop={1} pushing the first part to internal row 1.
-              UserMessage's first child is a row box with no marginTop,
-              so it can use top={0}; AssistantMessage's first child is
-              always a part-component with leading marginTop, so we
-              shift the marginalia down 1 to match. */}
+              UserMessage's first child is the body <text> with no
+              marginTop, so it can use top={0}; AssistantMessage's
+              first child is always a part-component with leading
+              marginTop, so we shift the marginalia down 1 to match. */}
           <text position="absolute" left={0} top={1} fg={theme.textMuted}>
             a<span style={{ fg: agentColor() }}>·</span>
             {assistantIndex()}
