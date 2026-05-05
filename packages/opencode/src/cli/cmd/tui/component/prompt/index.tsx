@@ -171,6 +171,32 @@ function ContextBar(props: { pct: number }) {
 const TURBO_FRAMES = createTurboFrames()
 const TURBO_INTERVAL_MS = 50
 
+// Prompt indicator state → glyph. Single 1-cell character; colour comes
+// from borderHighlight (agent-tinted). Precedence is enforced in the
+// indicatorState memo (leader > shell > streaming > typing > idle).
+//
+//   ●  idle   — strong agent-ID signal when prompt is fresh
+//   ○  typing — debounced; fades back when user pauses for TYPING_DEBOUNCE_MS
+//   ◉  streaming — concentric, draws attention to external state
+//   ❯  shell  — directional, signals command-execution mode
+//   ◌  leader — dotted, "paused waiting for keybind"
+//
+// All five glyphs are 1 cell wide → swapping between them does not change
+// the text node's intrinsic width, so Yoga skips layout propagation on
+// state transitions. Frozen at module scope: zero allocation per render.
+const INDICATOR_GLYPH = Object.freeze({
+  leader: "◌",
+  shell: "❯",
+  streaming: "◉",
+  typing: "○",
+  idle: "●",
+} as const)
+
+// Debounce window for the "typing" indicator state. ~150-300ms is normal
+// inter-keystroke cadence; 800ms bridges natural thinking pauses without
+// feeling laggy when the user actually stops.
+const TYPING_DEBOUNCE_MS = 800
+
 export function Prompt(props: PromptProps) {
   let input: TextareaRenderable
   let anchor: BoxRenderable
@@ -1129,6 +1155,49 @@ export function Prompt(props: PromptProps) {
   // affordance carries state.
   const borderHighlight = createMemo(() => tint(theme.border, highlight(), agentMetaAlpha()))
 
+  // Typing activity signal — debounced. Flips to true on the first keystroke
+  // after idle (Solid signal equality dedupes subsequent setIsTyping(true)
+  // calls so a 100-keystroke burst causes ZERO downstream invalidations
+  // after the initial flip). Flips back to false TYPING_DEBOUNCE_MS after
+  // the last keystroke. Hooked into the existing onContentChange handler
+  // which already runs per keystroke; markTyping() adds a clearTimeout +
+  // setTimeout (microseconds) and one signal write that is usually a no-op.
+  const [isTyping, setIsTyping] = createSignal(false)
+  let typingTimer: ReturnType<typeof setTimeout> | undefined
+  function markTyping() {
+    setIsTyping(true)
+    if (typingTimer) clearTimeout(typingTimer)
+    typingTimer = setTimeout(() => setIsTyping(false), TYPING_DEBOUNCE_MS)
+  }
+  onCleanup(() => {
+    if (typingTimer) clearTimeout(typingTimer)
+  })
+
+  // Defensive projection: status() returns
+  //   sync.data.session_status[sessionID] ?? { type: "idle" }
+  // The `?? { type: "idle" }` allocates a fresh object identity on every
+  // miss, which would invalidate any memo that read status() directly even
+  // when the actual `.type` value did not change. Project to .type once so
+  // indicatorState only re-evaluates on real type transitions.
+  const statusType = createMemo(() => status().type)
+
+  // Prompt indicator state machine. Precedence:
+  //   leader > shell > streaming > typing > idle
+  // Streaming wins over typing because it represents an external state the
+  // user may not have noticed; typing is internal and self-evident.
+  //
+  // Per-keystroke cost: zero — markTyping() flips isTyping() exactly twice
+  // per typing burst (true on first keystroke, false after debounce), and
+  // Solid memo equality dedupes the resulting enum so the glyph text node
+  // re-renders only on actual state transitions, not per character.
+  const indicatorState = createMemo<keyof typeof INDICATOR_GLYPH>(() => {
+    if (keybind.leader) return "leader"
+    if (store.mode === "shell") return "shell"
+    if (statusType() !== "idle") return "streaming"
+    if (isTyping()) return "typing"
+    return "idle"
+  })
+
   // Turbo spool spinner. Six cells: two braille turbines (compressor +
   // turbine wheel, phase-offset 180°) and a boost gauge that fills as
   // pressure builds. Cycle: idle → smoothstep spool-up → peak with bloom
@@ -1179,17 +1248,24 @@ export function Prompt(props: PromptProps) {
         promptPartTypeId={() => promptPartTypeId}
       />
       <box ref={(r) => (anchor = r)} visible={props.visible !== false}>
-        {/* Input row. The ● accent at col 4 absolute (session paddingLeft 2 +
-            this paddingLeft 2) is the agent-color state indicator. Single
-            character, color is the affordance — replaces the previous
-            ▎ thin block which read as a structural rule rather than an
-            accent. Textarea content sits immediately after at col 5,
-            aligning column-for-column with the message body indent.
+        {/* Input row. The state indicator is a single 1-cell glyph whose
+            character encodes prompt state (see INDICATOR_GLYPH) and whose
+            colour encodes agent identity (borderHighlight). Geometry:
+
+              session paddingLeft (2) + this paddingLeft (1) = dot at col 3
+              dot (1 cell) + marginRight (2)                  = textarea at col 6
+
+            Dot sits one column outside the message-body indent — reads as
+            a margin marker anchoring the prompt as its own surface — while
+            the textarea text column stays aligned with message bodies
+            above. The 2-cell gap gives the glyph breathing room so denser
+            shapes (●, ◉) don't visually collide with the first character.
+
             alignItems=flex-start keeps the dot pinned to the first row
-            when textarea grows multi-line. */}
-        <box paddingLeft={2} paddingRight={0} paddingTop={1} flexShrink={0} flexDirection="row" alignItems="flex-start">
-          <text fg={borderHighlight()} flexShrink={0} marginRight={1}>
-            ●
+            when the textarea grows multi-line. */}
+        <box paddingLeft={1} paddingRight={0} paddingTop={1} flexShrink={0} flexDirection="row" alignItems="flex-start">
+          <text fg={borderHighlight()} flexShrink={0} marginRight={2}>
+            {INDICATOR_GLYPH[indicatorState()]}
           </text>
           <box flexGrow={1} flexShrink={1}>
             <textarea
@@ -1204,6 +1280,7 @@ export function Prompt(props: PromptProps) {
                 setStore("prompt", "input", value)
                 autocomplete.onInput(value)
                 syncExtmarksWithPromptParts()
+                markTyping()
               }}
               keyBindings={textareaKeybindings()}
               onKeyDown={async (e) => {
