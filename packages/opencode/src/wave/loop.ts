@@ -60,6 +60,7 @@ export const layer = Layer.effect(
     const wave = yield* Wave.Service
     const sessions = yield* Session.Service
     const sessionPrompt = yield* SessionPrompt.Service
+    const provider = yield* Provider.Service
     const scope = yield* Scope.Scope
 
     const spawnNext = Effect.fnUntraced(function* () {
@@ -69,7 +70,10 @@ export const layer = Layer.effect(
       if (current.wave_status === "all_complete" || current.wave_status === "running") return
 
       const parts = yield* sessionPrompt.resolvePromptParts(promptTemplate(current.campaign_id))
-      const { providerID, modelID } = Provider.parseModel(current.executor_model)
+      const modelStr = current.executor_model.trim()
+      const { providerID, modelID } = modelStr
+        ? Provider.parseModel(modelStr)
+        : yield* provider.defaultModel()
       const variant = current.executor_variant || undefined
 
       const session = yield* sessions.create({
@@ -231,6 +235,7 @@ export const defaultLayer = layer.pipe(
   Layer.provide(Wave.defaultLayer),
   Layer.provide(Session.defaultLayer),
   Layer.provide(SessionPrompt.defaultLayer),
+  Layer.provide(Provider.defaultLayer),
 )
 
 export * as WaveLoop from "./loop"

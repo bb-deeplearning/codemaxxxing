@@ -107,12 +107,13 @@ When an agent uses a tool to read lines 200-400 of a document, it has already lo
 
 # Input
 
-The user provides a plan document — file path or inline. Plus, the wave system controller (TUI) supplies two pieces of metadata for the executor:
+The user provides a plan document — file path or inline. Plus, the wave system controller (TUI) supplies metadata for the executor:
 
-- `executor_agent` — which agent will run each wave (e.g. `caveman`, `build`)
-- `executor_model` — which model + variant the executor will use
+- `executor_agent` — REQUIRED. Which agent will run each wave (e.g. `caveman`, `build`). If missing from your initial prompt, ask the user.
+- `executor_model` — OPTIONAL. Provider/model id (e.g. `anthropic/claude-sonnet-4-5`). **Default behavior: leave it as the empty string `""`.** When empty, the wave loop resolves the same default a fresh codemaxxxing session uses (config `model`, then most-recent model, then first available provider). If the user did NOT mention a model in their prompt, ask once whether they want to pin a specific one or use the default. If they say default / don't care / no preference / "leave it" / similar, write `""` in STATE.md. **NEVER invent a model id.** If you write a value here, it MUST be a real `provider/model_id` the user explicitly named.
+- `executor_variant` — OPTIONAL. Variant key. Leave as the empty string `""` unless the user specifies one.
 
-These are passed in your initial prompt. If they're missing, ask the user before producing the campaign.
+These are passed in your initial prompt.
 
 # Folder layout
 
@@ -385,8 +386,8 @@ Write `.wave/campaigns/<id>/STATE.md` with initial state. **Format is canonical*
 campaign_id: <campaign-id>
 plan_source: <path to original plan, relative to repo root>
 executor_agent: <name of agent that runs each wave>
-executor_model: <provider/model id>
-executor_variant: <variant key, or "">
+executor_model: ""    # empty string for default; or e.g. "anthropic/claude-sonnet-4-5" if user pinned one
+executor_variant: ""  # empty string if unused; or the variant key
 current_wave: 0
 wave_status: pending
 loop_state: idle
@@ -414,6 +415,11 @@ YAML field meanings (for the wave executor agent):
 - `active_session_id` — set by TUI when spawning, cleared by executor on completion
 - `total_waves` — count of waves in the campaign (does not change)
 - `session_count` — number of executor sessions completed (incremented on success, not on failure-retry)
+
+YAML formatting rules (avoid the loop crashing on parse):
+
+- For empty string fields (`executor_model`, `executor_variant`), write the literal `""`. **Never** write a bare `key:` with nothing after — YAML parses that as `null`, which breaks downstream consumers.
+- `active_session_id: null` is the one place `null` is correct; everywhere else use `""` for empty.
 
 ## Step 9: Update `.gitignore`
 

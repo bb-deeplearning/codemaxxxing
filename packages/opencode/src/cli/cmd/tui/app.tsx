@@ -468,7 +468,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
         route.navigate({ type: "home" })
         dialog.clear()
         const text =
-          "Decompose a plan into a wave campaign. Tell me the plan path (e.g. .opencode/plans/foo.md), the executor agent, and the executor model."
+          "Decompose a plan into a wave campaign. Tell me the plan path (e.g. .opencode/plans/foo.md) and the executor agent. The executor model is optional — leave it unspecified to use whatever model codemaxxxing defaults to for fresh sessions."
         setTimeout(() => promptRef.current?.set({ input: text, parts: [] }), 0)
       },
     },

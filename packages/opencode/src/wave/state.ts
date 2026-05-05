@@ -174,7 +174,7 @@ export const parse = (text: string) =>
       campaign_id: yaml["campaign_id"]!,
       plan_source: yaml["plan_source"]!,
       executor_agent: yaml["executor_agent"]!,
-      executor_model: yaml["executor_model"]!,
+      executor_model: yaml["executor_model"] ?? "",
       executor_variant: yaml["executor_variant"] ?? "",
       current_wave: Number(yaml["current_wave"]),
       wave_status: yaml["wave_status"] as WaveStatus,
