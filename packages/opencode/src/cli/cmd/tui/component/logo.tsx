@@ -4,8 +4,9 @@ import { useTheme, tint } from "@tui/context/theme"
 import { useKV } from "@tui/context/kv"
 import { go, logo, type ColorRole, type LogoShape } from "@/cli/logo"
 
-// Logo — figlet `slant` two-line italic ASCII wordmark for the codemaxxxing
-// TUI home: `code` stacked above `maXXXing`, 12 rows × 48 cells.
+// Logo — figlet `slant` italic ASCII wordmark for the codemaxxxing TUI
+// home: `codemaxxxing` rendered single-line with kerning, 6 rows × 80 cells.
+// See `src/cli/logo.ts` for the glyph data and per-row zone-split rationale.
 //
 // Replaces the previous F1-instrument-panel logo (chunky 4-row block letters
 // inside a tach/cluster chrome box, ~9 rows × 75 cells, multi-zone color,
