@@ -2,6 +2,7 @@ import { cmd } from "../cmd"
 import { UI } from "@/cli/ui"
 import { tui } from "./app"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
+import { installPosixRawModeGuard } from "./posix"
 import { TuiConfig } from "@/cli/cmd/tui/config/tui"
 import { errorMessage } from "@/util/error"
 import { validateSession } from "./validate-session"
@@ -47,6 +48,7 @@ export const AttachCommand = cmd({
       }),
   handler: async (args) => {
     const unguard = win32InstallCtrlCGuard()
+    const unguardPosix = installPosixRawModeGuard()
     try {
       win32DisableProcessedInput()
 
@@ -95,6 +97,7 @@ export const AttachCommand = cmd({
       })
     } finally {
       unguard?.()
+      unguardPosix?.()
     }
   },
 })

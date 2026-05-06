@@ -13,6 +13,7 @@ import { Filesystem } from "@/util/filesystem"
 import type { GlobalEvent } from "@opencode-ai/sdk/v2"
 import type { EventSource } from "./context/sdk"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
+import { installPosixRawModeGuard } from "./posix"
 import { writeHeapSnapshot } from "v8"
 import { TuiConfig } from "./config/tui"
 import {
@@ -117,6 +118,7 @@ export const TuiThreadCommand = cmd({
     // Keep ENABLE_PROCESSED_INPUT cleared even if other code flips it.
     // (Important when running under `bun run` wrappers on Windows.)
     const unguard = win32InstallCtrlCGuard()
+    const unguardPosix = installPosixRawModeGuard()
     try {
       // Must be the very first thing — disables CTRL_C_EVENT before any Worker
       // spawn or async work so the OS cannot kill the process group.
@@ -254,6 +256,7 @@ export const TuiThreadCommand = cmd({
       }
     } finally {
       unguard?.()
+      unguardPosix?.()
     }
     process.exit(0)
   },

@@ -16,6 +16,7 @@ import {
   on,
 } from "solid-js"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
+import { installPosixRawModeGuard } from "./posix"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import semver from "semver"
 import { DialogProvider, useDialog } from "@tui/ui/dialog"
@@ -124,10 +125,12 @@ export function tui(input: {
   // oxlint-disable-next-line no-async-promise-executor -- intentional: async executor used for sequential setup before resolve
   return new Promise<void>(async (resolve) => {
     const unguard = win32InstallCtrlCGuard()
+    const unguardPosix = installPosixRawModeGuard()
     win32DisableProcessedInput()
 
     const onExit = async () => {
       unguard?.()
+      unguardPosix?.()
       resolve()
     }
 
