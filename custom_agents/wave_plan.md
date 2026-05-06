@@ -301,6 +301,8 @@ If outcome is success and a prior attempt failed, still append a brief success s
 
 Edit `.wave/campaigns/<id>/STATE.md` after every wave turn.
 
+**`active_session_id` is loop-managed. Never touch it.** The loop sets this field when it spawns your session and clears it from its settle handler when your session truly ends. If you write `null` to it while your session is still emitting events (which is the case when you commit STATE.md and emit your set phrase — your turn ends but the session stays alive for a moment longer), the loop's settle handler will see `state.active_session_id !== <your session id>` and skip the auto-spawn for the next wave. The campaign will appear stuck. **No outcome below changes `active_session_id`.**
+
 After a SUCCESSFUL wave:
 
 1. YAML block:
@@ -310,7 +312,6 @@ After a SUCCESSFUL wave:
    - `retry_count: 0`
    - `failure_kind: ""`
    - `last_updated: <today YYYY-MM-DD>`
-   - `active_session_id: null`
 2. Wave row N: `Status: complete`, `Commit: <SHA>`, `Notes: <outcome summary>`.
 
 After a TRANSIENT FAILURE (your own bug, not a spec issue):
@@ -321,7 +322,6 @@ After a TRANSIENT FAILURE (your own bug, not a spec issue):
    - `retry_count: <retry_count + 1>`
    - `loop_state: idle` only if `retry_count` is now >= 3 (loop will then trigger verifier); otherwise leave loop_state as it was
    - `last_updated: <today>`
-   - `active_session_id: null`
 2. Wave row N: `Status: failed`, `Commit: <SHA>`, `Notes: <one-line reason; see NOTES.md>`.
 
 After PLAN UNDOABLE (the spec itself is wrong, no number of retries will help):
@@ -331,7 +331,6 @@ After PLAN UNDOABLE (the spec itself is wrong, no number of retries will help):
    - `failure_kind: undoable`
    - `loop_state: idle` (loop will trigger verifier)
    - `last_updated: <today>`
-   - `active_session_id: null`
 2. Wave row N: `Status: undoable`, `Commit: <SHA>`, `Notes: <one-line reason; see NOTES.md>`.
 
 After USER QUESTION (you need user judgment):
@@ -341,7 +340,6 @@ After USER QUESTION (you need user judgment):
    - `user_question: "<one-line summary of the question>"` (full context goes in chat output)
    - `last_updated: <today>`
    - DO NOT change `loop_state` — leave it as it was. Your session is paused, not ended; the loop should resume automatically when the user's reply progresses the state.
-   - DO NOT clear `active_session_id` — the session is still alive. The loop will clear it when your session truly ends (after user reply resolves the question).
 2. Wave row N: `Status: paused`, `Commit: <SHA>`, `Notes: see user_question`.
 
 ## Retry handling on entry
@@ -536,7 +534,7 @@ YAML field meanings (for the wave executor agent and the verifier):
 - `verify_count` — total verifier sessions completed against this campaign. Tracks how many times the verifier has been invoked (initial review + each post-execution amendment). Not capped — verifier decides itself whether to keep amending or escalate to user.
 - `user_question` — non-empty string (one-line summary) when an agent has surfaced a blocking question. The dashboard shows this. The full contextual question lives in the agent's chat output. The agent clears it as part of its resume-after-reply turn (see "Handling user replies" in AGENT_INSTRUCTIONS).
 - `loop_state` — `idle` | `armed` | `paused`. The TUI manages this; the executor agent reads it but does not change it. Exception: on wave failure or undoable outcome, the executor sets `loop_state: idle` (so the user sees the failure surfaced clearly). On `awaiting_user`, do NOT change `loop_state` — the user reply will resume the same session, and preserving loop_state lets the system continue without requiring a re-arm.
-- `active_session_id` — set by TUI when spawning, cleared by executor on completion
+- `active_session_id` — loop-managed. The wave loop sets this when it spawns a session and clears it from its settle handler when the session truly ends. Agents (executor + verifier) MUST NOT touch this field. Writing `null` from inside an active session causes the loop's settle handler to skip auto-spawning the next wave (it sees the mismatch between cleared field and live session id).
 - `active_session_kind` — `""` | `"executor"` | `"verifier"`. Loop-managed. Set when spawning, cleared on settle. The dashboard reads this to show whether the in-flight session is the executor or the verifier. **Agents do not write this field** — the loop owns it exclusively.
 - `total_waves` — count of waves in the campaign (changes only if the verifier rewrites the wave structure)
 - `session_count` — number of executor sessions completed (incremented on success, not on failure-retry)

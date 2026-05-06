@@ -125,6 +125,8 @@ The campaign has a hard cap of 3 verifier sessions total. Read `verify_count` fr
 
 ## Step 6: Update STATE.md
 
+**`active_session_id` is loop-managed. Never touch it.** The wave loop sets this when it spawns your session and clears it from its settle handler when your session truly ends. If you write `null` to it from inside your session, the loop will see the mismatch and skip auto-spawning the next wave / verifier action. None of the outcomes below change `active_session_id`.
+
 Always:
 
 - `last_updated: <today YYYY-MM-DD>`
@@ -142,7 +144,6 @@ If asking the user:
 - Set `wave_status: awaiting_user`.
 - Set `user_question: "<one-line summary for the dashboard>"`. The full contextual question goes in your chat output, not in this field.
 - Do NOT change `loop_state` — preserve whatever it was. Your session is paused, not ended; user reply will resume this same session.
-- Do NOT clear `active_session_id` — your session is still alive.
 
 ## Step 7: Commit (always, if you changed anything)
 
