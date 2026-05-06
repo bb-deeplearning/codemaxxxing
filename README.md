@@ -161,11 +161,13 @@ Read more: [WAVES.md](./WAVES.md) for the full algorithm, FSM states, set phrase
 
 Lighter, more information-dense chrome — easier to read over mosh + tmux on smaller windows, and personal preference. Not a feature, just my taste.
 
-![codemaxxxing](./screenshot.png)
+![codemaxxxing](./screenshot.gif)
 
 Most of it is subtraction: panels lose their backgrounds and become single-cell left rules, message blocks lose their closing rules, tool calls collapse to `label · target · meta` instead of labeled separator lines. Speaker identity moves to a `u·1` / `a·1` mark in the left margin. Sidebar gains a small live stats block (messages / tokens / cost / duration). Prompt has a state-aware `▎` accent and a two-row status (identity + ephemeral hints) with a small usage meter.
 
 Logo is a `slant`-figlet wordmark with a subtle ignition→idle animation; the prompt spinner is a turbo spool (two braille turbines + boost gauge) instead of the upstream V12. Sidebar footer reads `codema(xxx)ing for clauseo`, home footer `by clauseo`, OSC terminal title `codemaxxxing` (home) or `cmx | <session>` (sessions).
+
+The recording above shows codemaxxxing in toybox-noir theme with the caveman agent active, mid-response — the spinner you can see is the turbo spool.
 
 Also:
 
