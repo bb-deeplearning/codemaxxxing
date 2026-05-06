@@ -29,7 +29,7 @@ export type RowStatus = Schema.Schema.Type<typeof RowStatus>
 
 const ROW_STATUSES = ["pending", "running", "complete", "failed", "undoable", "paused", "cancelled"] as const
 
-export const FailureKind = Schema.Literals(["", "transient", "undoable", "crash"])
+export const FailureKind = Schema.Literals(["", "transient", "undoable", "crash", "cancelled"])
 export type FailureKind = Schema.Schema.Type<typeof FailureKind>
 
 export class WaveRow extends Schema.Class<WaveRow>("@opencode/WaveRow")({
@@ -145,7 +145,7 @@ const parseTable = (block: string): WaveRow[] =>
     })
     .sort((a, b) => a.n - b.n)
 
-const FAILURE_KINDS = ["", "transient", "undoable", "crash"] as const
+const FAILURE_KINDS = ["", "transient", "undoable", "crash", "cancelled"] as const
 const isFailureKind = (s: string): s is FailureKind => (FAILURE_KINDS as readonly string[]).includes(s)
 
 const serializeYaml = (state: State) =>

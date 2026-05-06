@@ -104,6 +104,12 @@ export const layer = Layer.effect(
       if (Option.isNone(opt)) return
       const current = opt.value
       if (current.wave_status === "all_complete" || current.wave_status === "running") return
+      // Bug 3 guard: refuse to spawn when a session is already in flight.
+      // The settle handler clears active_session_id when a session truly ends;
+      // until then, no second spawn.
+      if (current.active_session_id !== null) return
+      // Bug 2 guard: user-cancelled waves don't auto-retry.
+      if (current.failure_kind === "cancelled") return
 
       const parts = yield* sessionPrompt.resolvePromptParts(promptTemplate(current.campaign_id))
       const modelStr = current.executor_model.trim()
@@ -155,6 +161,11 @@ export const layer = Layer.effect(
       const opt = yield* wave.readActive()
       if (Option.isNone(opt)) return
       const current = opt.value
+
+      // Bug 3 guard: don't double-spawn while a session is in flight.
+      if (current.active_session_id !== null) return
+      // Bug 2 guard: cancelled waves are user-controlled, not auto-fixable.
+      if (current.failure_kind === "cancelled") return
 
       // Hard cap on verifier sessions per campaign. The verifier's own prompt
       // also enforces a per-session cap via verify_count, but we double-check
@@ -274,13 +285,17 @@ export const layer = Layer.effect(
           }
           const stamp = yield* today
           const previous = current.waves.find((r) => r.n === current.current_wave)?.notes ?? ""
+          // Bug 2 fix: user cancellation is "user wants to stop", not "the
+          // plan is broken". Mark with failure_kind: cancelled and leave
+          // retry_count alone — the spawn paths refuse cancelled waves, so
+          // re-arming requires the user to explicitly clear the cancelled
+          // status (which signals "actually, try again").
           yield* wave.update(current.campaign_id, (s) =>
             updateRow(
               new State({
                 ...s,
                 wave_status: "failed",
-                failure_kind: "transient",
-                retry_count: RETRY_CAP, // bump to cap so loop won't auto-retry on next arm
+                failure_kind: "cancelled",
                 loop_state: "idle",
                 active_session_id: null,
                 last_updated: stamp,
@@ -353,15 +368,20 @@ export const layer = Layer.effect(
               )
             }
             // Crash case 2: verifier session ended without progressing state.
-            // (We only get here if wave_status is failed/plan_undoable AND the
-            // verifier was the active session. If the verifier paused on a
-            // user question we already short-circuited above.)
+            // Bug 1 fix: also bump verify_count to cap so subsequent re-arms
+            // (e.g. user toggles wave_status back to failed manually) don't
+            // re-spawn the verifier — without this, the loop could churn
+            // verifier crash → escalate → user retries → crash → escalate
+            // forever. With the cap bumped, future spawn attempts will hit
+            // the verify-cap branch and re-escalate to a clearer message.
             else if (isVerifier && (state.wave_status === "failed" || state.wave_status === "plan_undoable")) {
               yield* wave.update(state.campaign_id, (s) =>
                 new State({
                   ...s,
                   wave_status: "awaiting_user",
-                  user_question: "Verifier session ended without progressing the wave. Please review .wave/ manually.",
+                  user_question:
+                    "Verifier session ended without progressing the wave. Options: A) edit .wave/ manually and clear failure_kind / wave_status to retry, B) interrupt to mark cancelled.",
+                  verify_count: VERIFY_CAP,
                   active_session_id: null,
                   last_updated: stamp,
                 }),

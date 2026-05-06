@@ -505,7 +505,7 @@ executor_model: ""    # empty string for default; or e.g. "anthropic/claude-sonn
 executor_variant: ""  # empty string if unused; or the variant key
 current_wave: 0
 wave_status: pending
-failure_kind: ""      # "" | "transient" | "undoable" | "crash" — set when wave_status is failed/plan_undoable
+failure_kind: ""      # "" | "transient" | "undoable" | "crash" | "cancelled" — set when wave_status is failed/plan_undoable
 retry_count: 0        # transient retries on the current wave; resets on advance or on verifier-applied amendment
 verify_count: 0       # number of verifier sessions completed against this campaign (initial review + any amendments)
 user_question: ""     # set by any agent emitting USER QUESTION; cleared by user response
@@ -530,7 +530,7 @@ YAML field meanings (for the wave executor agent and the verifier):
 
 - `current_wave` — index of the wave to execute next
 - `wave_status` — `pending` (idle, ready to spawn) | `running` (in-flight) | `complete` (just finished, advance imminent) | `failed` (transient, may retry) | `plan_undoable` (spec broken, awaiting verifier) | `awaiting_user` (blocking on a user question) | `all_complete`
-- `failure_kind` — `""` when not in a failure state; otherwise `transient` (executor's own bug, retryable), `undoable` (spec is wrong), or `crash` (session ended without state update; loop infers this)
+- `failure_kind` — `""` when not in a failure state; otherwise `transient` (executor's own bug, retryable), `undoable` (spec is wrong), `crash` (session ended without state update; loop infers this), or `cancelled` (user interrupted; loop refuses to auto-action — user must explicitly clear `failure_kind` to resume).
 - `retry_count` — number of consecutive transient failures on the current wave. Loop auto-retries while `< 3`; at `>= 3` triggers the verifier. Resets to `0` on successful advance or after the verifier amends the spec.
 - `verify_count` — total verifier sessions completed against this campaign. Tracks how many times the verifier has been invoked (initial review + each post-execution amendment). Not capped — verifier decides itself whether to keep amending or escalate to user.
 - `user_question` — non-empty string (one-line summary) when an agent has surfaced a blocking question. The dashboard shows this. The full contextual question lives in the agent's chat output. The agent clears it as part of its resume-after-reply turn (see "Handling user replies" in AGENT_INSTRUCTIONS).
