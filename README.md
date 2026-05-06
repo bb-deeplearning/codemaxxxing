@@ -4,7 +4,7 @@
 
 An opinionated, heavily-customized fork of [OpenCode](https://github.com/anomalyco/opencode) ([docs](https://opencode.ai/docs)), used internally for all development on [Clauseo](https://clauseo.chat) and other [bbdeeplearning.systems](https://bbdeeplearning.systems) projects.
 
-Rewritten system prompts, aggressive subagent parallelism, stricter permissions, and custom agents — including a [wave executor](#wave-executor-workflow) for breaking large tasks across fresh sessions. The prompts and agents are portable to stock OpenCode; the fork adds the prompt and agent changes that make them work well.
+Rewritten system prompts, aggressive subagent parallelism, stricter permissions, and custom agents — including a [wave system](#wave-system) for breaking large tasks across fresh sessions with auto-retry, plan amendment, and conversational user pauses. The prompts and agents are portable to stock OpenCode; the fork adds the prompt and agent changes (and the loop FSM) that make them work well.
 
 ## Prompt iteration
 
@@ -25,6 +25,7 @@ Iteration logs live in [`PROMPT_ITERATIONS/`](./PROMPT_ITERATIONS/) and correspo
 | [4](./PROMPT_ITERATIONS/2026-02-23-anthropic-inquiry-mode.md)  | 2026-02-23 | Anthropic inquiry mode: distinguish questions from directives                             |
 | [5](./PROMPT_ITERATIONS/2026-02-24-qwen-prompt-sync.md)        | 2026-02-24 | Default prompt sync: full codemaxxxing prompt for GLM and non-Claude models               |
 | [6](./PROMPT_ITERATIONS/2026-04-11-caveman-agent.md)           | 2026-04-11 | Caveman agent: ultra-terse primary agent, terse subagent output rules                     |
+| [7](./PROMPT_ITERATIONS/2026-05-06-wave-system.md)             | 2026-05-06 | Wave system overhaul: verifier agent, retry/escalation FSM, conversational user pause     |
 
 ## What's different
 
@@ -37,7 +38,7 @@ The Anthropic, Gemini, and default (GLM/Qwen/other) system prompts have all been
 - **Security awareness** — actively watch for OWASP top 10 vulnerabilities in generated code
 - **No time estimates** — never predict how long tasks will take
 - **Blast radius awareness** — freely take reversible actions, flag destructive ones before proceeding
-- **Parallelism** — the prompts encourage parallel tool calls and parallel subagent launches wherever independent work exists. This keeps sessions shorter, context cleaner, and is what makes patterns like the wave executor practical.
+- **Parallelism** — the prompts encourage parallel tool calls and parallel subagent launches wherever independent work exists. This keeps sessions shorter, context cleaner, and is what makes patterns like the wave system practical.
 
 The Gemini prompt is adapted for Gemini's response patterns — prescriptive framing over prohibitions, context efficiency guidance, Directives/Inquiries distinction, Research-Strategy-Execution lifecycle. See [iteration 3](./PROMPT_ITERATIONS/2026-02-22-prompt-parity/ITERATION.md) and the [research learnings](./PROMPT_ITERATIONS/2026-02-22-prompt-parity/LEARNINGS.md) for the rationale.
 
@@ -111,48 +112,50 @@ Subagent caveman rules are always active regardless of which primary agent is se
 The `general` subagent prompt now ships natively (see [General subagent](#general-subagent) above). The remaining custom agents in `custom_agents/` still need to be copied to your config directory:
 
 ```bash
-cp custom_agents/docs.md custom_agents/plan_structured.md custom_agents/wave_decompose.md ~/.config/opencode/agent/
+cp custom_agents/docs.md custom_agents/plan_structured.md custom_agents/wave_plan.md custom_agents/wave_verify.md ~/.config/opencode/agent/
 ```
 
 - **docs** — technical documentation writer with specific style constraints (short chunks, imperative headings, relaxed tone)
 - **general** — custom system prompt for the general subagent. Now shipped natively (iteration 3) — this file remains as a reference. See [General subagent](#general-subagent) above.
 - **plan_structured** — structured planning with a 4-phase pipeline: survey (parallel explore subagents), organize, write, verify. You provide the task upfront; the agent's value-add is thorough codebase survey and structured documentation. Asks questions on genuine ambiguities. Read-only — never modifies source code.
-- **wave_decompose** — wave decomposition mode. Takes a plan and produces the `.wave/` execution system — a stateless, progressive-disclosure-based wave executor that breaks large tasks into fresh-session-sized chunks. See [Wave executor workflow](#wave-executor-workflow) below.
+- **wave_plan** — wave decomposition. Takes a plan markdown file and produces a campaign under `.wave/campaigns/<id>/` — `AGENT_INSTRUCTIONS.md`, `OVERVIEW.md`, `STATE.md`, and per-wave `WAVE.md` files. Read-only outside `.wave/`. Loop-managed after the first decomposition. See [Wave system](#wave-system) below.
+- **wave_verify** — wave review + amendment. Auto-runs after every decomposition (sanity-checks the plan against reality) and again whenever a wave fails in a way that suggests the spec itself is wrong. Patches the plan in place, escalates to user if it can't decide alone. Broad permissions; behaviorally constrained to `.wave/`. See [Wave system](#wave-system) below.
 
-### Wave executor workflow
+### Wave system
 
-Long agent sessions degrade. The context window is a sliding window — early details rot, compaction makes knowledge shallow, and late-stage errors compound. The wave executor solves this by splitting large tasks across fresh sessions, with progress tracked on disk as a finite state machine.
+Long agent sessions degrade. The wave system splits big tasks across many small fresh sessions, persists progress on disk, and recovers from failures by patching the plan or asking for help — all without the user babysitting between waves.
 
-Each session loads only what it needs (progressive disclosure), executes one wave, verifies it, and stops. A fresh session picks up exactly where the last one left off.
+The system uses three agents:
 
-**Session 1 — Plan.** Brainstorm and decide on the approach. Switch to either plan mode — the built-in iterative plan mode or the `plan_structured` custom agent:
+- `wave_plan` decomposes a plan markdown into a campaign directory.
+- `wave_verify` sanity-checks the campaign before any wave runs and re-amends it whenever a wave fails because the spec was wrong.
+- An executor agent (caveman, build, your choice) runs each wave: reads its `WAVE.md`, dispatches sub-agents, runs verification, commits, updates state.
 
-```
-/mode plan
-```
+A loop in `packages/opencode/src/wave/loop.ts` orchestrates everything. After you arm it once, every wave completion auto-spawns the next, transient failures auto-retry up to 3 times, and `PLAN UNDOABLE` outcomes auto-escalate to the verifier. When an agent needs user input it pauses conversationally (the session stays alive; you reply in chat and the same agent resumes). Every outcome — success, failure, undoable, paused, crash — produces a git commit so the working tree is always clean between sessions and you have a full audit trail in `git log`.
 
-or
+**Workflow**:
 
-```
-/agent plan_structured
-```
+1. **Plan.** Write a plan in plain markdown anywhere, or use `/mode plan` (iterative) or `/agent plan_structured` (4-phase pipeline) to produce one in `.opencode/plans/`.
 
-Either works. Discuss the task, explore the codebase, and iterate. The plan lands in `.opencode/plans/` as a self-contained markdown file with exact file paths, current implementations, constraints, and verification criteria.
+2. **Decompose.** New session, switch to wave_plan via the `/wave-plan` slash command:
 
-**Session 2 — Decompose.** New session. Switch to the wave decomposer and point it at the plan:
+   ```
+   /wave-plan
+   ```
 
-```
-/agent wave_decompose
-Decompose the plan in @.opencode/plans/my-plan.md
-```
+   The slash pre-fills a prompt asking for the plan path and executor agent. Model is optional — leave unspecified to use codemaxxxing's default.
 
-This produces the `.wave/` directory — `AGENT_INSTRUCTIONS.md`, `OVERVIEW.md`, `STATE.md`, and `waves/wave_N/WAVE.md` for each wave. No source code is modified.
+   ```
+   Decompose @.opencode/plans/my-plan.md. Executor agent: caveman.
+   ```
 
-**Sessions 3 to N — Execute.** New session for each wave. Use the built-in `/execute-wave` slash command (or `/wave`) — it switches to the build agent, opens a new session, and pre-fills the prompt with `.wave/AGENT_INSTRUCTIONS.md` attached as context. Press Enter to send.
+   This produces `.wave/campaigns/<id>/`. No source code is modified.
 
-The agent reads `STATE.md` to find the current wave, loads only what it needs, executes, verifies, updates state, and stops. Start a new session and repeat until `wave_status: all_complete`.
+3. **Arm and walk away.** Open `/wave` in the TUI. Press `r`. The verifier runs first (sanity-checks the campaign). Then the executor spawns wave 0, runs it, commits, advances state. The loop sees the settle, spawns wave 1. Repeats until `all_complete`.
 
-Read more: [Why waves instead of plan-and-build](./WAVES.md)
+4. **Respond to questions.** When the dashboard shows a USER ATTENTION banner, press `↵` on the wave row to open the session in chat. Read the agent's full contextual question, reply normally. The agent picks up your reply and continues.
+
+Read more: [WAVES.md](./WAVES.md) for the full algorithm, FSM states, set phrases, recovery paths, and architectural choices.
 
 ### UI
 
@@ -167,7 +170,9 @@ Logo is a `slant`-figlet wordmark with a subtle ignition→idle animation; the p
 Also:
 
 - Collapsible web search and code search result displays
-- `/execute-wave` (alias `/wave`) slash command — switches to build agent, opens new session with wave prompt and file context pre-filled
+- `/wave` slash command — opens the wave campaign dashboard
+- `/wave-plan`, `/wave-run`, `/wave-pause`, `/wave-stop`, `/wave-next` slash commands — campaign control surface
+- Wave footer pill on home — shows active campaign + status when one exists
 
 ### Bug fixes
 
