@@ -29,6 +29,7 @@ import * as Log from "@opencode-ai/core/util/log"
 // don't need in production.
 const RENDER_DEBUG = !!process.env.OPENCODE_DEBUG_RENDER
 const renderLog = RENDER_DEBUG ? Log.create({ service: "tui-render" }) : undefined
+const sessionLog = Log.create({ service: "tui.session" })
 const dlog = (msg: string, extra?: Record<string, any>) => {
   if (RENDER_DEBUG && renderLog) renderLog.info(msg, extra)
 }
@@ -775,7 +776,10 @@ export function Session() {
       },
       onSelect: async (dialog) => {
         const status = sync.data.session_status?.[route.sessionID]
-        if (status?.type !== "idle") await sdk.client.session.abort({ sessionID: route.sessionID }).catch(() => {})
+        if (status?.type !== "idle") {
+          sessionLog.info("session abort fired from messages_undo", { sessionID: route.sessionID })
+          await sdk.client.session.abort({ sessionID: route.sessionID }).catch(() => {})
+        }
         const revert = session()?.revert?.messageID
         const message = messages().findLast((x) => (!revert || x.id < revert) && x.role === "user")
         if (!message) return

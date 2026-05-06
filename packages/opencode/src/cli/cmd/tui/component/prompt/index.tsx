@@ -3,6 +3,9 @@ import { createEffect, createMemo, onMount, createSignal, onCleanup, on, Show, S
 import "opentui-spinner/solid"
 import path from "path"
 import { fileURLToPath } from "url"
+import * as Log from "@opencode-ai/core/util/log"
+
+const log = Log.create({ service: "tui.prompt" })
 import { Filesystem } from "@/util/filesystem"
 import { useLocal } from "@tui/context/local"
 import { tint, useTheme } from "@tui/context/theme"
@@ -375,6 +378,7 @@ export function Prompt(props: PromptProps) {
     mode: "normal" | "shell"
     extmarkToPartIndex: Map<number, number>
     interrupt: number
+    interruptAt: number
     placeholder: number
   }>({
     placeholder: randomIndex(list().length),
@@ -385,6 +389,7 @@ export function Prompt(props: PromptProps) {
     mode: "normal",
     extmarkToPartIndex: new Map(),
     interrupt: 0,
+    interruptAt: 0,
   })
 
   createEffect(
@@ -492,17 +497,38 @@ export function Prompt(props: PromptProps) {
           }
           if (!props.sessionID) return
 
-          setStore("interrupt", store.interrupt + 1)
+          // Tighten the 3-press detection. Two changes vs upstream's
+          // 5-second decay-only counter:
+          //   1. Reset to 1 (not increment) when the previous press was
+          //      more than 1 second ago. A deliberate triple-tap happens
+          //      in <500ms; a stray escape from a tmux pane swap, mosh
+          //      reconnect, or terminal multibyte sequence rarely happens
+          //      in deliberate triple-tap timing.
+          //   2. Log every fire with the gap between presses so we can
+          //      see in dev.log whether it was a deliberate tap or
+          //      machine-rapid escape leakage.
+          const now = Date.now()
+          const sinceLast = now - store.interruptAt
+          const next = sinceLast > 1000 ? 1 : store.interrupt + 1
+          setStore("interrupt", next)
+          setStore("interruptAt", now)
 
           setTimeout(() => {
-            setStore("interrupt", 0)
-          }, 5000)
+            // Only clear if no newer press happened in the meantime.
+            if (Date.now() - store.interruptAt >= 1000) setStore("interrupt", 0)
+          }, 1100)
 
-          if (store.interrupt >= 2) {
+          if (next >= 3) {
+            log.info("session abort fired from prompt interrupt-counter", {
+              sessionID: props.sessionID,
+              presses: next,
+              gapMs: sinceLast,
+            })
             void sdk.client.session.abort({
               sessionID: props.sessionID,
             })
             setStore("interrupt", 0)
+            setStore("interruptAt", 0)
           }
           dialog.clear()
         },
