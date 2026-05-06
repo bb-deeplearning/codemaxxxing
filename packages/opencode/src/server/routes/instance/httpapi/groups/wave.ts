@@ -14,12 +14,15 @@ export const WavePaths = {
   setActive: `${root}/active`,
   readActive: `${root}/active/state`,
   read: `${root}/campaigns/:id`,
+  readNotes: `${root}/campaigns/:id/waves/:n/notes`,
   arm: `${root}/loop/arm`,
   pause: `${root}/loop/pause`,
   resume: `${root}/loop/resume`,
   interrupt: `${root}/loop/interrupt`,
   stop: `${root}/loop/stop`,
   next: `${root}/loop/next`,
+  clearCancelled: `${root}/loop/clear-cancelled`,
+  clearQuestion: `${root}/loop/clear-question`,
 } as const
 
 export const ListCampaignsResponse = Schema.Struct({ campaigns: Schema.Array(Schema.String) }).annotate({
@@ -36,6 +39,10 @@ export const SetActivePayload = Schema.Struct({ campaign_id: Schema.NullOr(Schem
 
 export const ReadActiveResponse = Schema.Struct({ state: Schema.NullOr(State) }).annotate({
   identifier: "WaveReadActiveResponse",
+})
+
+export const ReadNotesResponse = Schema.Struct({ notes: Schema.NullOr(Schema.String) }).annotate({
+  identifier: "WaveReadNotesResponse",
 })
 
 export const OkResponse = Schema.Struct({ ok: Schema.Literal(true) }).annotate({ identifier: "WaveOkResponse" })
@@ -91,6 +98,16 @@ export const WaveApi = HttpApi.make("wave").add(
           description: "Returns the parsed STATE.md for a specific campaign id.",
         }),
       ),
+      HttpApiEndpoint.get("readNotes", WavePaths.readNotes, {
+        params: { id: Schema.String, n: Schema.NumberFromString },
+        success: described(ReadNotesResponse, "Per-wave NOTES.md content (or null)"),
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "wave.readNotes",
+          summary: "Read wave NOTES.md",
+          description: "Returns waves/wave_<n>/NOTES.md for a campaign, or null if absent.",
+        }),
+      ),
       HttpApiEndpoint.post("loopArm", WavePaths.arm, {
         success: described(OkResponse, "Loop armed"),
       }).annotateMerge(OpenApi.annotations({ identifier: "wave.loop.arm", summary: "Arm the auto-loop" })),
@@ -111,6 +128,24 @@ export const WaveApi = HttpApi.make("wave").add(
       HttpApiEndpoint.post("loopNext", WavePaths.next, {
         success: described(OkResponse, "Next wave spawned"),
       }).annotateMerge(OpenApi.annotations({ identifier: "wave.loop.next", summary: "Spawn the next wave" })),
+      HttpApiEndpoint.post("loopClearCancelled", WavePaths.clearCancelled, {
+        success: described(OkResponse, "Cancelled status cleared"),
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "wave.loop.clearCancelled",
+          summary: "Clear cancelled failure_kind",
+          description: "Resets the current wave to pending so the loop will retry it.",
+        }),
+      ),
+      HttpApiEndpoint.post("loopClearQuestion", WavePaths.clearQuestion, {
+        success: described(OkResponse, "Awaiting-user question cleared"),
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "wave.loop.clearQuestion",
+          summary: "Clear awaiting_user question",
+          description: "Dismiss a pending user question and mark the wave as cancelled.",
+        }),
+      ),
     )
     .annotateMerge(OpenApi.annotations({ title: "wave", description: "Wave campaign + auto-loop control." }))
     .middleware(InstanceContextMiddleware)

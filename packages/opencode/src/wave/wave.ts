@@ -55,6 +55,7 @@ export interface Interface {
   readonly readActive: () => Effect.Effect<Option.Option<State>>
   readonly write: (id: string, state: State) => Effect.Effect<void, CampaignNotFound>
   readonly update: (id: string, fn: (state: State) => State) => Effect.Effect<State, CampaignNotFound>
+  readonly readNotes: (id: string, n: number) => Effect.Effect<Option.Option<string>>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Wave") {}
@@ -147,7 +148,16 @@ export const layer = Layer.effect(
       return next
     })
 
-    return Service.of({ listCampaigns, getActive, setActive, read, readActive, write, update })
+    const readNotes = Effect.fn("Wave.readNotes")(function* (id: string, n: number) {
+      const { campaignDir } = yield* InstanceState.get(paths)
+      const notesPath = pathSvc.join(campaignDir(id), "plan", "waves", `wave_${n}`, "NOTES.md")
+      const exists = yield* fs.exists(notesPath).pipe(Effect.catch(() => Effect.succeed(false)))
+      if (!exists) return Option.none<string>()
+      const text = yield* fs.readFileString(notesPath).pipe(Effect.catch(() => Effect.succeed("")))
+      return text ? Option.some(text) : Option.none<string>()
+    })
+
+    return Service.of({ listCampaigns, getActive, setActive, read, readActive, write, update, readNotes })
   }),
 )
 

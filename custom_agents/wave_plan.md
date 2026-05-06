@@ -511,6 +511,7 @@ verify_count: 0       # number of verifier sessions completed against this campa
 user_question: ""     # set by any agent emitting USER QUESTION; cleared by user response
 loop_state: idle
 active_session_id: null
+active_session_kind: ""    # "" | "executor" | "verifier" — loop-managed; agents do not touch
 total_waves: <N>
 session_count: 0
 created: <today YYYY-MM-DD>
@@ -536,6 +537,7 @@ YAML field meanings (for the wave executor agent and the verifier):
 - `user_question` — non-empty string (one-line summary) when an agent has surfaced a blocking question. The dashboard shows this. The full contextual question lives in the agent's chat output. The agent clears it as part of its resume-after-reply turn (see "Handling user replies" in AGENT_INSTRUCTIONS).
 - `loop_state` — `idle` | `armed` | `paused`. The TUI manages this; the executor agent reads it but does not change it. Exception: on wave failure or undoable outcome, the executor sets `loop_state: idle` (so the user sees the failure surfaced clearly). On `awaiting_user`, do NOT change `loop_state` — the user reply will resume the same session, and preserving loop_state lets the system continue without requiring a re-arm.
 - `active_session_id` — set by TUI when spawning, cleared by executor on completion
+- `active_session_kind` — `""` | `"executor"` | `"verifier"`. Loop-managed. Set when spawning, cleared on settle. The dashboard reads this to show whether the in-flight session is the executor or the verifier. **Agents do not write this field** — the loop owns it exclusively.
 - `total_waves` — count of waves in the campaign (changes only if the verifier rewrites the wave structure)
 - `session_count` — number of executor sessions completed (incremented on success, not on failure-retry)
 

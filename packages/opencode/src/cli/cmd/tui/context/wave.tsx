@@ -184,6 +184,17 @@ export const { use: useWave, provider: WaveProvider } = createSimpleContext({
       interrupt: withSubscribe(() => swallow(post("/wave/loop/interrupt"))),
       stop: withSubscribe(() => swallow(post("/wave/loop/stop"))),
       next: withSubscribe(() => swallow(post("/wave/loop/next"))),
+      clearCancelled: withSubscribe(() => swallow(post("/wave/loop/clear-cancelled"))),
+      clearQuestion: withSubscribe(() => swallow(post("/wave/loop/clear-question"))),
+      readNotes: async (id: string, n: number): Promise<string | null> => {
+        try {
+          const res = await get<{ notes: string | null }>(`/wave/campaigns/${encodeURIComponent(id)}/waves/${n}/notes`)
+          return res.notes
+        } catch (err) {
+          log.warn("wave readNotes failed", { err })
+          return null
+        }
+      },
       switchTo: (id: string) => {
         subscribe()
         return swallow(post("/wave/active", { campaign_id: id }))

@@ -24,6 +24,7 @@ const sampleState = (overrides: Partial<State> = {}) =>
     user_question: "",
     loop_state: "idle",
     active_session_id: null,
+    active_session_kind: "",
     total_waves: 2,
     session_count: 1,
     created: "2026-05-04",

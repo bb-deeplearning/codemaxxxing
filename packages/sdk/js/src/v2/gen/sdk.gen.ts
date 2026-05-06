@@ -199,6 +199,22 @@ import type {
   V2SessionWaitResponses,
   VcsDiffResponses,
   VcsGetResponses,
+  WaveGetActiveResponses,
+  WaveListCampaignsResponses,
+  WaveLoopArmResponses,
+  WaveLoopClearCancelledResponses,
+  WaveLoopClearQuestionResponses,
+  WaveLoopInterruptResponses,
+  WaveLoopNextResponses,
+  WaveLoopPauseResponses,
+  WaveLoopResumeResponses,
+  WaveLoopStopResponses,
+  WaveReadActiveResponses,
+  WaveReadErrors,
+  WaveReadNotesResponses,
+  WaveReadResponses,
+  WaveSetActivePayload,
+  WaveSetActiveResponses,
   WorktreeCreateErrors,
   WorktreeCreateInput,
   WorktreeCreateResponses,
@@ -4583,6 +4599,436 @@ export class Tui extends HeyApiClient {
   }
 }
 
+export class Loop extends HeyApiClient {
+  /**
+   * Arm the auto-loop
+   */
+  public arm<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<WaveLoopArmResponses, unknown, ThrowOnError>({
+      url: "/wave/loop/arm",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Pause the auto-loop
+   */
+  public pause<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<WaveLoopPauseResponses, unknown, ThrowOnError>({
+      url: "/wave/loop/pause",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Resume the auto-loop
+   */
+  public resume<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<WaveLoopResumeResponses, unknown, ThrowOnError>({
+      url: "/wave/loop/resume",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Interrupt the current wave
+   */
+  public interrupt<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<WaveLoopInterruptResponses, unknown, ThrowOnError>({
+      url: "/wave/loop/interrupt",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Stop the loop and interrupt
+   */
+  public stop<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<WaveLoopStopResponses, unknown, ThrowOnError>({
+      url: "/wave/loop/stop",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Spawn the next wave
+   */
+  public next<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<WaveLoopNextResponses, unknown, ThrowOnError>({
+      url: "/wave/loop/next",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Clear cancelled failure_kind
+   *
+   * Resets the current wave to pending so the loop will retry it.
+   */
+  public clearCancelled<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<WaveLoopClearCancelledResponses, unknown, ThrowOnError>({
+      url: "/wave/loop/clear-cancelled",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Clear awaiting_user question
+   *
+   * Dismiss a pending user question and mark the wave as cancelled.
+   */
+  public clearQuestion<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<WaveLoopClearQuestionResponses, unknown, ThrowOnError>({
+      url: "/wave/loop/clear-question",
+      ...options,
+      ...params,
+    })
+  }
+}
+
+export class Wave extends HeyApiClient {
+  /**
+   * List wave campaigns
+   *
+   * Returns the IDs of all campaigns under .wave/campaigns/ that have a STATE.md.
+   */
+  public listCampaigns<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<WaveListCampaignsResponses, unknown, ThrowOnError>({
+      url: "/wave/campaigns",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get active campaign
+   *
+   * Reads the .wave/active pointer.
+   */
+  public getActive<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<WaveGetActiveResponses, unknown, ThrowOnError>({
+      url: "/wave/active",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Set active campaign
+   *
+   * Writes the .wave/active pointer; null clears it.
+   */
+  public setActive<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      waveSetActivePayload?: WaveSetActivePayload
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { key: "waveSetActivePayload", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<WaveSetActiveResponses, unknown, ThrowOnError>({
+      url: "/wave/active",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Read active campaign state
+   *
+   * Returns the parsed STATE.md for whichever campaign .wave/active points at.
+   */
+  public readActive<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<WaveReadActiveResponses, unknown, ThrowOnError>({
+      url: "/wave/active/state",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Read campaign state
+   *
+   * Returns the parsed STATE.md for a specific campaign id.
+   */
+  public read<ThrowOnError extends boolean = false>(
+    parameters: {
+      id: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "id" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<WaveReadResponses, WaveReadErrors, ThrowOnError>({
+      url: "/wave/campaigns/{id}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Read wave NOTES.md
+   *
+   * Returns waves/wave_<n>/NOTES.md for a campaign, or null if absent.
+   */
+  public readNotes<ThrowOnError extends boolean = false>(
+    parameters: {
+      id: string
+      n: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "id" },
+            { in: "path", key: "n" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<WaveReadNotesResponses, unknown, ThrowOnError>({
+      url: "/wave/campaigns/{id}/waves/{n}/notes",
+      ...options,
+      ...params,
+    })
+  }
+
+  private _loop?: Loop
+  get loop(): Loop {
+    return (this._loop ??= new Loop({ client: this.client }))
+  }
+}
+
 export class OpencodeClient extends HeyApiClient {
   public static readonly __registry = new HeyApiRegistry<OpencodeClient>()
 
@@ -4724,5 +5170,10 @@ export class OpencodeClient extends HeyApiClient {
   private _tui?: Tui
   get tui(): Tui {
     return (this._tui ??= new Tui({ client: this.client }))
+  }
+
+  private _wave?: Wave
+  get wave(): Wave {
+    return (this._wave ??= new Wave({ client: this.client }))
   }
 }

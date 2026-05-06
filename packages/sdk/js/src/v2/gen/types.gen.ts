@@ -43,6 +43,8 @@ export type Event =
   | EventPtyUpdated
   | EventPtyExited
   | EventPtyDeleted
+  | EventWaveUpdated
+  | EventWaveActiveChanged
   | EventMessageUpdated
   | EventMessageRemoved
   | EventMessagePartUpdated
@@ -808,6 +810,8 @@ export type GlobalEvent = {
     | EventPtyUpdated
     | EventPtyExited
     | EventPtyDeleted
+    | EventWaveUpdated
+    | EventWaveActiveChanged
     | EventMessageUpdated
     | EventMessageRemoved
     | EventMessagePartUpdated
@@ -1714,6 +1718,60 @@ export type EventTuiSessionSelect2 = {
   }
 }
 
+export type WaveListCampaignsResponse = {
+  campaigns: Array<string>
+}
+
+export type WaveActiveResponse = {
+  campaign_id: string
+}
+
+export type WaveSetActivePayload = {
+  campaign_id: string
+}
+
+export type WaveOkResponse = {
+  ok: true
+}
+
+export type OpencodeWaveRow = {
+  n: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  status: "pending" | "running" | "complete" | "failed" | "undoable" | "paused" | "cancelled"
+  session_id: string
+  commit_sha: string
+  notes: string
+}
+
+export type OpencodeWaveState = {
+  campaign_id: string
+  plan_source: string
+  executor_agent: string
+  executor_model: string
+  executor_variant: string
+  current_wave: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  wave_status: "pending" | "running" | "complete" | "failed" | "plan_undoable" | "awaiting_user" | "all_complete"
+  failure_kind: "" | "transient" | "undoable" | "crash" | "cancelled"
+  retry_count: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  verify_count: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  user_question: string
+  loop_state: "idle" | "armed" | "paused"
+  active_session_id: string
+  active_session_kind: "" | "executor" | "verifier"
+  total_waves: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  session_count: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  created: string
+  last_updated: string
+  waves: Array<OpencodeWaveRow>
+}
+
+export type WaveReadActiveResponse = {
+  state: OpencodeWaveState
+}
+
+export type WaveReadNotesResponse = {
+  notes: string
+}
+
 export type Workspace = {
   id: string
   type: string
@@ -2522,6 +2580,22 @@ export type EventPtyDeleted = {
   type: "pty.deleted"
   properties: {
     id: string
+  }
+}
+
+export type EventWaveUpdated = {
+  id: string
+  type: "wave.updated"
+  properties: {
+    campaign_id: string
+  }
+}
+
+export type EventWaveActiveChanged = {
+  id: string
+  type: "wave.active_changed"
+  properties: {
+    campaign_id: string
   }
 }
 
@@ -6433,6 +6507,286 @@ export type TuiControlResponseResponses = {
 }
 
 export type TuiControlResponseResponse = TuiControlResponseResponses[keyof TuiControlResponseResponses]
+
+export type WaveListCampaignsData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/wave/campaigns"
+}
+
+export type WaveListCampaignsResponses = {
+  /**
+   * Campaign IDs (sorted)
+   */
+  200: WaveListCampaignsResponse
+}
+
+export type WaveListCampaignsResponse2 = WaveListCampaignsResponses[keyof WaveListCampaignsResponses]
+
+export type WaveGetActiveData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/wave/active"
+}
+
+export type WaveGetActiveResponses = {
+  /**
+   * Active campaign id (or null)
+   */
+  200: WaveActiveResponse
+}
+
+export type WaveGetActiveResponse = WaveGetActiveResponses[keyof WaveGetActiveResponses]
+
+export type WaveSetActiveData = {
+  body?: WaveSetActivePayload
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/wave/active"
+}
+
+export type WaveSetActiveResponses = {
+  /**
+   * Active pointer updated
+   */
+  200: WaveOkResponse
+}
+
+export type WaveSetActiveResponse = WaveSetActiveResponses[keyof WaveSetActiveResponses]
+
+export type WaveReadActiveData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/wave/active/state"
+}
+
+export type WaveReadActiveResponses = {
+  /**
+   * Parsed STATE.md for the active campaign (or null)
+   */
+  200: WaveReadActiveResponse
+}
+
+export type WaveReadActiveResponse2 = WaveReadActiveResponses[keyof WaveReadActiveResponses]
+
+export type WaveReadData = {
+  body?: never
+  path: {
+    id: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/wave/campaigns/{id}"
+}
+
+export type WaveReadErrors = {
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type WaveReadError = WaveReadErrors[keyof WaveReadErrors]
+
+export type WaveReadResponses = {
+  /**
+   * Parsed STATE.md
+   */
+  200: OpencodeWaveState
+}
+
+export type WaveReadResponse = WaveReadResponses[keyof WaveReadResponses]
+
+export type WaveReadNotesData = {
+  body?: never
+  path: {
+    id: string
+    n: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/wave/campaigns/{id}/waves/{n}/notes"
+}
+
+export type WaveReadNotesResponses = {
+  /**
+   * Per-wave NOTES.md content (or null)
+   */
+  200: WaveReadNotesResponse
+}
+
+export type WaveReadNotesResponse2 = WaveReadNotesResponses[keyof WaveReadNotesResponses]
+
+export type WaveLoopArmData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/wave/loop/arm"
+}
+
+export type WaveLoopArmResponses = {
+  /**
+   * Loop armed
+   */
+  200: WaveOkResponse
+}
+
+export type WaveLoopArmResponse = WaveLoopArmResponses[keyof WaveLoopArmResponses]
+
+export type WaveLoopPauseData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/wave/loop/pause"
+}
+
+export type WaveLoopPauseResponses = {
+  /**
+   * Loop paused
+   */
+  200: WaveOkResponse
+}
+
+export type WaveLoopPauseResponse = WaveLoopPauseResponses[keyof WaveLoopPauseResponses]
+
+export type WaveLoopResumeData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/wave/loop/resume"
+}
+
+export type WaveLoopResumeResponses = {
+  /**
+   * Loop resumed
+   */
+  200: WaveOkResponse
+}
+
+export type WaveLoopResumeResponse = WaveLoopResumeResponses[keyof WaveLoopResumeResponses]
+
+export type WaveLoopInterruptData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/wave/loop/interrupt"
+}
+
+export type WaveLoopInterruptResponses = {
+  /**
+   * Current wave interrupted
+   */
+  200: WaveOkResponse
+}
+
+export type WaveLoopInterruptResponse = WaveLoopInterruptResponses[keyof WaveLoopInterruptResponses]
+
+export type WaveLoopStopData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/wave/loop/stop"
+}
+
+export type WaveLoopStopResponses = {
+  /**
+   * Loop stopped + current interrupted
+   */
+  200: WaveOkResponse
+}
+
+export type WaveLoopStopResponse = WaveLoopStopResponses[keyof WaveLoopStopResponses]
+
+export type WaveLoopNextData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/wave/loop/next"
+}
+
+export type WaveLoopNextResponses = {
+  /**
+   * Next wave spawned
+   */
+  200: WaveOkResponse
+}
+
+export type WaveLoopNextResponse = WaveLoopNextResponses[keyof WaveLoopNextResponses]
+
+export type WaveLoopClearCancelledData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/wave/loop/clear-cancelled"
+}
+
+export type WaveLoopClearCancelledResponses = {
+  /**
+   * Cancelled status cleared
+   */
+  200: WaveOkResponse
+}
+
+export type WaveLoopClearCancelledResponse = WaveLoopClearCancelledResponses[keyof WaveLoopClearCancelledResponses]
+
+export type WaveLoopClearQuestionData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/wave/loop/clear-question"
+}
+
+export type WaveLoopClearQuestionResponses = {
+  /**
+   * Awaiting-user question cleared
+   */
+  200: WaveOkResponse
+}
+
+export type WaveLoopClearQuestionResponse = WaveLoopClearQuestionResponses[keyof WaveLoopClearQuestionResponses]
 
 export type ExperimentalWorkspaceAdapterListData = {
   body?: never

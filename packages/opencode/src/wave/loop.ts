@@ -60,6 +60,8 @@ export interface Interface {
   readonly interrupt: () => Effect.Effect<void>
   readonly stop: () => Effect.Effect<void>
   readonly next: () => Effect.Effect<void>
+  readonly clearCancelled: () => Effect.Effect<void>
+  readonly clearQuestion: () => Effect.Effect<void>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/WaveLoop") {}
@@ -80,6 +82,8 @@ interface Methods {
   readonly pause: () => Effect.Effect<void>
   readonly interrupt: () => Effect.Effect<void>
   readonly next: () => Effect.Effect<void>
+  readonly clearCancelled: () => Effect.Effect<void>
+  readonly clearQuestion: () => Effect.Effect<void>
 }
 
 export const layer = Layer.effect(
@@ -144,6 +148,7 @@ export const layer = Layer.effect(
                 ...s,
                 wave_status: "running",
                 active_session_id: session.id,
+                active_session_kind: "executor",
                 last_updated: stamp,
               }),
               s.current_wave,
@@ -187,6 +192,7 @@ export const layer = Layer.effect(
                 user_question: `Verifier cap (${VERIFY_CAP}) exhausted. Please review .wave/ manually.`,
                 loop_state: "idle",
                 active_session_id: null,
+                active_session_kind: "",
                 last_updated: stamp,
               }),
             )
@@ -207,6 +213,7 @@ export const layer = Layer.effect(
             new State({
               ...s,
               active_session_id: session.id,
+              active_session_kind: "verifier",
               last_updated: stamp,
             }),
           )
@@ -296,6 +303,7 @@ export const layer = Layer.effect(
                     failure_kind: "cancelled",
                     loop_state: "idle",
                     active_session_id: null,
+                    active_session_kind: "",
                     last_updated: stamp,
                   }),
                   s.current_wave,
@@ -308,6 +316,72 @@ export const layer = Layer.effect(
 
         const next = Effect.fn("WaveLoop.next")(function* () {
           yield* swallow(spawnNext())
+        })
+
+        // User-initiated unstuck actions (from dashboard keybinds).
+        // clearCancelled: bring an interrupted wave back to pending so the
+        // loop will retry it on next arm. The user pressing `c` semantically
+        // means "actually, go ahead and try again".
+        const clearCancelled = Effect.fn("WaveLoop.clearCancelled")(function* () {
+          yield* swallow(
+            Effect.gen(function* () {
+              const opt = yield* wave.readActive()
+              if (Option.isNone(opt)) return
+              const current = opt.value
+              if (current.failure_kind !== "cancelled") return
+              const stamp = yield* today
+              const previous = current.waves.find((r) => r.n === current.current_wave)?.notes ?? ""
+              yield* wave.update(current.campaign_id, (s) =>
+                updateRow(
+                  new State({
+                    ...s,
+                    wave_status: "pending",
+                    failure_kind: "",
+                    last_updated: stamp,
+                  }),
+                  s.current_wave,
+                  { status: "pending", notes: previous ? `${previous} (cancellation cleared)` : "cancellation cleared" },
+                ),
+              )
+            }),
+          )
+        })
+
+        // clearQuestion: dismiss an awaiting_user question and mark the wave
+        // as user-cancelled. Used when the user wants to abandon a question
+        // without responding in chat (e.g. system-generated escalations).
+        const clearQuestion = Effect.fn("WaveLoop.clearQuestion")(function* () {
+          yield* swallow(
+            Effect.gen(function* () {
+              const opt = yield* wave.readActive()
+              if (Option.isNone(opt)) return
+              const current = opt.value
+              if (current.wave_status !== "awaiting_user") return
+              if (current.active_session_id) {
+                yield* sessionPrompt
+                  .cancel(SessionID.make(current.active_session_id))
+                  .pipe(Effect.catch(() => Effect.void))
+              }
+              const stamp = yield* today
+              const previous = current.waves.find((r) => r.n === current.current_wave)?.notes ?? ""
+              yield* wave.update(current.campaign_id, (s) =>
+                updateRow(
+                  new State({
+                    ...s,
+                    wave_status: "failed",
+                    failure_kind: "cancelled",
+                    user_question: "",
+                    loop_state: "idle",
+                    active_session_id: null,
+                    active_session_kind: "",
+                    last_updated: stamp,
+                  }),
+                  s.current_wave,
+                  { status: "cancelled", notes: previous ? `${previous} (question dismissed)` : "question dismissed" },
+                ),
+              )
+            }),
+          )
         })
 
         // Background: react to session settle for the active session of the
@@ -346,6 +420,7 @@ export const layer = Layer.effect(
                         failure_kind: "crash",
                         retry_count: cs.retry_count + 1,
                         active_session_id: null,
+                        active_session_kind: "",
                         last_updated: stamp,
                       }),
                       cs.current_wave,
@@ -365,13 +440,14 @@ export const layer = Layer.effect(
                         "Verifier session ended without progressing the wave. Options: A) edit .wave/ manually and clear failure_kind / wave_status to retry, B) interrupt to mark cancelled.",
                       verify_count: VERIFY_CAP,
                       active_session_id: null,
+                      active_session_kind: "",
                       last_updated: stamp,
                     }),
                   )
                   return
                 } else {
                   yield* wave.update(s.campaign_id, (cs) =>
-                    new State({ ...cs, active_session_id: null, last_updated: stamp }),
+                    new State({ ...cs, active_session_id: null, active_session_kind: "", last_updated: stamp }),
                   )
                 }
 
@@ -395,7 +471,7 @@ export const layer = Layer.effect(
 
         log.info("wave loop subscriber active")
 
-        return { arm, pause, interrupt, next } satisfies Methods
+        return { arm, pause, interrupt, next, clearCancelled, clearQuestion } satisfies Methods
       }),
     )
 
@@ -426,6 +502,14 @@ export const layer = Layer.effect(
       next: Effect.fn("WaveLoop.next.proxy")(function* () {
         const m = yield* InstanceState.get(state)
         yield* m.next()
+      }),
+      clearCancelled: Effect.fn("WaveLoop.clearCancelled.proxy")(function* () {
+        const m = yield* InstanceState.get(state)
+        yield* m.clearCancelled()
+      }),
+      clearQuestion: Effect.fn("WaveLoop.clearQuestion.proxy")(function* () {
+        const m = yield* InstanceState.get(state)
+        yield* m.clearQuestion()
       }),
     })
   }),

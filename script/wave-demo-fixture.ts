@@ -105,6 +105,7 @@ verify_count: 1
 user_question: ""
 loop_state: armed
 active_session_id: ses_01H7stu7stu7stu
+active_session_kind: executor
 total_waves: ${waves.length}
 session_count: 6
 created: 2026-04-23

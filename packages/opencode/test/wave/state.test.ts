@@ -20,6 +20,7 @@ verify_count: 1
 user_question: ""
 loop_state: armed
 active_session_id: null
+active_session_kind: ""
 total_waves: 33
 session_count: 16
 created: 2026-04-23
@@ -77,6 +78,7 @@ describe("wave state", () => {
       user_question: "",
       loop_state: "idle",
       active_session_id: null,
+      active_session_kind: "",
       total_waves: 2,
       session_count: 0,
       created: "2026-05-04",
@@ -108,6 +110,7 @@ describe("wave state", () => {
       user_question: "",
       loop_state: "idle",
       active_session_id: null,
+      active_session_kind: "",
       total_waves: 1,
       session_count: 0,
       created: "2026-05-04",

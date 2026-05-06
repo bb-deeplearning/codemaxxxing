@@ -40,11 +40,19 @@ export const waveHandlers = HttpApiBuilder.group(InstanceHttpApi, "wave", (handl
       .handle("read", (ctx: { params: { id: string } }) =>
         wave.read(ctx.params.id).pipe(Effect.catch(() => Effect.fail(new HttpApiError.NotFound()))),
       )
+      .handle("readNotes", (ctx: { params: { id: string; n: number } }) =>
+        Effect.gen(function* () {
+          const notes = yield* wave.readNotes(ctx.params.id, ctx.params.n)
+          return { notes: Option.getOrNull(notes) }
+        }),
+      )
       .handle("loopArm", () => loop.arm().pipe(Effect.as(ok)))
       .handle("loopPause", () => loop.pause().pipe(Effect.as(ok)))
       .handle("loopResume", () => loop.resume().pipe(Effect.as(ok)))
       .handle("loopInterrupt", () => loop.interrupt().pipe(Effect.as(ok)))
       .handle("loopStop", () => loop.stop().pipe(Effect.as(ok)))
       .handle("loopNext", () => loop.next().pipe(Effect.as(ok)))
+      .handle("loopClearCancelled", () => loop.clearCancelled().pipe(Effect.as(ok)))
+      .handle("loopClearQuestion", () => loop.clearQuestion().pipe(Effect.as(ok)))
   }),
 )

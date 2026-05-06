@@ -32,6 +32,9 @@ const ROW_STATUSES = ["pending", "running", "complete", "failed", "undoable", "p
 export const FailureKind = Schema.Literals(["", "transient", "undoable", "crash", "cancelled"])
 export type FailureKind = Schema.Schema.Type<typeof FailureKind>
 
+export const SessionKind = Schema.Literals(["", "executor", "verifier"])
+export type SessionKind = Schema.Schema.Type<typeof SessionKind>
+
 export class WaveRow extends Schema.Class<WaveRow>("@opencode/WaveRow")({
   n: Schema.Number,
   status: RowStatus,
@@ -54,6 +57,7 @@ export class State extends Schema.Class<State>("@opencode/WaveState")({
   user_question: Schema.String,
   loop_state: LoopState,
   active_session_id: Schema.NullOr(Schema.String),
+  active_session_kind: SessionKind,
   total_waves: Schema.Number,
   session_count: Schema.Number,
   created: Schema.String,
@@ -148,6 +152,9 @@ const parseTable = (block: string): WaveRow[] =>
 const FAILURE_KINDS = ["", "transient", "undoable", "crash", "cancelled"] as const
 const isFailureKind = (s: string): s is FailureKind => (FAILURE_KINDS as readonly string[]).includes(s)
 
+const SESSION_KINDS = ["", "executor", "verifier"] as const
+const isSessionKind = (s: string): s is SessionKind => (SESSION_KINDS as readonly string[]).includes(s)
+
 const serializeYaml = (state: State) =>
   [
     `campaign_id: ${state.campaign_id}`,
@@ -163,6 +170,7 @@ const serializeYaml = (state: State) =>
     `user_question: ${quoteIfEmpty(state.user_question)}`,
     `loop_state: ${state.loop_state}`,
     `active_session_id: ${state.active_session_id ?? "null"}`,
+    `active_session_kind: ${quoteIfEmpty(state.active_session_kind)}`,
     `total_waves: ${state.total_waves}`,
     `session_count: ${state.session_count}`,
     `created: ${state.created}`,
@@ -195,6 +203,7 @@ export const parse = (text: string) =>
     const tableMatch = text.match(TABLE_RE)
     const session = yaml["active_session_id"]
     const failureKindRaw = yaml["failure_kind"] ?? ""
+    const sessionKindRaw = yaml["active_session_kind"] ?? ""
     return new State({
       campaign_id: yaml["campaign_id"]!,
       plan_source: yaml["plan_source"]!,
@@ -209,6 +218,7 @@ export const parse = (text: string) =>
       user_question: yaml["user_question"] ?? "",
       loop_state: (yaml["loop_state"] as LoopState) ?? "idle",
       active_session_id: !session || session === "null" || session === "—" ? null : session,
+      active_session_kind: isSessionKind(sessionKindRaw) ? sessionKindRaw : "",
       total_waves: Number(yaml["total_waves"]),
       session_count: Number(yaml["session_count"] ?? "0"),
       created: yaml["created"]!,
