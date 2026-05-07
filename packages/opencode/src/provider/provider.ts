@@ -971,6 +971,7 @@ export interface Interface {
   ) => Effect.Effect<{ providerID: ProviderID; modelID: string } | undefined>
   readonly getSmallModel: (providerID: ProviderID) => Effect.Effect<Model | undefined>
   readonly defaultModel: () => Effect.Effect<{ providerID: ProviderID; modelID: ModelID }>
+  readonly recentVariant: (model: { providerID: ProviderID; modelID: ModelID }) => Effect.Effect<string | undefined>
 }
 
 interface State {
@@ -1731,7 +1732,24 @@ const layer: Layer.Layer<
       }
     })
 
-    return Service.of({ list, getProvider, getModel, getLanguage, closest, getSmallModel, defaultModel })
+    // Mirror of the TUI's per-model variant memory (see local.tsx → modelStore.variant).
+    // Returns the variant key the user last picked for this model in the TUI, or
+    // undefined when none is persisted or the persisted value is the "default"
+    // sentinel the TUI writes when the user explicitly clears the variant.
+    const recentVariant = Effect.fn("Provider.recentVariant")(function* (model: {
+      providerID: ProviderID
+      modelID: ModelID
+    }) {
+      const data = yield* fs.readJson(path.join(Global.Path.state, "model.json")).pipe(
+        Effect.catch(() => Effect.succeed(undefined as unknown)),
+      )
+      if (!isRecord(data) || !isRecord(data.variant)) return undefined
+      const value = data.variant[`${model.providerID}/${model.modelID}`]
+      if (typeof value !== "string" || value === "" || value === "default") return undefined
+      return value
+    })
+
+    return Service.of({ list, getProvider, getModel, getLanguage, closest, getSmallModel, defaultModel, recentVariant })
   }),
 )
 

@@ -73,6 +73,7 @@ export namespace ProviderTest {
           defaultModel: Effect.fn("TestProvider.defaultModel")(() =>
             Effect.succeed({ providerID: row.id, modelID: mdl.id }),
           ),
+          recentVariant: Effect.fn("TestProvider.recentVariant")(() => Effect.succeed(undefined)),
           ...override,
         }),
       ),

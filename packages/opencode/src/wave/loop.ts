@@ -133,7 +133,8 @@ export const layer = Layer.effect(
           const { providerID, modelID } = modelStr
             ? Provider.parseModel(modelStr)
             : yield* provider.defaultModel()
-          const variant = current.executor_variant || undefined
+          const explicitVariant = current.executor_variant.trim()
+          const variant = explicitVariant || (yield* provider.recentVariant({ providerID, modelID }))
 
           const session = yield* sessions.create({
             title: `${current.campaign_id} : wave ${current.current_wave}`,
@@ -201,11 +202,12 @@ export const layer = Layer.effect(
 
           const parts = yield* sessionPrompt.resolvePromptParts(VERIFY_PROMPT)
           const { providerID, modelID } = yield* provider.defaultModel()
+          const variant = yield* provider.recentVariant({ providerID, modelID })
 
           const session = yield* sessions.create({
             title: `${current.campaign_id} : verify`,
             agent: "wave_verify",
-            model: { id: modelID, providerID },
+            model: { id: modelID, providerID, ...(variant ? { variant } : {}) },
           })
 
           const stamp = yield* today
@@ -222,6 +224,7 @@ export const layer = Layer.effect(
             .prompt({
               sessionID: session.id,
               agent: "wave_verify",
+              ...(variant ? { variant } : {}),
               model: { providerID, modelID },
               parts,
             })
