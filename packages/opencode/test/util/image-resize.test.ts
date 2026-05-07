@@ -3,7 +3,7 @@ import {
   readDimensions,
   checkDataUrlOversized,
   resizeIfOversized,
-  MAX_DIMENSION_SINGLE,
+  MAX_DIMENSION_DEFAULT,
 } from "../../src/util/image-resize"
 
 // Build a minimal valid PNG with the given dimensions. PNG dimension reader
@@ -94,17 +94,17 @@ describe("image-resize.checkDataUrlOversized", () => {
   })
 
   test("returns dimensions when only height exceeds limit", () => {
-    const url = `data:image/png;base64,${Buffer.from(makePng(2000, 9000)).toString("base64")}`
-    expect(checkDataUrlOversized(url)).toEqual({ width: 2000, height: 9000 })
+    const url = `data:image/png;base64,${Buffer.from(makePng(1000, 9000)).toString("base64")}`
+    expect(checkDataUrlOversized(url)).toEqual({ width: 1000, height: 9000 })
   })
 
   test("returns undefined for image within limit", () => {
-    const url = `data:image/png;base64,${Buffer.from(makePng(1024, 768)).toString("base64")}`
+    const url = `data:image/png;base64,${Buffer.from(makePng(800, 600)).toString("base64")}`
     expect(checkDataUrlOversized(url)).toBeUndefined()
   })
 
   test("returns undefined exactly at the limit", () => {
-    const url = `data:image/png;base64,${Buffer.from(makePng(MAX_DIMENSION_SINGLE, MAX_DIMENSION_SINGLE)).toString("base64")}`
+    const url = `data:image/png;base64,${Buffer.from(makePng(MAX_DIMENSION_DEFAULT, MAX_DIMENSION_DEFAULT)).toString("base64")}`
     expect(checkDataUrlOversized(url)).toBeUndefined()
   })
 
@@ -130,11 +130,11 @@ describe("image-resize.checkDataUrlOversized", () => {
 
 describe("image-resize.resizeIfOversized", () => {
   test("returns input unchanged when within limit", async () => {
-    const bytes = makePng(1024, 768)
+    const bytes = makePng(800, 600)
     const result = await resizeIfOversized({ bytes, mime: "image/png" })
     expect(result.resized).toBe(false)
     expect(result.bytes).toBe(bytes)
-    expect(result.original).toEqual({ width: 1024, height: 768 })
+    expect(result.original).toEqual({ width: 800, height: 600 })
   })
 
   test("returns input unchanged when format unrecognized", async () => {

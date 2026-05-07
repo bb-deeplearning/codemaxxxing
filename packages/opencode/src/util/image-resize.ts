@@ -14,10 +14,17 @@ const log = Log.create({ service: "image-resize" })
 // We use 7500/1900 to leave a safety margin against any rounding the provider
 // performs after re-decoding.
 //
+// We default to MAX_DIMENSION_MULTI for ingest-time resizing because we can't
+// predict how many images will accumulate in a session (Chrome devtools /
+// Playwright sessions easily reach the multi-image case after a few turns).
+// Resizing to the safer cap up front avoids the "session bricked on turn 7"
+// failure mode entirely.
+//
 // Other providers (OpenAI, Google, Bedrock) accept much larger images but
 // charge per pixel — keeping things small is also a cost win.
 export const MAX_DIMENSION_SINGLE = 7500
 export const MAX_DIMENSION_MULTI = 1900
+export const MAX_DIMENSION_DEFAULT = MAX_DIMENSION_MULTI
 
 export interface Dimensions {
   width: number
@@ -127,7 +134,7 @@ export interface ResizeResult {
 // unchanged if dimensions are within range, the format is unrecognized, or no
 // converter tool is available on the host.
 export async function resizeIfOversized(input: ResizeInput): Promise<ResizeResult> {
-  const max = input.maxDimension ?? MAX_DIMENSION_SINGLE
+  const max = input.maxDimension ?? MAX_DIMENSION_DEFAULT
   const dims = readDimensions(input.bytes, input.mime)
   if (!dims) {
     log.debug("could not read dimensions, passing through", { mime: input.mime })
@@ -213,7 +220,7 @@ export async function resizeDataUrlIfOversized(
 // images from message history without paying the cost of decoding/resizing.
 // Returns the dimensions if oversized, undefined otherwise (including unknown
 // formats — we can't tell, so we let it through).
-export function checkDataUrlOversized(dataUrl: string, maxDimension = MAX_DIMENSION_SINGLE): Dimensions | undefined {
+export function checkDataUrlOversized(dataUrl: string, maxDimension = MAX_DIMENSION_DEFAULT): Dimensions | undefined {
   const match = dataUrl.match(/^data:([^;,]+);base64,(.*)$/)
   if (!match) return undefined
   const mime = match[1]

@@ -19,7 +19,7 @@ import * as ProviderError from "@/provider/error"
 import { iife } from "@/util/iife"
 import { errorMessage } from "@/util/error"
 import { isMedia } from "@/util/media"
-import { checkDataUrlOversized } from "@/util/image-resize"
+import { checkDataUrlOversized, MAX_DIMENSION_SINGLE, MAX_DIMENSION_MULTI } from "@/util/image-resize"
 import type { SystemError } from "bun"
 import type { Provider } from "@/provider/provider"
 import { ModelID, ProviderID } from "@/provider/schema"
@@ -734,6 +734,20 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
 ) {
   const result: UIMessage[] = []
   const toolNames = new Set<string>()
+
+  // Anthropic enforces a 2000px-per-edge cap when more than one image is in a
+  // single request (vs 8000px for single-image requests). Detect the multi-image
+  // case up front so we strip aggressively enough.
+  let imageCount = 0
+  for (const msg of input) {
+    for (const part of msg.parts) {
+      if (part.type === "file" && part.mime.startsWith("image/")) imageCount++
+      if (part.type === "tool" && part.state.status === "completed") {
+        for (const a of part.state.attachments ?? []) if (a.mime.startsWith("image/")) imageCount++
+      }
+    }
+  }
+  const maxImageDimension = imageCount > 1 ? MAX_DIMENSION_MULTI : MAX_DIMENSION_SINGLE
   // Track media from tool results that need to be injected as user messages
   // for providers that don't support media in tool results.
   //
@@ -814,10 +828,12 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             })
           } else {
             // Defense against bricked sessions: if an image's dimensions exceed
-            // the provider's hard limit (Anthropic 8000px), replace with a text
-            // placeholder. Without this, every subsequent turn re-sends the
-            // oversized image and re-hits the same 400.
-            const oversized = part.mime.startsWith("image/") ? checkDataUrlOversized(part.url) : undefined
+            // the provider's hard limit (Anthropic 8000px single, 2000px multi),
+            // replace with a text placeholder. Without this, every subsequent
+            // turn re-sends the oversized image and re-hits the same 400.
+            const oversized = part.mime.startsWith("image/")
+              ? checkDataUrlOversized(part.url, maxImageDimension)
+              : undefined
             if (oversized) {
               userMessage.parts.push({
                 type: "text",
@@ -890,7 +906,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             const oversizedNotes: string[] = []
             const attachments = rawAttachments.filter((a) => {
               if (!a.mime.startsWith("image/")) return true
-              const oversized = checkDataUrlOversized(a.url)
+              const oversized = checkDataUrlOversized(a.url, maxImageDimension)
               if (oversized) {
                 oversizedNotes.push(`[Image attachment skipped: ${oversized.width}x${oversized.height} exceeds provider limit]`)
                 return false
@@ -1005,7 +1021,6 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
   }
 
   const tools = Object.fromEntries(Array.from(toolNames).map((toolName) => [toolName, { toModelOutput }]))
-
   return yield* Effect.promise(() =>
     convertToModelMessages(
       result.filter((msg) => msg.parts.some((part) => part.type !== "step-start")),

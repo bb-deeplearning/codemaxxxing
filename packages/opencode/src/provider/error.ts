@@ -215,12 +215,12 @@ export function parseAPICallError(input: { providerID: ProviderID; error: APICal
       type: "api_error",
       message:
         "An image in the conversation history exceeds the provider's maximum dimension limit (Anthropic caps at 8000px). " +
-        "The oversized image will be skipped on the next attempt." +
+        "Retrying with the oversized image stripped from history." +
         (idx ? ` (offending part: messages[${idx.messageIndex}].content[${idx.contentIndex}])` : ""),
       statusCode: input.error.statusCode,
-      // Not retryable from the SDK's perspective — the same payload would fail again.
-      // We rely on the message-conversion path stripping the image before the next turn.
-      isRetryable: false,
+      // Mark retryable: the next attempt re-runs toModelMessages() which strips
+      // oversized images via checkDataUrlOversized(), so the retry will succeed.
+      isRetryable: true,
       responseHeaders: input.error.responseHeaders,
       responseBody: input.error.responseBody,
       metadata,
