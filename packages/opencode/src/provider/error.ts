@@ -27,6 +27,26 @@ const OVERFLOW_PATTERNS = [
   /model_context_window_exceeded/i, // z.ai non-standard finish_reason surfaced as error text
 ]
 
+// Anthropic returns a 400 like this when an image in the request exceeds the
+// 8000px (single-image) or 2000px (multi-image) cap. The session is bricked
+// because the offending image lives in history forever — every subsequent turn
+// re-sends and re-fails. We surface this as a non-retryable api_error with a
+// human-readable message; the message-conversion path strips oversized images
+// proactively so this should rarely fire.
+export const IMAGE_TOO_LARGE_PATTERN =
+  /image dimensions exceed max allowed size(?: for many-image requests)?: \d+ pixels/i
+
+export function isImageTooLarge(message: string) {
+  return IMAGE_TOO_LARGE_PATTERN.test(message)
+}
+
+export function parseImageTooLargeIndex(message: string): { messageIndex: number; contentIndex: number } | undefined {
+  // e.g. "messages.7.content.171.image.source.base64.data: At least one ..."
+  const m = message.match(/messages\.(\d+)\.content\.(\d+)\.image/)
+  if (!m) return undefined
+  return { messageIndex: Number(m[1]), contentIndex: Number(m[2]) }
+}
+
 function isOpenAiErrorRetryable(e: APICallError) {
   const status = e.statusCode
   if (!status) return e.isRetryable
@@ -189,6 +209,24 @@ export function parseAPICallError(input: { providerID: ProviderID; error: APICal
   }
 
   const metadata = input.error.url ? { url: input.error.url } : undefined
+  if (isImageTooLarge(m)) {
+    const idx = parseImageTooLargeIndex(m)
+    return {
+      type: "api_error",
+      message:
+        "An image in the conversation history exceeds the provider's maximum dimension limit (Anthropic caps at 8000px). " +
+        "The oversized image will be skipped on the next attempt." +
+        (idx ? ` (offending part: messages[${idx.messageIndex}].content[${idx.contentIndex}])` : ""),
+      statusCode: input.error.statusCode,
+      // Not retryable from the SDK's perspective — the same payload would fail again.
+      // We rely on the message-conversion path stripping the image before the next turn.
+      isRetryable: false,
+      responseHeaders: input.error.responseHeaders,
+      responseBody: input.error.responseBody,
+      metadata,
+    }
+  }
+
   return {
     type: "api_error",
     message: m,

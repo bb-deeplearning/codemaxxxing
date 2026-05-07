@@ -4,6 +4,7 @@ import * as Tool from "./tool"
 import TurndownService from "turndown"
 import DESCRIPTION from "./webfetch.txt"
 import { isImageAttachment } from "@/util/media"
+import * as ImageResize from "@/util/image-resize"
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB
 const DEFAULT_TIMEOUT = 30 * 1000 // 30 seconds
@@ -106,7 +107,11 @@ export const WebFetchTool = Tool.define(
           const title = `${params.url} (${contentType})`
 
           if (isImageAttachment(mime)) {
-            const base64Content = Buffer.from(arrayBuffer).toString("base64")
+            // Resize images that exceed Anthropic's 8000px limit so they don't brick the session.
+            const resized = yield* Effect.promise(() =>
+              ImageResize.resizeIfOversized({ bytes: new Uint8Array(arrayBuffer), mime }),
+            )
+            const base64Content = Buffer.from(resized.bytes).toString("base64")
             return {
               title,
               output: "Image fetched successfully",
@@ -114,8 +119,8 @@ export const WebFetchTool = Tool.define(
               attachments: [
                 {
                   type: "file" as const,
-                  mime,
-                  url: `data:${mime};base64,${base64Content}`,
+                  mime: resized.mime,
+                  url: `data:${resized.mime};base64,${base64Content}`,
                 },
               ],
             }

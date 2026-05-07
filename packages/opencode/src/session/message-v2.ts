@@ -19,6 +19,7 @@ import * as ProviderError from "@/provider/error"
 import { iife } from "@/util/iife"
 import { errorMessage } from "@/util/error"
 import { isMedia } from "@/util/media"
+import { checkDataUrlOversized } from "@/util/image-resize"
 import type { SystemError } from "bun"
 import type { Provider } from "@/provider/provider"
 import { ModelID, ProviderID } from "@/provider/schema"
@@ -812,12 +813,24 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
               text: `[Attached ${part.mime}: ${part.filename ?? "file"}]`,
             })
           } else {
-            userMessage.parts.push({
-              type: "file",
-              url: part.url,
-              mediaType: part.mime,
-              filename: part.filename,
-            })
+            // Defense against bricked sessions: if an image's dimensions exceed
+            // the provider's hard limit (Anthropic 8000px), replace with a text
+            // placeholder. Without this, every subsequent turn re-sends the
+            // oversized image and re-hits the same 400.
+            const oversized = part.mime.startsWith("image/") ? checkDataUrlOversized(part.url) : undefined
+            if (oversized) {
+              userMessage.parts.push({
+                type: "text",
+                text: `[Attached image ${part.filename ?? ""} skipped: ${oversized.width}x${oversized.height} exceeds provider limit]`,
+              })
+            } else {
+              userMessage.parts.push({
+                type: "file",
+                url: part.url,
+                mediaType: part.mime,
+                filename: part.filename,
+              })
+            }
           }
         }
 
@@ -871,7 +884,20 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             const outputText = part.state.time.compacted
               ? "[Old tool result content cleared]"
               : truncateToolOutput(part.state.output, options?.toolOutputMaxChars)
-            const attachments = part.state.time.compacted || options?.stripMedia ? [] : (part.state.attachments ?? [])
+            const rawAttachments = part.state.time.compacted || options?.stripMedia ? [] : (part.state.attachments ?? [])
+            // Strip oversized images so they don't brick the session by exceeding
+            // the provider's max image dimension (Anthropic 8000px).
+            const oversizedNotes: string[] = []
+            const attachments = rawAttachments.filter((a) => {
+              if (!a.mime.startsWith("image/")) return true
+              const oversized = checkDataUrlOversized(a.url)
+              if (oversized) {
+                oversizedNotes.push(`[Image attachment skipped: ${oversized.width}x${oversized.height} exceeds provider limit]`)
+                return false
+              }
+              return true
+            })
+            const finalText = oversizedNotes.length > 0 ? [outputText, ...oversizedNotes].join("\n\n") : outputText
 
             // For providers that don't support media in tool results, extract media files
             // (images, PDFs) to be sent as a separate user message
@@ -885,10 +911,10 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             const output =
               finalAttachments.length > 0
                 ? {
-                    text: outputText,
+                    text: finalText,
                     attachments: finalAttachments,
                   }
-                : outputText
+                : finalText
 
             assistantMessage.parts.push({
               type: ("tool-" + part.tool) as `tool-${string}`,

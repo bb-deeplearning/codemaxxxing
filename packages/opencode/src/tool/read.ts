@@ -11,6 +11,7 @@ import { InstanceState } from "@/effect/instance-state"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { Instruction } from "../session/instruction"
 import { isPdfAttachment, sniffAttachmentMime } from "@/util/media"
+import * as ImageResize from "@/util/image-resize"
 
 const DEFAULT_READ_LIMIT = 2000
 const MAX_LINE_LENGTH = 2000
@@ -222,6 +223,10 @@ export const ReadTool = Tool.define(
       if (isImage || isPdfAttachment(mime)) {
         const bytes = yield* fs.readFile(filepath)
         const msg = isPdfAttachment(mime) ? "PDF read successfully" : "Image read successfully"
+        // Resize images that exceed Anthropic's 8000px limit so they don't brick the session.
+        const finalBytes = isImage
+          ? yield* Effect.promise(() => ImageResize.resizeIfOversized({ bytes, mime }))
+          : { bytes, mime, resized: false }
         return {
           title,
           output: msg,
@@ -233,8 +238,8 @@ export const ReadTool = Tool.define(
           attachments: [
             {
               type: "file" as const,
-              mime,
-              url: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`,
+              mime: finalBytes.mime,
+              url: `data:${finalBytes.mime};base64,${Buffer.from(finalBytes.bytes).toString("base64")}`,
             },
           ],
         }

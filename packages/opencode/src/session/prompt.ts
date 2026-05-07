@@ -45,6 +45,7 @@ import { ShellID } from "@/tool/shell/id"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { Truncate } from "@/tool/truncate"
 import { decodeDataUrl } from "@/util/data-url"
+import * as ImageResize from "@/util/image-resize"
 import { Process } from "@/util/process"
 import { Cause, Effect, Exit, Latch, Layer, Option, Scope, Context, Schema, Types } from "effect"
 import { zod } from "@/util/effect-zod"
@@ -496,19 +497,37 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               for (const contentItem of result.content) {
                 if (contentItem.type === "text") textParts.push(contentItem.text)
                 else if (contentItem.type === "image") {
+                  // Many MCP tools (Chrome DevTools screenshot, Playwright, etc.) produce
+                  // images larger than Anthropic's 8000px limit. Downscale here so the
+                  // image never enters history at a size that would brick the session.
+                  const resized = yield* Effect.promise(() =>
+                    ImageResize.resizeIfOversized({
+                      bytes: Buffer.from(contentItem.data, "base64"),
+                      mime: contentItem.mimeType,
+                    }),
+                  )
                   attachments.push({
                     type: "file",
-                    mime: contentItem.mimeType,
-                    url: `data:${contentItem.mimeType};base64,${contentItem.data}`,
+                    mime: resized.mime,
+                    url: `data:${resized.mime};base64,${Buffer.from(resized.bytes).toString("base64")}`,
                   })
                 } else if (contentItem.type === "resource") {
                   const { resource } = contentItem
                   if (resource.text) textParts.push(resource.text)
                   if (resource.blob) {
+                    const mime = resource.mimeType ?? "application/octet-stream"
+                    const resized = mime.startsWith("image/")
+                      ? yield* Effect.promise(() =>
+                          ImageResize.resizeIfOversized({
+                            bytes: Buffer.from(resource.blob!, "base64"),
+                            mime,
+                          }),
+                        )
+                      : { bytes: Buffer.from(resource.blob, "base64"), mime, resized: false }
                     attachments.push({
                       type: "file",
-                      mime: resource.mimeType ?? "application/octet-stream",
-                      url: `data:${resource.mimeType ?? "application/octet-stream"};base64,${resource.blob}`,
+                      mime: resized.mime,
+                      url: `data:${resized.mime};base64,${Buffer.from(resized.bytes).toString("base64")}`,
                       filename: resource.uri,
                     })
                   }
@@ -1220,18 +1239,23 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   synthetic: true,
                   text: `Called the Read tool with the following input: {"filePath":"${filepath}"}`,
                 },
-                {
-                  id: part.id,
-                  messageID: info.id,
-                  sessionID: input.sessionID,
-                  type: "file",
-                  url:
-                    `data:${mime};base64,` +
-                    Buffer.from(yield* fsys.readFile(filepath).pipe(Effect.catch(Effect.die))).toString("base64"),
-                  mime,
-                  filename: part.filename!,
-                  source: part.source,
-                },
+                yield* Effect.gen(function* () {
+                  const raw = Buffer.from(yield* fsys.readFile(filepath).pipe(Effect.catch(Effect.die)))
+                  // Resize oversized images so attachments don't brick the session.
+                  const final = mime.startsWith("image/")
+                    ? yield* Effect.promise(() => ImageResize.resizeIfOversized({ bytes: raw, mime }))
+                    : { bytes: raw as Uint8Array, mime, resized: false }
+                  return {
+                    id: part.id,
+                    messageID: info.id,
+                    sessionID: input.sessionID,
+                    type: "file" as const,
+                    url: `data:${final.mime};base64,` + Buffer.from(final.bytes).toString("base64"),
+                    mime: final.mime,
+                    filename: part.filename!,
+                    source: part.source,
+                  }
+                }),
               ]
             }
           }
