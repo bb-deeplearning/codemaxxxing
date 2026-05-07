@@ -1,5 +1,29 @@
 # TUI render-freeze investigation
 
+# TUI render-freeze investigation
+
+> **Status (as of 2026-05-07, late):** fourth manifestation found, fixed,
+> AND a proactive sweep applied. The structural antipattern (flex-row
+> with potentially-tall `<text>` primary cell) was audited across every
+> TUI surface that renders agent-, MCP-, server-, or LSP-supplied
+> strings, and a single shared sanitizer (`@tui/util/inline-safe`) is
+> now applied at every confirmed risk site. Two body-content surfaces
+> (todo-item, mcp/lsp sidebars) were restructured to drop flex-row
+> entirely (absolute-marker pattern, same shape as the AssistantMessage
+> marginalia fix in `23e0e84f6`). See "Proactive sweep" below for the
+> full list of touch points.
+>
+> **Status (as of 2026-05-07):** fourth manifestation found and fixed.
+> Same antipattern (flex-row + tall `<text>`), this time at the
+> BlockTool header, triggered by MCP tools whose primitive string
+> inputs (e.g. `chrome-devtools_evaluate_script`'s `function` arg) are
+> multi-line / multi-KB. Fix is in the `input()` helper at the bottom
+> of `routes/session/index.tsx` — collapses whitespace and caps the
+> per-value display length so `<text>` stays one logical line.
+> Activates when `generic_tool_output_visibility=true` (toggle in the
+> command palette / kv store), which routes GenericTool through
+> BlockTool instead of InlineTool.
+>
 > **Status (as of 2026-05-06):** root cause identified and fix shipped.
 > The bug was a fork-only regression: a flex-row wrapping the body
 > `<text>` of `UserMessage`, plus `wrapMode="word"` on the body text
@@ -18,13 +42,14 @@
 > rendering. The session looks frozen until something else triggers a
 > layout reset.
 
-We hit this exact bug class **three times** in this investigation:
+We hit this exact bug class **four times** in this investigation:
 
 | # | Where | Trigger | Fixed in |
 |---|---|---|---|
 | 1 | AssistantMessage outer row wrapper (marginalia + body) | Write tool's 5KB syntax-highlighted file | `23e0e84f6` |
 | 2 | BlockTool inner padding wrapper | Same | `bf03d6396` |
-| 3 | UserMessage inner row wrapper (body + queued/timestamp pill) | Multi-KB pasted user text | (this session) |
+| 3 | UserMessage inner row wrapper (body + queued/timestamp pill) | Multi-KB pasted user text | `77dd69854` |
+| 4 | BlockTool **header** row, via `input()` → `headerLine()` carrying multi-line MCP args | `chrome-devtools_evaluate_script` function arg (2.8KB / 81 newlines) with `generic_tool_output_visibility=true` | (latest session) |
 
 ### Why the mistake keeps getting made
 
@@ -50,7 +75,11 @@ everywhere; the fork should too.
 1. `rg 'flexDirection="row"' packages/opencode/src/cli/cmd/tui/routes/session/index.tsx` —
    for each hit, ask "could the primary child of this row ever be
    tall?" If yes, restructure as a column with vertical siblings, or
-   absolute-position the secondary content.
+   absolute-position the secondary content. **Don't trust "the
+   primary cell is just `headerLine`/`label`/etc." — chase the value
+   to its source. If any caller is `input(props.input)` or otherwise
+   user/tool-supplied, it can be multi-line / multi-KB regardless of
+   how innocent the local code looks.**
 2. `rg 'wrapMode="word"' packages/opencode/src/cli/cmd/tui/` —
    for each hit, ask "can this text node ever hold user-pasted or
    multi-KB content?" If yes, drop the attribute.
@@ -58,6 +87,13 @@ everywhere; the fork should too.
    nodes (boxes, rows, attributes) that upstream doesn't, in a
    render-hot-path component, that's a regression suspect by default.
    Burden of proof is on the fork to justify the divergence.
+4. **Anything that interpolates a primitive string from
+   `props.input.<arbitrary-mcp-key>` into a `<text>` node — sanitize
+   it.** MCP servers can pass multi-line strings (JS function bodies,
+   shell scripts, JSON blobs). Display-only stringification (the
+   `input()` helper at the bottom of `index.tsx`) MUST collapse
+   whitespace and cap length. The actual data on the part is preserved
+   regardless.
 
 ## Symptom (historical)
 
@@ -117,7 +153,8 @@ User-visible flavors of the same root bug:
 | `ses_20e6b1c48ffeJKO2R6OGDPzq6T` | Reopen, mid-write-tool with toybox-noir.json (5KB) | Most-traced session; logs in `~/.local/share/opencode/log/2026-05-04T*.log` |
 | `ses_20b10eb47ffeTLYi4BaUqq94UB` | Aborted assistant with 0 parts | Used to chase the abort-finalize bug |
 | `ses_20b81cc84ffey5H6fAdlwYetyc` | Long debugging session | Renders OK now |
-| `ses_20680f90dffeTHqjXupZN5kSRe` | **Latest. Triggered by pasting a huge user message.** | Untriaged; new hypothesis below |
+| `ses_20680f90dffeTHqjXupZN5kSRe` | **Pasted huge user message.** | Fixed in `77dd69854` (UserMessage row wrapper + `wrapMode="word"`) |
+| `ses_1fcac88d3ffe1COu7LRdg2mw2w` | **Heavy `chrome-devtools_evaluate_script` usage with `generic_tool_output_visibility=true`.** | Fixed by sanitizing `input()` to collapse whitespace + cap length. The bug was the BlockTool header's flex-row receiving multi-line MCP function args via `headerLine(props)`. Symptoms: streaming halts mid-message; sending a new message reveals the rest of the prior chunk; even the `?` prompt input itself stops painting. |
 
 ## Architecture (read these before changing anything)
 
@@ -326,10 +363,53 @@ The load-bearing comment in AssistantMessage's marginalia
 (`UserMessage's first child is a row box`) was updated to match the
 new shape.
 
+## Proactive sweep (2026-05-07)
+
+After the fourth manifestation, a full audit of `flexDirection="row"`
+sites across the TUI was performed. The shared sanitizer
+`packages/opencode/src/cli/cmd/tui/util/inline-safe.ts` (`inlineSafe(s,
+max=120)`) was added — collapses whitespace runs and caps length, so
+any string passing through it can never trip the layout-budget freeze
+even on narrow terminals.
+
+### Sites that now sanitize via `inlineSafe`
+
+| File | Site | Cap | Source of risk |
+|---|---|---|---|
+| `routes/session/index.tsx` | `headerLine()` (BlockTool header) | 120 | LLM-generated tool descriptions; MCP tool args |
+| `routes/session/index.tsx` | `input()` (inline tool-arg display) | 120 | Same |
+| `routes/session/permission.tsx` | `LabeledRule` `targetValue` consumer | 120 | Shell description, webfetch URL, websearch query, file paths |
+| `routes/session/question.tsx` | tab-strip `q.header` | 60 | LLM-generated question header |
+| `routes/session/question.tsx` | option `opt.label` | 200 | LLM-generated option text (kept generous — actionable content) |
+| `routes/session/question.tsx` | option `opt.description` | 200 | Same |
+
+### Sites restructured to drop flex-row
+
+These had `<box flexDirection="row">` + body `<text>` carrying
+unbounded LLM/server text, often with `wrapMode="word"` compounding
+the cost. Same fix shape as the AssistantMessage marginalia in
+commit `23e0e84f6`: marker becomes `position="absolute"` overlay in a
+`paddingLeft={2}` gutter, body text wraps naturally in column flow
+under default char-wrap.
+
+| File | Was | Now |
+|---|---|---|
+| `component/todo-item.tsx` | flex-row + `wrapMode="word"` body | column + absolute marker |
+| `feature-plugins/sidebar/mcp.tsx` | flex-row + `wrapMode="word"` body (MCP error text!) | column + absolute marker |
+| `feature-plugins/sidebar/lsp.tsx` | flex-row body (long monorepo paths) | column + absolute marker |
+
+### Sites audited and left alone (with reasoning)
+
+- **`Spinner` (`component/spinner.tsx:29`)** — flex-row with `<text>{children}</text>`. Only consumers are inline tool labels, which are short by construction. Task tool's `content()` joins with literal `\n` (3 short lines max) — well below empirical threshold. Documented as a future concern but not changed.
+- **`sidebar.tsx` session-stats rows** — `<text wrapMode="none">` on the value side; can't grow tall.
+- **`feature-plugins/sidebar/files.tsx`** — already uses `wrapMode="none"` on file paths.
+- **`feature-plugins/system/session-v2.tsx` attachments** — `flexWrap="wrap"` lets the row break across lines naturally; primary cell is short badge text (mime + filename), not LLM/MCP-supplied bulk.
+- **`Toast` / dialogs (`ui/dialog-*.tsx`)** — column boxes, not flex-row.
+- **`subagent-footer.tsx`** — header rows are short fixed-format text (token counts, costs).
+
 ## Diagnostic tools already in place
 
 - `OPENCODE_DEBUG_RENDER=1` env var enables instrumentation in
-  `routes/session/index.tsx`. Logs go to
   `~/.local/share/opencode/log/2026-05-*.log`. Filter via
   `tail -f "$(ls -t ~/.local/share/opencode/log/*.log | head -1)" | grep tui-render`.
 - Logs `AssistantMessage mount/UNMOUNT`, `parts ref changed` (with

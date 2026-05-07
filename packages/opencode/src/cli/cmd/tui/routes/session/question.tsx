@@ -9,6 +9,7 @@ import { useSDK } from "../../context/sdk"
 import { LabeledRule, Rule } from "../../component/border"
 import { useTextareaKeybindings } from "../../component/textarea-keybindings"
 import { useDialog } from "../../ui/dialog"
+import { inlineSafe } from "../../util/inline-safe"
 
 export function QuestionPrompt(props: { request: QuestionRequest }) {
   const sdk = useSDK()
@@ -278,7 +279,12 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
                     <text>
                       <span style={{ fg: labelFg(), bold: isActive() }}>
                         {isActive() ? "▸ " : "  "}
-                        {q.header}
+                        {/* Sanitize via inlineSafe — header is LLM-supplied
+                            and lands inside a flex-row tab strip. Multi-
+                            line / multi-KB content would trip opentui's
+                            flex layout-budget freeze. See
+                            specs/tui-render-freeze.md. */}
+                        {inlineSafe(q.header, 60)}
                       </span>
                     </text>
                   </box>
@@ -345,13 +351,21 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
                         </span>
                         <span style={{ fg: numFg() }}>{i() + 1}.</span>{" "}
                         <span style={{ fg: labelFg(), bold: active() }}>
-                          {multi() ? `[${picked() ? "✓" : " "}] ${opt.label}` : opt.label}
+                          {/* Both label and description are LLM-supplied
+                              and land inside this flex-row option strip.
+                              Sanitize via inlineSafe to keep the row
+                              measurement bounded — see
+                              specs/tui-render-freeze.md. Cap is generous
+                              (200) because options are user-facing
+                              actionable text and short truncation hurts UX
+                              more than it costs to keep the layout stable. */}
+                          {multi() ? `[${picked() ? "✓" : " "}] ${inlineSafe(opt.label, 200)}` : inlineSafe(opt.label, 200)}
                         </span>
                         <Show when={!multi() && picked()}>
                           <span style={{ fg: theme.success }}> ✓</span>
                         </Show>
                         <Show when={opt.description}>
-                          <span style={{ fg: theme.textMuted }}> · {opt.description}</span>
+                          <span style={{ fg: theme.textMuted }}> · {inlineSafe(opt.description, 200)}</span>
                         </Show>
                       </text>
                     </box>

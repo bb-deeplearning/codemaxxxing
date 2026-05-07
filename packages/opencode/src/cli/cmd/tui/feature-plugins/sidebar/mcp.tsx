@@ -45,8 +45,18 @@ function View(props: { api: TuiPluginApi }) {
         <Show when={list().length <= 2 || open()}>
           <For each={list()}>
             {(item) => (
-              <box flexDirection="row" gap={1}>
+              // Marker as absolute overlay; body text in the column.
+              // Previously `<box flexDirection="row">` + `<text wrapMode="word">`
+              // with `item.error` (server-supplied, can be multi-line). That's
+              // the exact antipattern from specs/tui-render-freeze.md — paint
+              // stalls past the row when the primary cell can grow tall, and
+              // `wrapMode="word"` compounds the cost. Same fix shape as
+              // todo-item.tsx and AssistantMessage marginalia.
+              <box paddingLeft={2}>
                 <text
+                  position="absolute"
+                  left={0}
+                  top={0}
                   flexShrink={0}
                   style={{
                     fg: dot(item.status),
@@ -54,7 +64,7 @@ function View(props: { api: TuiPluginApi }) {
                 >
                   •
                 </text>
-                <text fg={theme().text} wrapMode="word">
+                <text fg={theme().text}>
                   {item.name}{" "}
                   <span style={{ fg: theme().textMuted }}>
                     <Switch fallback={item.status}>

@@ -14,6 +14,7 @@ import path from "path"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import { Keybind } from "@/util/keybind"
 import { Locale } from "@/util/locale"
+import { inlineSafe } from "../../util/inline-safe"
 import { Global } from "@opencode-ai/core/global"
 import { ShellID } from "@/tool/shell/id"
 import { useDialog } from "../../ui/dialog"
@@ -592,7 +593,18 @@ function Prompt<const T extends Record<string, string>>(props: {
           <LabeledRule
             color={theme.border}
             left={<text fg={theme.textMuted}>{props.targetLabel}</text>}
-            right={<Show when={props.targetValue}>{(t) => <text fg={theme.text}>{t()}</text>}</Show>}
+            right={
+              <Show when={props.targetValue}>
+                {(t) => (
+                  // Sanitize via inlineSafe — `targetValue` lands inside
+                  // LabeledRule's flex-row, and tool-supplied values
+                  // (Shell description, webfetch URL, websearch query,
+                  // arbitrary file paths) can be multi-line / multi-KB.
+                  // See specs/tui-render-freeze.md.
+                  <text fg={theme.text}>{inlineSafe(t())}</text>
+                )}
+              </Show>
+            }
           />
         </Show>
         <box paddingLeft={3} flexGrow={1} flexShrink={1} gap={1}>

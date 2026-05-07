@@ -55,6 +55,7 @@ import type {
 } from "@opencode-ai/sdk/v2"
 import { useLocal } from "@tui/context/local"
 import { Locale } from "@/util/locale"
+import { inlineSafe } from "@tui/util/inline-safe"
 import type { Tool } from "@/tool/tool"
 import type { ReadTool } from "@/tool/read"
 import type { WriteTool } from "@/tool/write"
@@ -2172,8 +2173,19 @@ function InlineTool(props: {
 
 // Header line builder for BlockTool. Returns a plain string that opentui
 // can paint in a single text node — no nested span fan-out per render.
+//
+// `target` is sanitized via `inlineSafe` because BlockTool's header lives
+// inside `<box flexDirection="row" alignItems="center" flexShrink={0}
+// flexWrap="wrap">` (the antipattern from specs/tui-render-freeze.md).
+// Built-in tools always pass short single-line targets, but tools whose
+// `target` derives from LLM-generated descriptions, search queries, or
+// other unbounded user-facing strings (Shell, WebSearch, future MCP-like
+// renderers) would otherwise let a multi-line / multi-KB string into the
+// row's primary cell and trip opentui's flex layout-budget freeze. The
+// raw target is preserved in `props.target` for any downstream consumer
+// that wants the full value.
 function headerLine(props: { label: string; target?: string }): string {
-  return props.target ? `${props.label} · ${props.target}` : props.label
+  return props.target ? `${props.label} · ${inlineSafe(props.target)}` : props.label
 }
 
 function BlockTool(props: {
@@ -2883,7 +2895,15 @@ function input(input: Record<string, any>, omit?: string[]): string {
     return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
   })
   if (primitives.length === 0) return ""
-  return `[${primitives.map(([key, value]) => `${key}=${value}`).join(", ")}]`
+  // String values are sanitized via the shared `inlineSafe` helper because
+  // this string lands inside a `<text>` node inside a flex container —
+  // either InlineTool body or BlockTool header. Multi-line / multi-KB MCP
+  // tool args (e.g. `chrome-devtools_evaluate_script`'s `function`) would
+  // otherwise wrap to many rows and trip opentui's flex layout-budget
+  // freeze. See specs/tui-render-freeze.md.
+  return `[${primitives
+    .map(([key, value]) => (typeof value === "string" ? `${key}=${inlineSafe(value)}` : `${key}=${value}`))
+    .join(", ")}]`
 }
 
 function filetype(input?: string) {

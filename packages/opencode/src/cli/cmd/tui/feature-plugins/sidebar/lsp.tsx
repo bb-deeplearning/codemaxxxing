@@ -27,8 +27,16 @@ function View(props: { api: TuiPluginApi }) {
         </Show>
         <For each={list()}>
           {(item) => (
-            <box flexDirection="row" gap={1}>
+            // Marker as absolute overlay; body text in column. Same fix
+            // shape as mcp.tsx and todo-item.tsx — long monorepo paths
+            // (item.root) inside a flex-row primary `<text>` are the same
+            // antipattern (see specs/tui-render-freeze.md), even if the
+            // current threshold rarely trips on 3-4 row paths. Defensive.
+            <box paddingLeft={2}>
               <text
+                position="absolute"
+                left={0}
+                top={0}
                 flexShrink={0}
                 style={{
                   fg: item.status === "connected" ? theme().success : theme().error,
