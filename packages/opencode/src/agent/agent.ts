@@ -105,6 +105,16 @@ export const layer = Layer.effect(
           // write_stdin calls per-process. Per-built-in policy overrides
           // happen in Wave 12.
           exec_command: "ask",
+          // Wave 8 (codex parity): multi-agent v2 tools default to ask so the
+          // first invocation of each surfaces an approval prompt. Built-in
+          // agent overrides land in Wave 12; here we default to ask so
+          // nothing is silently allowed.
+          spawn_agent: "ask",
+          send_message: "ask",
+          followup_task: "ask",
+          wait_agent: "ask",
+          list_agents: "ask",
+          close_agent: "ask",
           // mirrors github.com/github/gitignore Node.gitignore pattern for .env files
           read: {
             "*": "allow",

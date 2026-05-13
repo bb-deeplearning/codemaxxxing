@@ -1,0 +1,36 @@
+Queue a plain-text message into another agent's mailbox AND wake them up. The
+recipient receives the message immediately and starts a new turn with it as
+the user input — this is the "here's your next assignment" tool.
+
+Use followup_task when a child agent has finished its initial work and you
+want it to do the next sub-task instead of spawning a fresh agent. The child
+keeps its context (files it has read, decisions it has made, intermediate
+results) and picks up where it left off, which is cheaper and faster than
+re-exploring from scratch with a new spawn.
+
+If the target is mid-turn, the message is queued and used as the input for
+their next turn after the current one completes — no interruption, no lost
+work. If the target is idle, the message wakes them now.
+
+## Difference from send_message
+
+Same delivery path, different intent. send_message is FYI: it queues a
+message but does NOT trigger a turn — the recipient sees it whenever they
+next run. followup_task means "here's your next assignment" — it queues AND
+triggers, so the recipient picks it up immediately.
+
+If your message is a request or instruction the recipient should act on,
+use followup_task. If it's a status update, context, or note the recipient
+should know about but doesn't need to act on right now, use send_message.
+
+## Cannot target the root agent
+
+The root agent is the user-facing surface — not a worker. Tasks can't be
+assigned to root. Targeting `/root` returns an error. If you (root) need
+work done, spawn an agent or do it yourself.
+
+## Targets
+
+Target resolution matches every other multi-agent tool: a bare task name
+("worker_b") resolves relative to your current path; a canonical path
+("/root/explorers/worker_b") is absolute. Either works.

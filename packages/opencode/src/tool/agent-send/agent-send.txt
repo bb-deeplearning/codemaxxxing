@@ -1,0 +1,27 @@
+Queue a plain-text message into another agent's mailbox. Fire-and-forget: the
+message lands in the recipient's inbox immediately, but the recipient does NOT
+wake up. They will see your message at the start of their next natural turn,
+when they drain their entire mailbox in delivery order.
+
+Use send_message for context updates, FYI notes, and status that the recipient
+should know about but does not need to act on right now. Examples: "I finished
+the parsing pass — schemas land in src/parser/schema.ts", "skip the redis
+branch, we're going with sqlite", "blocking on @worker_b before I can verify".
+
+Do NOT use send_message when you actually need the recipient to do something
+next. For that, use followup_task — it queues the same way AND triggers a turn,
+so the recipient picks up the work without waiting on whatever else they were
+doing. send_message is the wrong tool whenever your message ends with a
+question or a request.
+
+Mailbox semantics:
+- Multiple senders interleave in delivery order. The recipient sees your
+  message alongside any others queued since their last turn.
+- Messages persist until drained — sending to an idle agent is fine; they
+  read it whenever they next run.
+- The recipient sees who sent each message; you do not need to identify
+  yourself in the body.
+
+Targets resolve the same as every other multi-agent tool: a bare task name
+("worker_b") resolves relative to your current path; a canonical path
+("/root/explorers/worker_b") is absolute. Either works.

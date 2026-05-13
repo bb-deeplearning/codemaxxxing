@@ -1,0 +1,53 @@
+Block your tool call until any mailbox update arrives from a live sibling, or
+until the timeout elapses. Use this when you genuinely have nothing useful to
+do until a peer sends you something.
+
+The return value is a SUMMARY ("Wait completed." or "Wait timed out.") — not
+the actual mail body. The mail itself shows up in your next turn's user
+message, drained automatically before the model is called. So `wait_agent`
+tells you "something happened (or didn't)"; the next turn shows you what.
+
+## When to use
+
+- A spawned child has work in flight and you need its result before you can
+  proceed.
+- A peer agent owes you a status update and you'd block on its message
+  anyway.
+- You're orchestrating multiple siblings and need to wait for any one of
+  them to surface a result.
+
+## When NOT to use
+
+- You have local work you can do in parallel (read files, plan, write code,
+  exec a script). Do that first; check `list_agents` for status; only wait
+  when truly idle.
+- You want to wait for ONE specific agent to finish. `wait_agent` wakes on
+  ANY mailbox update — including unrelated FYI messages from other peers.
+  If you need finer-grained polling, loop with `list_agents` and short
+  `wait_agent` calls in between.
+- The timeout you'd need is shorter than your read-the-result-and-act
+  cycle. Sleeping 30s and then doing 5s of work wastes time you could have
+  spent on local work.
+
+## Behavior
+
+- Returns immediately with `timed_out: false` if a mailbox item is already
+  pending when you call.
+- Otherwise blocks until ANY mailbox seq update — a queued message, a
+  follow-up task, or a final-status notification from a sibling.
+- If `timeout_ms` elapses with no update, returns `timed_out: true`. That's
+  a signal to do other useful work or check `list_agents` to see what's
+  alive.
+
+## Timeout
+
+Default `timeout_ms` is 30000 (30s) and is intentionally not infinite. The
+clamp range is [1000, 600000]; values outside it are clamped silently. A
+non-positive value is rejected with a model-recoverable error so you can
+retry with a sane number.
+
+## Cost
+
+`wait_agent` blocks productive work — no model calls, no exec, no progress.
+Use sparingly. Prefer to do non-overlapping local work first, then wait
+once when nothing else is left.

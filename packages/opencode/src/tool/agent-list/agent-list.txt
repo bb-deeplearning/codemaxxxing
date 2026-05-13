@@ -1,0 +1,25 @@
+Snapshot of every live agent in your session tree. Returns each agent's
+canonical task path, current status, and the most recent instruction it
+received. Use this when you've lost track of who's running, who's done, who
+errored, or whether you already asked someone for the thing you were about
+to ask.
+
+Filter with `path_prefix` to scope the result to a sub-tree. A bare task name
+("worker_b") resolves relative to your current path; a canonical path
+("/root/explorers") is absolute. Without `path_prefix` you get every agent
+in the tree, root included.
+
+Status values:
+- `pending_init` / `running` — alive and working.
+- `interrupted` — paused; can be revived with `followup_task`.
+- `{ completed: ... }` — finished; can still be reused via `followup_task`
+  (their context stays warm).
+- `{ errored: ... }` — failed; inspect with `wait_agent` for details.
+- `shutdown` / `not_found` — gone.
+
+`last_task_message` is the most recent user or inter-agent message the agent
+saw. Useful for "did I already ask this?" — if the message you were about to
+send matches the recorded one, the agent already has it.
+
+Cheap to call (no LLM inference, no PTY work). Reach for it whenever you
+need to decide between `wait_agent`, `followup_task`, or starting fresh.

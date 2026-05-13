@@ -1,0 +1,13 @@
+Close a spawned agent you no longer need.
+
+Every live agent holds context budget and counts against the concurrent-agent cap. When you've drained a sibling's useful output (via `wait_agent` or by reading its messages) and have no further task to send it, close it.
+
+Cascade semantics: closing a parent closes its descendants too. If you close `/root/explorers`, every agent rooted under that path goes with it. Use this when a whole sub-tree is done — don't iterate.
+
+Cannot close root (`/root`). Root is the user's session; targeting it is rejected with a model-recoverable error.
+
+Returns `{ previous_status }` — the status the target held immediately before close. If `running` or `pending_init`, you closed an agent that was still working; if `completed`, you closed cleanly; if `shutdown`, the agent was already gone (idempotent).
+
+Targets accept relative paths from your current path (e.g. `worker_a`) or absolute canonical paths (e.g. `/root/explorers/worker_a`).
+
+Use after `wait_agent` finishes and you have what you need. Don't close an agent you're about to message again — `followup_task` reuses its warm context for free.

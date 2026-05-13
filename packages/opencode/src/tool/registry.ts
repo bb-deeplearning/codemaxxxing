@@ -15,6 +15,13 @@ import { SkillTool } from "./skill"
 import { ExecCommandTool } from "./process/exec-command"
 import { WriteStdinTool } from "./process/write-stdin"
 import { ProcessSessions } from "./process/sessions"
+import { AgentSpawnTool } from "./agent-spawn/agent-spawn"
+import { AgentSendTool } from "./agent-send/agent-send"
+import { AgentFollowupTool } from "./agent-followup/agent-followup"
+import { AgentWaitTool } from "./agent-wait/agent-wait"
+import { AgentListTool } from "./agent-list/agent-list"
+import { AgentCloseTool } from "./agent-close/agent-close"
+import { AgentControl } from "@/agent/control"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
@@ -94,6 +101,7 @@ export const layer: Layer.Layer<
   | Truncate.Service
   | Pty.Service
   | ProcessSessions.Service
+  | AgentControl.Service
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -121,6 +129,12 @@ export const layer: Layer.Layer<
     const skilltool = yield* SkillTool
     const execcommand = yield* ExecCommandTool
     const writestdin = yield* WriteStdinTool
+    const agentspawn = yield* AgentSpawnTool
+    const agentsend = yield* AgentSendTool
+    const agentfollowup = yield* AgentFollowupTool
+    const agentwait = yield* AgentWaitTool
+    const agentlist = yield* AgentListTool
+    const agentclose = yield* AgentCloseTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -220,6 +234,12 @@ export const layer: Layer.Layer<
           plan: Tool.init(plan),
           execcommand: Tool.init(execcommand),
           writestdin: Tool.init(writestdin),
+          agentspawn: Tool.init(agentspawn),
+          agentsend: Tool.init(agentsend),
+          agentfollowup: Tool.init(agentfollowup),
+          agentwait: Tool.init(agentwait),
+          agentlist: Tool.init(agentlist),
+          agentclose: Tool.init(agentclose),
         })
 
         return {
@@ -241,6 +261,12 @@ export const layer: Layer.Layer<
             tool.patch,
             tool.execcommand,
             tool.writestdin,
+            tool.agentspawn,
+            tool.agentsend,
+            tool.agentfollowup,
+            tool.agentwait,
+            tool.agentlist,
+            tool.agentclose,
             ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
             ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [tool.plan] : []),
           ],
@@ -364,6 +390,7 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Truncate.defaultLayer),
     Layer.provide(Pty.defaultLayer),
     Layer.provide(ProcessSessions.defaultLayer),
+    Layer.provide(AgentControl.defaultLayer),
   ),
 )
 

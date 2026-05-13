@@ -758,3 +758,170 @@ The `Schema` import still loads at module-load time; only the coverage report ch
 - Prior gotcha: `bun-coverage-line1-quirk` (wave_0)
 
 ---
+
+## [tool-define-inner-effect-gen-closing-brace] `Tool.define` factory wrapped in inner `Effect.gen` leaves the closing `})` as 0-hit
+
+**Discovered in:** wave_8
+**Date:** 2026-05-13
+**Surfaces affected:** every wave that adds a new file using `Tool.define(id, Effect.gen(function* () { ... return () => Effect.gen(function* () { return { description, parameters, execute } }) }))` — Wave 8's six multi-agent v2 tools, future tools that follow the same shape
+**Severity:** DX-trap (false-positive 99-100% line coverage gap that blocks the campaign's 100%-line bar)
+
+### Symptom
+
+A tool file that uses the `Tool.define` "init returns a thunk returning an Effect.gen returning the spec object" shape reports 99.28% line coverage with the only missing line being the closing `})` of the inner `Effect.gen`. The bun coverage summary shows the line as DA:0 in lcov even though every line above it is fully exercised. Behavior tests pass; the missing line is unhittable structurally.
+
+The same pattern in another file using the SHORT shape (return the spec object directly without the inner factory) reports 100/100. Both shapes are accepted by `Tool.define` per `tool.ts:57-59`'s `Init` union (`DefWithoutID | () => Effect<DefWithoutID>`).
+
+### Root cause
+
+When `Tool.define`'s init effect's last expression is `() => Effect.gen(function* () { return { ...spec } })`, the inner `Effect.gen` adds a `})` line that bun's V8 coverage records as 0 hits even when the generator body executes successfully every test. The wrapper layer is logically pointless when the spec object is constructible synchronously — the outer `Effect.gen` already provides the `Tool.Service` resolution, and the spec is just a literal.
+
+### Fix pattern
+
+Drop the inner `Effect.gen` wrapper. Return the spec object directly from the outer `Effect.gen`:
+
+```ts
+// BAD — closing `})` of inner Effect.gen reports 0 hits
+export const FooTool = Tool.define(
+  ID,
+  Effect.gen(function* () {
+    const svc = yield* SomeService
+    return () =>
+      Effect.gen(function* () {
+        return {
+          description: DESCRIPTION,
+          parameters: Parameters,
+          execute: (...) => Effect.gen(...),
+        }
+      })  // <- this `})` reports DA:N,0
+  }),
+)
+
+// GOOD — direct return; 100/100 line + branch
+export const FooTool = Tool.define(
+  ID,
+  Effect.gen(function* () {
+    const svc = yield* SomeService
+    return {
+      description: DESCRIPTION,
+      parameters: Parameters,
+      execute: (...) => Effect.gen(...),
+    }
+  }),
+)
+```
+
+`Tool.define` accepts both shapes. The shorter shape is also clearer — there is no reason to defer the spec construction to a thunk when the spec is a static literal.
+
+If a tool genuinely needs deferred construction (e.g. async description fetch), use `() => Effect.succeed({ ... })` instead of `() => Effect.gen(function* () { return { ... } })` — `Effect.succeed` is synchronous and doesn't introduce the unhittable closing brace.
+
+### Reference
+
+- Wave 8 commits applying the fix: `agent-spawn.ts`, `agent-wait.ts`, `agent-close.ts` collapsed from inner-`Effect.gen` to direct return
+- Reference shapes that already used the right pattern: `agent-list.ts`, `agent-followup.ts`, `agent-send.ts` (the latter two via `Effect.succeed`)
+- Source: `packages/opencode/src/tool/tool.ts:57-59` (`Init` accepts both `DefWithoutID` and `() => Effect<DefWithoutID>`)
+
+---
+
+## [tool-execute-needs-explicit-result-type-when-branches-have-disjoint-metadata] explicit `Effect.Effect<Tool.ExecuteResult>` annotation prevents TS narrowing across error / success metadata shapes
+
+**Discovered in:** wave_8
+**Date:** 2026-05-13
+**Surfaces affected:** every multi-branch tool whose `execute` body returns different `metadata` shapes per branch (success vs validation-error vs typed-error mapping) — Wave 8's six multi-agent v2 tools, future tools mapping typed errors to model-recoverable strings
+**Severity:** DX-trap (cryptic registry-layer + downstream test typecheck errors that look unrelated to the tool itself)
+
+### Symptom
+
+A tool whose `execute` returns `{ title, metadata: { error: "x" }, output }` on the failure path AND `{ title, metadata: { target_session_id, queued: true }, output }` on the success path typechecks fine in isolation. Adding the tool to `tool/registry.ts` produces a wall of errors:
+
+```
+Argument of type 'Effect<...{ metadata: { error: ... } | { queued: ... } ...}, ...>' is not assignable to parameter of type 'Effect<Init<..., M>>'.
+  Type 'undefined' is not assignable to type 'string'.
+```
+
+Worse, downstream test files that assert `expect(result.metadata.queued).toBe(true)` start failing typecheck:
+
+```
+Argument of type 'true' is not assignable to parameter of type 'undefined'.
+```
+
+The error message points at the test, not the tool — easy to mistake for a test bug.
+
+### Root cause
+
+`Tool.define<P, M, R, ID>` infers `M` from the execute function's return type. With multiple branches returning disjoint metadata shapes, TS narrows `M` to the union of those shapes. Once `M` is the union `{ error: string } | { queued: true; target_session_id: string }`, accessing `result.metadata.queued` flags as `undefined` (since the error branch lacks it). The tool itself compiles in isolation because `Tool.define` accepts any `M`; the error surfaces wherever `result.metadata.<field>` is consumed.
+
+### Fix pattern
+
+Annotate the `execute` function's return type explicitly as `Effect.Effect<Tool.ExecuteResult>`:
+
+```ts
+import * as Tool from "../tool"
+
+execute: (params: Parameters, ctx: Tool.Context): Effect.Effect<Tool.ExecuteResult> =>
+  Effect.gen(function* () {
+    if (someError) {
+      return {
+        title: "...",
+        metadata: { error: "x" },  // OK — Tool.ExecuteResult uses the wide Metadata = { [key: string]: any }
+        output: "...",
+      }
+    }
+    return {
+      title: "...",
+      metadata: { queued: true, target_session_id: id },
+      output: "...",
+    }
+  })
+```
+
+`Tool.ExecuteResult` defaults its `M` generic to `Metadata = { [key: string]: any }` (`tool.ts:8-10`). The annotation prevents TS from narrowing `M` to the per-branch union. Downstream test reads against `result.metadata.<arbitrary_field>` work because `any` allows any property access.
+
+This is the same widening trick `tool/process/exec-command.ts` uses by typing the metadata local as `Record<string, unknown>` before the return — both produce a uniform return shape.
+
+### Reference
+
+- Wave 8 fix applied to: `agent-spawn.ts`, `agent-send.ts`, `agent-followup.ts`, `agent-wait.ts`, `agent-list.ts`, `agent-close.ts` — all six tools have an explicit `Effect.Effect<Tool.ExecuteResult>` annotation on `execute`
+- Source: `packages/opencode/src/tool/tool.ts:8-10` (`Metadata` definition), `:27-32` (`ExecuteResult` interface)
+- Alternative pattern: `packages/opencode/src/tool/process/exec-command.ts` widens via local `metadata: Record<string, unknown>` instead
+
+---
+
+## [agentcontrol-required-by-toolregistry-existing-test-layers] adding AgentControl as a registry dep silently breaks every test layer that builds ToolRegistry from `layer` (not `defaultLayer`)
+
+**Discovered in:** wave_8
+**Date:** 2026-05-13
+**Surfaces affected:** any wave that adds a new service to `ToolRegistry`'s `Service` requirements — Wave 8 added `AgentControl.Service`; future waves that wire new services into the registry layer (e.g. Wave 9's runLoop integration may add dependencies)
+**Severity:** DX-trap (typecheck error in three unrelated test files; easy to mistake for those tests' own problems)
+
+### Symptom
+
+After adding `AgentControl.Service` to the `ToolRegistry.layer` requirements, three unrelated test files fail to typecheck:
+
+```
+test/tool/registry.test.ts(56,23): error TS2345: ... Type 'Service' is not assignable to type 'never'.
+test/session/prompt.test.ts(211,23): error TS2345: ... Type 'Service' is not assignable to type 'never'.
+test/session/snapshot-tool-race.test.ts(162,23): error TS2345: ... Type 'Service' is not assignable to type 'never'.
+```
+
+The error means each test layer composes `ToolRegistry.layer` (not `ToolRegistry.defaultLayer`) and provides its own dependency layers — but is missing the new dependency.
+
+### Root cause
+
+`ToolRegistry.defaultLayer` self-supplies its dependencies via `Layer.provide(...)` chains, so consumers using `defaultLayer` get the new service for free. Test files that build their own layer composition (typically to inject test-specific config or to avoid loading expensive defaults) must ALSO provide every new dependency. The dependency list is implicit — TS only flags it when the residual `R` parameter ends up non-empty.
+
+### Fix pattern
+
+When adding a new `Foo.Service` to `ToolRegistry`'s requirements:
+
+1. Add `Layer.provide(Foo.defaultLayer)` to `ToolRegistry.defaultLayer` (so `defaultLayer` consumers don't break).
+2. `git grep "ToolRegistry.layer.pipe" packages/opencode/test` to find every custom layer composition.
+3. Add `Layer.provide(Foo.defaultLayer)` to each one.
+4. `git grep "Layer.provide(ProcessSessions.defaultLayer)" packages/opencode/test` is a good proxy when the new service belongs near tool-side infra — these are typically the same files.
+
+### Reference
+
+- Wave 8 fix applied to: `test/tool/registry.test.ts`, `test/session/prompt.test.ts`, `test/session/snapshot-tool-race.test.ts` — each gained `Layer.provide(AgentControl.defaultLayer)` next to the existing `ProcessSessions.defaultLayer` line
+- Source: `packages/opencode/src/tool/registry.ts` `Service` requirements list and `defaultLayer` composition
+
+---

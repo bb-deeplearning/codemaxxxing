@@ -25,6 +25,7 @@ import * as Truncate from "@/tool/truncate"
 import { InstanceState } from "@/effect/instance-state"
 import { Pty } from "@/pty"
 import { ProcessSessions } from "@/tool/process/sessions"
+import { AgentControl } from "@/agent/control"
 
 const node = CrossSpawnSpawner.defaultLayer
 const configLayer = TestConfig.layer({
@@ -51,6 +52,7 @@ const registryLayer = ToolRegistry.layer.pipe(
   Layer.provide(Truncate.defaultLayer),
   Layer.provide(Pty.defaultLayer),
   Layer.provide(ProcessSessions.defaultLayer),
+  Layer.provide(AgentControl.defaultLayer),
 )
 
 const it = testEffect(Layer.mergeAll(registryLayer, node))

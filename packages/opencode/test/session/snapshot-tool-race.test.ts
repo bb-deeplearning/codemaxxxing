@@ -52,6 +52,7 @@ import { Snapshot } from "../../src/snapshot"
 import { ToolRegistry } from "@/tool/registry"
 import { Truncate } from "@/tool/truncate"
 import { Pty } from "@/pty"
+import { AgentControl } from "@/agent/control"
 import { ProcessSessions } from "@/tool/process/sessions"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
@@ -134,6 +135,7 @@ function makeHttp() {
     Layer.provide(Format.defaultLayer),
     Layer.provide(Pty.defaultLayer),
     Layer.provide(ProcessSessions.defaultLayer),
+    Layer.provide(AgentControl.defaultLayer),
     Layer.provideMerge(todo),
     Layer.provideMerge(question),
     Layer.provideMerge(deps),
