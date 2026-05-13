@@ -29,7 +29,7 @@ last_updated: 2026-05-13
 |------|----------|---------|--------|-------|
 | 0 | complete | ses_1ddf0b362ffeqjfZEjlxQOOWzM | ac1aaa03a | test infra + perf baseline + LLM stub captured (11 metrics) |
 | 1 | complete | ses_1ddcdc9e6ffei2VYQ076XlTdj5 | 8e85ac82c | head/tail buffer port: 22 tests, 100% line+branch coverage, perf 0.64x baseline |
-| 2 | complete | ses_1ddbb2c9cffeFED7lzFG4z84J5 | — | Pty.Service extensions: read race + LRU + origin + terminateAll, 38 tests, 99% coverage (only win32 branch uncovered), no perf regression |
+| 2 | complete | ses_1ddbb2c9cffeFED7lzFG4z84J5 | 5112fa9df | Pty.Service extensions: read race + LRU + origin + terminateAll, 38 tests, 99% coverage (only win32 branch uncovered), no perf regression |
 | 3 | pending  | — | — | tool/process.ts (exec_command + write_stdin) |
 | 4 | pending  | — | — | Process tool TUI part renderer |
 | 5 | pending  | — | — | Mailbox + AgentPath + InterAgentCommunication primitives |
