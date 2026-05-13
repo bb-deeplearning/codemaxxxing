@@ -32,7 +32,7 @@ last_updated: 2026-05-13
 | 2 | complete | ses_1ddbb2c9cffeFED7lzFG4z84J5 | 5112fa9df | Pty.Service extensions: read race + LRU + origin + terminateAll, 38 tests, 99% coverage (only win32 branch uncovered), no perf regression |
 | 3 | complete | ses_1dd96575affeZ6JNxe9M4bVoak | 47a506e14 | exec_command + write_stdin tools: 76 tests across schema/behavior/integration, ~99% line coverage on touched files, codex-quality prompts |
 | 4 | complete | ses_1dd52940effeiPrvcnsgnW511R | f24c48713 | Process + ProcessWriteStdin TUI renderers: 22 tests, 100% line coverage, perf within budget (best-of-3 to suppress opentui render noise) |
-| 5 | complete | ses_1dd3497d0ffec4zjYC3huPH7Ov | — | Mailbox + AgentPath + InterAgentCommunication: 68 tests, 100% line coverage on all three files, p99 wakeup ~193µs (PERF.md target: 5ms) |
+| 5 | complete | ses_1dd3497d0ffec4zjYC3huPH7Ov | 1d93e7eef | Mailbox + AgentPath + InterAgentCommunication: 68 tests, 100% line coverage on all three files, p99 wakeup ~193µs (PERF.md target: 5ms) |
 | 6 | pending  | — | — | Agent registry (depth, concurrency cap, nickname pool) |
 | 7 | pending  | — | — | AgentControl service (spawn/send/close/list) |
 | 8 | pending  | — | — | Six multi-agent v2 tools (parallel sub-agents) |
