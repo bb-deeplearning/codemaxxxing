@@ -1,0 +1,27 @@
+{
+  "captured_at": "2026-05-13T19:20:49.444Z",
+  "git_sha": "64a89ba50",
+  "bun_version": "1.3.13",
+  "metrics": {
+    "process.render.steady": {
+      "label": "process.render.steady",
+      "samples": 1000,
+      "p50": 51541,
+      "p95": 61167,
+      "p99": 72958,
+      "min": 46584,
+      "max": 112292,
+      "mean": 52908.755
+    },
+    "process.render.tree.steady": {
+      "label": "process.render.tree.steady",
+      "samples": 100,
+      "p50": 4381625,
+      "p95": 4513333,
+      "p99": 4551667,
+      "min": 4285459,
+      "max": 4593875,
+      "mean": 4395601.71
+    }
+  }
+}

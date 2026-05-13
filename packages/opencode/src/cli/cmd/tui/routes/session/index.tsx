@@ -87,6 +87,7 @@ import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
 import { Sidebar } from "./sidebar"
 import { SubagentFooter } from "./subagent-footer.tsx"
+import { Process, ProcessWriteStdin } from "./process-tool"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import parsers from "../../../../../../parsers-config.ts"
@@ -1946,6 +1947,12 @@ function TextPart(props: { last: boolean; part: TextPart; message: AssistantMess
 function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMessage }) {
   const ctx = use()
   const sync = useSync()
+  // Theme is read once at ToolPart construction so the wave-3 unified_exec
+  // renderers (Process / ProcessWriteStdin) can take colors as props
+  // rather than calling useTheme() themselves. Keeping them context-free
+  // means they can be unit-rendered in isolation without booting the
+  // Theme/Sync/Session provider stack — see process-tool.test.tsx.
+  const { theme } = useTheme()
 
   // Hide tool if showDetails is false and tool completed successfully
   const shouldHide = createMemo(() => {
@@ -2018,6 +2025,12 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         </Match>
         <Match when={props.part.tool === "skill"}>
           <Skill {...toolprops} />
+        </Match>
+        <Match when={props.part.tool === "exec_command"}>
+          <Process {...toolprops} theme={theme} />
+        </Match>
+        <Match when={props.part.tool === "write_stdin"}>
+          <ProcessWriteStdin {...toolprops} theme={theme} />
         </Match>
         <Match when={true}>
           <GenericTool {...toolprops} />
