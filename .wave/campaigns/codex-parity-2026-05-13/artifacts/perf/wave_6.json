@@ -1,0 +1,37 @@
+{
+  "captured_at": "2026-05-13T19:57:25.266Z",
+  "git_sha": "b78b81152",
+  "bun_version": "1.3.13",
+  "metrics": {
+    "registry.reserveSpawnSlot.then.commit": {
+      "label": "registry.reserveSpawnSlot.then.commit",
+      "samples": 1000,
+      "p50": 8458,
+      "p95": 16166,
+      "p99": 25208,
+      "min": 4541,
+      "max": 76125,
+      "mean": 9344.708
+    },
+    "registry.agentIdForPath.lookup": {
+      "label": "registry.agentIdForPath.lookup",
+      "samples": 1000,
+      "p50": 791,
+      "p95": 2833,
+      "p99": 5875,
+      "min": 500,
+      "max": 12959,
+      "mean": 1122.821
+    },
+    "registry.liveAgents.snapshot": {
+      "label": "registry.liveAgents.snapshot",
+      "samples": 1000,
+      "p50": 2958,
+      "p95": 6333,
+      "p99": 10459,
+      "min": 1833,
+      "max": 16291,
+      "mean": 3165.403
+    }
+  }
+}
