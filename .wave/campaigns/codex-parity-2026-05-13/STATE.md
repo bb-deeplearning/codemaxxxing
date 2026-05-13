@@ -27,7 +27,7 @@ last_updated: 2026-05-13
 
 | Wave | Status   | Session | Commit | Notes |
 |------|----------|---------|--------|-------|
-| 0 | complete | ses_1ddf0b362ffeqjfZEjlxQOOWzM | <pending> | test infra + perf baseline + LLM stub captured (11 metrics) |
+| 0 | complete | ses_1ddf0b362ffeqjfZEjlxQOOWzM | ac1aaa03a | test infra + perf baseline + LLM stub captured (11 metrics) |
 | 1 | pending  | — | — | head/tail buffer port from codex |
 | 2 | pending  | — | — | Pty.Service extensions (read primitive + LRU + origin) |
 | 3 | pending  | — | — | tool/process.ts (exec_command + write_stdin) |
