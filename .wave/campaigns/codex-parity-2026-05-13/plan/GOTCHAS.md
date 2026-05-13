@@ -176,3 +176,58 @@ For wave verification, target 100% **line** coverage rather than function covera
 - Example: `packages/opencode/test/lib/stub-provider.ts` (`NetworkCalledError`) hits 100% line / 89% function
 
 ---
+
+## [bun-test-bench-file-path] `bun test foo.bench.ts` matches no files unless prefixed with `./`
+
+**Discovered in:** wave_1
+**Date:** 2026-05-13
+**Surfaces affected:** every wave's `Verification` block that runs a `*.bench.ts` file directly via `bun test`
+**Severity:** DX-trap
+
+### Symptom
+
+`bun test test/perf/head-tail-buffer.bench.ts` exits with `The following filters did not match any test files`. Bun treats the argument as a name filter (looking for `.test.`, `_test_`, `.spec`, `_spec_`) instead of a path.
+
+### Root cause
+
+`bun test <arg>` interprets bare `<arg>` as a substring filter against discovered test file names. Since `*.bench.ts` does not contain any of the test-name patterns, no file matches. Bun's own error message tells you the fix in passing.
+
+### Fix pattern
+
+Prefix the path: `bun test ./test/perf/head-tail-buffer.bench.ts`. The `./` makes Bun treat the argument as a path. Wave WAVE.md verification commands that omit the `./` are subtly wrong — write the verification with `./` or interpret the bare path as a path rather than a filter.
+
+### Reference
+
+- Bun output: `note: To treat the "<path>" filter as a path, run "bun test ./<path>"`
+
+---
+
+## [bench-file-pattern-split] two valid patterns for `.bench.ts` files; pick one per wave
+
+**Discovered in:** wave_1
+**Date:** 2026-05-13
+**Surfaces affected:** every wave that produces a perf bench file
+**Severity:** DX-trap
+
+### Symptom
+
+Wave 0 left two patterns in the codebase:
+1. `test/perf/baseline/*.bench.ts` — pure modules that **export** a function returning `Record<string, BenchResult>`. They are not runnable on their own; `test/perf/baseline/baseline.test.ts` orchestrates them with `afterAll` writing the JSON.
+2. Wave 1 `test/perf/head-tail-buffer.bench.ts` — a self-contained file with embedded `test()` calls and its own `afterAll` writing the JSON.
+
+Mixing them is confusing: a future wave that adds a `.bench.ts` next to existing exporter-style benches may either fail to run (no orchestrator imports it) or double-count (orchestrator imports it AND it runs as its own test).
+
+### Root cause
+
+`bun test` only runs files whose names match `*.test.*` etc. Pattern (1) needs an explicit orchestrator. Pattern (2) makes the bench file itself match by including `test()` calls, but it loses the ability to be imported into an aggregator without re-running the bench.
+
+### Fix pattern
+
+Per-wave benches that produce their own JSON artifact should follow pattern (2) — single self-contained `.bench.ts` with embedded `test(...)` and `afterAll`. Run via `bun test ./test/perf/<wave>.bench.ts` (see `bun-test-bench-file-path`). Aggregator-style baselines (Wave 0) stay in pattern (1).
+
+### Reference
+
+- Pattern 1: `packages/opencode/test/perf/baseline/baseline.test.ts` + sibling `*.bench.ts`
+- Pattern 2: `packages/opencode/test/perf/head-tail-buffer.bench.ts`
+
+---

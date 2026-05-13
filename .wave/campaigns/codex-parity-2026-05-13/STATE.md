@@ -8,17 +8,17 @@ plan_source: specs/codex-parity-handoff.html
 executor_agent: caveman
 executor_model: ""
 executor_variant: ""
-current_wave: 1
+current_wave: 2
 wave_status: pending
 failure_kind: ""
 retry_count: 0
 verify_count: 1
 user_question: ""
 loop_state: armed
-active_session_id: ses_1ddf0b362ffeqjfZEjlxQOOWzM
+active_session_id: ses_1ddcdc9e6ffei2VYQ076XlTdj5
 active_session_kind: executor
 total_waves: 16
-session_count: 1
+session_count: 2
 created: 2026-05-13
 last_updated: 2026-05-13
 ```
@@ -28,7 +28,7 @@ last_updated: 2026-05-13
 | Wave | Status   | Session | Commit | Notes |
 |------|----------|---------|--------|-------|
 | 0 | complete | ses_1ddf0b362ffeqjfZEjlxQOOWzM | ac1aaa03a | test infra + perf baseline + LLM stub captured (11 metrics) |
-| 1 | pending  | — | — | head/tail buffer port from codex |
+| 1 | complete | ses_1ddcdc9e6ffei2VYQ076XlTdj5 | — | head/tail buffer port: 22 tests, 100% line+branch coverage, perf 0.64x baseline |
 | 2 | pending  | — | — | Pty.Service extensions (read primitive + LRU + origin) |
 | 3 | pending  | — | — | tool/process.ts (exec_command + write_stdin) |
 | 4 | pending  | — | — | Process tool TUI part renderer |
