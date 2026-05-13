@@ -1,0 +1,27 @@
+{
+  "captured_at": "2026-05-13T18:21:07.827Z",
+  "git_sha": "feb138b41",
+  "bun_version": "1.3.13",
+  "metrics": {
+    "process.exec_command.short_command": {
+      "label": "process.exec_command.short_command",
+      "samples": 20,
+      "p50": 78640166,
+      "p95": 138343584,
+      "p99": 172970041,
+      "min": 66854875,
+      "max": 172970041,
+      "mean": 92693760.5
+    },
+    "process.write_stdin.poll_with_data": {
+      "label": "process.write_stdin.poll_with_data",
+      "samples": 30,
+      "p50": 101589166,
+      "p95": 156971417,
+      "p99": 164897958,
+      "min": 100495083,
+      "max": 164897958,
+      "mean": 105937260.96666667
+    }
+  }
+}

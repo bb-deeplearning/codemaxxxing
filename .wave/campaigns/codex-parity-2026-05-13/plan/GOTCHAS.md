@@ -331,3 +331,191 @@ If a wave's verification command uses a directory pattern, treat the per-file ru
 
 - Repro: `bun test --coverage src/pty/index.test.ts` (99.27%) vs `bun test --coverage src/pty/` (98.54%) on the same wave_2 commit
 - Affected metric: line coverage on `src/pty/index.ts`
+
+---
+
+## [pty-create-term-override-tui-only] `Pty.create` TERM=xterm-256color overlay must gate on `origin === "tui"` so model PTYs see the caller's env
+
+**Discovered in:** wave_3
+**Date:** 2026-05-13
+**Surfaces affected:** `packages/opencode/src/pty/index.ts` `create` env construction; any wave that spawns model-origin PTYs and passes `env` overrides via `Pty.create` (Wave 3 unified_exec, future tools)
+**Severity:** correctness-bug
+
+### Symptom
+
+`exec_command` test for `UNIFIED_EXEC_ENV` overlay fails: spawning a child with `env: { TERM: "dumb", ... }` reads `TERM=xterm-256color` inside the child. The model-supplied env overlay is silently overridden by Pty.create.
+
+### Root cause
+
+Pre-fix `Pty.create` always built env as:
+
+```ts
+const env = {
+  ...process.env,
+  ...input.env,
+  ...shell.env,
+  TERM: "xterm-256color",   // <- this wins regardless of input.env
+  OPENCODE_TERMINAL: "1",
+}
+```
+
+The hardcoded `TERM=xterm-256color` is correct for desktop terminal-pane callers (it's what xterm-style readline expects), but unified_exec needs `TERM=dumb` to suppress color codes and pager prompts in CI-like contexts (codex `process_manager.rs:62` sets exactly this).
+
+### Fix pattern
+
+Gate the override on origin: TUI-origin keeps the legacy overlay, model-origin lets the caller's `input.env` win.
+
+```ts
+const origin = input.origin ?? "tui"
+const env = (
+  origin === "tui"
+    ? { ...process.env, ...input.env, ...shell.env, TERM: "xterm-256color", OPENCODE_TERMINAL: "1" }
+    : { ...process.env, ...shell.env, ...input.env }
+)
+```
+
+For model-origin spawns, `input.env` is applied LAST so the caller's UNIFIED_EXEC_ENV overlay (TERM=dumb, NO_COLOR=1, OPENCODE_CI=1, etc) is observed by the spawned child.
+
+### Reference
+
+- `packages/opencode/src/pty/index.ts` `Pty.create` env construction
+- `packages/opencode/src/tool/process/exec-command.test.ts` `UNIFIED_EXEC_ENV vars (NO_COLOR, TERM, OPENCODE_CI) are applied to the spawn` test
+- Codex equivalent: `codex-rs/core/src/unified_exec/process_manager.rs:61-72` (UNIFIED_EXEC_ENV constant + `apply_unified_exec_env`)
+
+---
+
+## [tool-context-ask-typed-as-void] `Tool.Context.ask` returns `Effect<void>` but at runtime can fail — typed `Effect.catch` is dead code
+
+**Discovered in:** wave_3
+**Date:** 2026-05-13
+**Surfaces affected:** any tool that needs to clean up resources (PTYs, file handles, network connections) on permission rejection — Wave 3 exec_command, Wave 8 spawn_agent, future tools
+**Severity:** correctness-bug + DX-trap
+
+### Symptom
+
+Writing `yield* ctx.ask(...).pipe(Effect.catch((err) => cleanup))` looks correct but the catch handler never executes — coverage reports the cleanup body as dead. In production, when the user rejects the permission prompt, the spawned PTY leaks until the InstanceState finalizer reclaims the project.
+
+### Root cause
+
+`Tool.Context.ask` is declared in `packages/opencode/src/tool/tool.ts:24` as:
+
+```ts
+ask(input: ...): Effect.Effect<void>
+```
+
+`Effect<void>` defaults to `Effect<void, never, never>` — the error channel is `never`. Any `.pipe(Effect.catch(handler))` on this type is type-checked but unreachable; the handler's `err: never` parameter signals an impossible value.
+
+In reality the Permission service raises `PermissionRejectedError | DeniedError | CorrectedError`. The Tool.define wrapper at `tool.ts:124` then applies `Effect.orDie`, which converts those typed failures into defects. Defects bypass `Effect.catch` entirely (catch only handles typed errors).
+
+### Fix pattern
+
+Use `Effect.acquireUseRelease` so the release hook fires on ANY non-success exit (defects, interrupts, typed failures). Compare `Exit.isFailure(exit)` to know whether to clean up.
+
+```ts
+return yield* Effect.acquireUseRelease(
+  // acquire: spawn pty + allocate session
+  Effect.gen(function* () {
+    const info = yield* pty.create(...)
+    const session = yield* sessions.allocate(...)
+    return { info, session }
+  }),
+  // use: ask + read + return result
+  ({ info, session }) => mainLogic(info, session),
+  // release: cleanup if non-success exit
+  ({ info, session }, exit) =>
+    Exit.isFailure(exit)
+      ? Effect.gen(function* () {
+          yield* sessions.remove(session.processId)
+          yield* pty.remove(info.id)
+        })
+      : Effect.void,
+)
+```
+
+Inline cleanup paths (e.g. ctx.abort detected before the read) still need explicit cleanup since they return success exits. The release fires for the defect path that the type system pretends can't happen.
+
+### Reference
+
+- `packages/opencode/src/tool/tool.ts:24` (`ask` declaration), `:124` (`Effect.orDie` wrapper)
+- `packages/opencode/src/tool/process/exec-command.ts` (post-Wave 3 acquireUseRelease shape)
+- Wave 3 NOTES.md (if added) for the alternative-considered list
+
+---
+
+## [tty-line-discipline-echo-defeats-clamp-timing-tests] TTY line discipline echoes input back as output, waking Pty.read's race-on-data path before yield_time elapses
+
+**Discovered in:** wave_3
+**Date:** 2026-05-13
+**Surfaces affected:** any timing test that asserts a yield-time clamp's effect on actual elapsed wall time when the test fixture is a TTY-mode process
+**Severity:** DX-trap (false-failure when verifying clamp behaviour end-to-end)
+
+### Symptom
+
+A `write_stdin` test asserts that asking for `yield_time_ms: 50` clamps to 250ms (the `MIN_YIELD_TIME_MS` floor). The expected elapsed wall time is ~350ms (100ms post-write sleep + 250ms read). Actual elapsed: ~106ms. The clamp logic is correct; the elapsed time is just shorter because Pty.read returned early.
+
+### Root cause
+
+When the spawned process is in TTY mode (`tty: true`), the kernel's TTY line discipline echoes input characters back as output. Writing `"x\n"` to the PTY produces the byte stream `"x\r\n"` flowing back through `proc.onData`, which advances the byteCursor and fires the SubscriptionRef notify in `Pty.read`'s race. The read returns immediately on the wakeup-on-data path well before the 250ms idle deadline elapses.
+
+This is correct production behaviour — interactive REPLs SHOULD return their echo fast. But it defeats any test that wants to verify the clamp's TIMING effect.
+
+### Fix pattern
+
+Verify clamp behaviour at the unit level (call the clamp function directly with input/expected pairs); don't try to verify it via end-to-end elapsed wall time.
+
+```ts
+// Good: unit test the clamp
+expect(clampWriteYieldTime(50)).toBe(250)
+expect(clampEmptyPollYieldTime(100)).toBe(5_000)
+
+// Bad: timing-based clamp verification (race-prone)
+const start = Date.now()
+yield* writeDef.execute({ session_id: sid, chars: "x", yield_time_ms: 50 }, ctx)
+expect(Date.now() - start).toBeGreaterThanOrEqual(300) // FAILS due to TTY echo
+```
+
+If a timing test is genuinely needed (e.g. the empty-poll 5s floor must be observable end-to-end), use a process that swallows input silently — `setInterval(()=>{},5000)` with `process.stdin.resume()` works because the process never echoes anything to stdout. But TTY echo of the input itself can still wake the read; the safer pattern is to test empty polls (chars: "") on a stable spawned process where there's no input to echo.
+
+### Reference
+
+- `packages/opencode/src/tool/process/write-stdin.test.ts` empty-poll-floor test (works) vs the original non-empty clamp test (defeated by echo, since simplified to a unit-level reference)
+- `packages/opencode/src/tool/process/constants.ts` clamp functions cover the actual contract
+
+---
+
+## [bus-subscribe-helper-vs-service-method-cross-runtime-mismatch] top-level `Bus.subscribe` and `bus.subscribeCallback` target different PubSubs across test layers
+
+**Discovered in:** wave_3
+**Date:** 2026-05-13
+**Surfaces affected:** any test that uses `testEffect(layer)` with `Bus.defaultLayer` AND tries to subscribe to bus events via the top-level `Bus.subscribe(...)` helper from `packages/opencode/src/bus/index.ts:195`
+**Severity:** DX-trap (subscriptions silently see zero events; assertions trivially pass or trivially fail depending on direction)
+
+### Symptom
+
+A test sets up `testEffect(Layer.mergeAll(Bus.defaultLayer, Pty.defaultLayer, ...))` and inside an `it.instance` body subscribes via `Bus.subscribe(Pty.Event.Created, (evt) => ...)`. The tool publishes events normally during execution but the subscriber array stays empty — assertions like `expect(events.length).toBeGreaterThanOrEqual(1)` fail.
+
+### Root cause
+
+`Bus.subscribe` (top-level helper) at `bus/index.ts:195` runs against its own `makeRuntime(Service, layer)` runtime. The test's `testEffect(layer)` runtime has a SEPARATE Bus.Service instance with its own PubSub. When the tool inside the test publishes via the test layer's bus, those events land in the test PubSub; the `Bus.subscribe` helper has subscribed to the global helper PubSub which receives nothing.
+
+The pattern works for tests that run via `AppRuntime.runPromise(...)` (which shares `memoMap` with `Bus.subscribe`'s runtime), and breaks for tests that build their own `testEffect` layer.
+
+### Fix pattern
+
+Inside `testEffect`-based tests, subscribe via the in-effect Bus.Service method:
+
+```ts
+// Bad: top-level helper, separate runtime, sees nothing
+const off = Bus.subscribe(Pty.Event.Created, (evt) => events.push(evt))
+
+// Good: in-effect Service method, same runtime as the publishers
+const bus = yield* Bus.Service
+const off = yield* bus.subscribeCallback(Pty.Event.Created, (evt) => events.push(evt))
+```
+
+The contract is identical (a callback that fires per event) and the unsubscribe handle works the same way; only the resolution scope differs.
+
+### Reference
+
+- `packages/opencode/src/bus/index.ts:179` (`makeRuntime` for top-level helpers), `:159` (`subscribeCallback` Service method)
+- `packages/opencode/src/tool/process/exec-command.test.ts` Pty Created/Exited event tests use the in-effect pattern; pre-fix attempt with `Bus.subscribe` saw zero events

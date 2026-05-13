@@ -320,13 +320,27 @@ export const layer = Layer.effect(
 
       const cwd = input.cwd || s.dir
       const shell = yield* plugin.trigger("shell.env", { cwd }, { env: {} })
-      const env = {
-        ...process.env,
-        ...input.env,
-        ...shell.env,
-        TERM: "xterm-256color",
-        OPENCODE_TERMINAL: "1",
-      } as Record<string, string>
+      const origin = input.origin ?? "tui"
+      // TUI-origin spawns get the legacy `TERM=xterm-256color` overlay so the
+      // desktop terminal pane renders correctly. Model-origin spawns
+      // (unified_exec) intentionally pass through whatever the caller's `env`
+      // overlay set — codex's process_manager forces `TERM=dumb` for those,
+      // and we let it through.
+      const env = (
+        origin === "tui"
+          ? {
+              ...process.env,
+              ...input.env,
+              ...shell.env,
+              TERM: "xterm-256color",
+              OPENCODE_TERMINAL: "1",
+            }
+          : {
+              ...process.env,
+              ...shell.env,
+              ...input.env,
+            }
+      ) as Record<string, string>
 
       if (process.platform === "win32") {
         env.LC_ALL = "C.UTF-8"
@@ -355,7 +369,7 @@ export const layer = Layer.effect(
         cwd,
         status: "running",
         pid: proc.pid,
-        origin: input.origin ?? "tui",
+        origin,
       } as const
       const session: Active = {
         info,

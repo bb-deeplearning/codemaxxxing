@@ -39,6 +39,7 @@ import { McpAuth } from "@/mcp/auth"
 import { Command } from "@/command"
 import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
+import { ProcessSessions } from "@/tool/process/sessions"
 import { Format } from "@/format"
 import { InstanceLayer } from "@/project/instance-layer"
 import { Project } from "@/project/project"
@@ -94,6 +95,7 @@ export const AppLayer = Layer.mergeAll(
   Command.defaultLayer,
   Truncate.defaultLayer,
   ToolRegistry.defaultLayer,
+  ProcessSessions.defaultLayer,
   Format.defaultLayer,
   Project.defaultLayer,
   Vcs.defaultLayer,

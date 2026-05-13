@@ -12,6 +12,9 @@ import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
+import { ExecCommandTool } from "./process/exec-command"
+import { WriteStdinTool } from "./process/write-stdin"
+import { ProcessSessions } from "./process/sessions"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
@@ -46,6 +49,7 @@ import { Bus } from "../bus"
 import { Agent } from "../agent/agent"
 import { Skill } from "../skill"
 import { Permission } from "@/permission"
+import { Pty } from "@/pty"
 
 const log = Log.create({ service: "tool.registry" })
 
@@ -88,6 +92,8 @@ export const layer: Layer.Layer<
   | Ripgrep.Service
   | Format.Service
   | Truncate.Service
+  | Pty.Service
+  | ProcessSessions.Service
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -113,6 +119,8 @@ export const layer: Layer.Layer<
     const greptool = yield* GrepTool
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
+    const execcommand = yield* ExecCommandTool
+    const writestdin = yield* WriteStdinTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -210,6 +218,8 @@ export const layer: Layer.Layer<
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
           plan: Tool.init(plan),
+          execcommand: Tool.init(execcommand),
+          writestdin: Tool.init(writestdin),
         })
 
         return {
@@ -229,6 +239,8 @@ export const layer: Layer.Layer<
             tool.search,
             tool.skill,
             tool.patch,
+            tool.execcommand,
+            tool.writestdin,
             ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
             ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [tool.plan] : []),
           ],
@@ -350,6 +362,8 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(CrossSpawnSpawner.defaultLayer),
     Layer.provide(Ripgrep.defaultLayer),
     Layer.provide(Truncate.defaultLayer),
+    Layer.provide(Pty.defaultLayer),
+    Layer.provide(ProcessSessions.defaultLayer),
   ),
 )
 

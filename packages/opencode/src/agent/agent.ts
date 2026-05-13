@@ -99,6 +99,12 @@ export const layer = Layer.effect(
           question: "deny",
           plan_enter: "deny",
           plan_exit: "deny",
+          // Wave 3 (codex parity): persistent-process tools default to ask so
+          // first spawn requires explicit user approval. The `always`-pattern
+          // registered on approval (`pid:<id>`) caches subsequent
+          // write_stdin calls per-process. Per-built-in policy overrides
+          // happen in Wave 12.
+          exec_command: "ask",
           // mirrors github.com/github/gitignore Node.gitignore pattern for .env files
           read: {
             "*": "allow",

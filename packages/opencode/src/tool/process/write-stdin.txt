@@ -1,0 +1,58 @@
+Send input to a process spawned by `exec_command` and return its recent output. Two modes:
+
+- **Pure poll** — pass `chars: ""` (or omit `chars`). The call writes nothing, just waits for new output up to `yield_time_ms` and returns whatever arrived. Use this to drain a dev server's logs, watch a file watcher's diagnostics, or wait for a slow REPL response after the previous call returned a partial prompt.
+- **Interactive write** — pass `chars: "..."` to send bytes to the child's stdin. The call writes, sleeps 100ms to give the child time to react, then waits for output up to `yield_time_ms`. Use for REPL commands, prompt responses, sending shutdown signals (`q\n`, `exit\n`), feeding multi-line input.
+
+# Parameters
+
+- `session_id` (required) — the number returned by an earlier `exec_command` call. If the process has since exited or been pruned by the LRU pool, you'll get `Unknown process id N`; re-spawn.
+- `chars` (default `""`) — bytes to write. Empty = pure poll. Non-empty = write then poll.
+- `yield_time_ms` (default `250`) — how long to wait for output before returning.
+- `max_output_tokens` — cap returned output length. Excess truncates head+tail.
+
+# Yield-time rules
+
+The clamp depends on whether `chars` is empty:
+
+- **Non-empty `chars`** → clamped to `[250, 30000]`. Sub-second values floor to 250ms; values over 30s cap at 30s. Use the default 250ms for chatty REPLs (you sent input, you want the prompt back fast). Use 5000-10000 for slow operations like running a build inside the REPL.
+- **Empty `chars`** (pure poll) → clamped to `[5000, 300000]`. **Polls have a 5-second floor** even if you ask for less. This exists to prevent the model from spam-polling short-running processes — there is no practical use case for a 50ms empty poll, and the floor stops a runaway loop pattern from burning your token budget. Cap is 5 minutes (300000ms).
+
+If you want to check on a process more quickly than 5s allows, do other work between calls; don't shorten the poll.
+
+# Return shape
+
+Same as `exec_command`:
+
+```
+{
+  output: string                    // bytes emitted between previous call's cursor and now
+  wall_time_seconds: number         // elapsed wait time
+  session_id?: number               // present iff process is still alive
+  exit_code?: number                // present iff process exited during this call
+  chunk_id?: string
+  original_token_count?: number
+}
+```
+
+`session_id` returns iff the process is still alive after this call. If the process exited (`q\n` to a REPL, hit a fatal error, segfaulted), `session_id` drops and `exit_code` appears.
+
+# Operational discipline
+
+- **`tty: true` is required for non-empty `chars`.** If you spawn with `tty: false` or default tty, `write_stdin` with non-empty input returns `stdin is closed for this session; rerun exec_command with tty=true to keep stdin open`. Pure polls work either way. Plan TTY at spawn time.
+- **`session_id` survives until the process exits or the LRU pool prunes it.** Across `opencode` restart, all session_ids die. After spawning >64 concurrent processes, the oldest non-recent ones get reclaimed.
+- **No re-approval after the first spawn.** `exec_command`'s "always" approval registers `pid:<session_id>` so subsequent `write_stdin` evaluates as already-allowed. You don't pay another permission prompt for the same process.
+- **Output is incremental.** Each call returns bytes emitted since the previous call's cursor. You won't see the same byte twice across consecutive `write_stdin`s on the same `session_id`. The internal cursor advances per call.
+- **Don't poll a process you don't need.** Each pure poll burns at minimum 5 seconds of model wall-time and tokens for whatever output came back. If you spawned a watcher and got the diagnostic you needed, move on; the watcher self-prunes via LRU eventually.
+
+# Failure modes
+
+- Unknown `session_id` → process either never existed (typo / wrong number), exited and the result was already returned in a prior call, or got pruned by the LRU pool. Re-spawn.
+- `stdin is closed for this session` → you spawned with `tty: false`. Re-spawn the same command with `tty: true` if you need to send input.
+- Process exits during the call → response includes `exit_code`, drops `session_id`. Final output buffered before exit is included.
+
+# Patterns
+
+- **REPL turn**: `write_stdin {session_id, chars: "command\n", yield_time_ms: 1000}` → read response → repeat.
+- **Watcher poll**: `write_stdin {session_id, chars: "", yield_time_ms: 5000}` once after edits land in the file you're watching.
+- **Graceful shutdown**: `write_stdin {session_id, chars: "exit\n"}` or `q\n` depending on the program's contract; check the returned `exit_code` to confirm clean termination.
+- **Force kill**: there is no kill tool. Send `exit\n`, or rely on session expiry (LRU prune, opencode restart). `ctx.abort` (user Cmd-C) terminates the active call, not the underlying process.

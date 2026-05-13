@@ -23,6 +23,8 @@ import { Format } from "@/format"
 import { Ripgrep } from "@/file/ripgrep"
 import * as Truncate from "@/tool/truncate"
 import { InstanceState } from "@/effect/instance-state"
+import { Pty } from "@/pty"
+import { ProcessSessions } from "@/tool/process/sessions"
 
 const node = CrossSpawnSpawner.defaultLayer
 const configLayer = TestConfig.layer({
@@ -47,6 +49,8 @@ const registryLayer = ToolRegistry.layer.pipe(
   Layer.provide(node),
   Layer.provide(Ripgrep.defaultLayer),
   Layer.provide(Truncate.defaultLayer),
+  Layer.provide(Pty.defaultLayer),
+  Layer.provide(ProcessSessions.defaultLayer),
 )
 
 const it = testEffect(Layer.mergeAll(registryLayer, node))
