@@ -13,11 +13,17 @@
 //   - Otherwise race a SubscriptionRef.changes stream against the timeout.
 //     Whichever wins decides timed_out.
 //
+// Wave 10: a paired Wait.Started / Wait.Ended event surfaces on the bus
+// around the body so subscribers (TUI, plugins) see when an agent is
+// blocked. Emission goes through AgentControl.emitWait* so the lifecycle is
+// centralized in one service.
+//
 // The return body is a SUMMARY string ("Wait timed out." / "Wait completed.")
 // — not the mail content. Wave 9's runLoop drains the actual mail before the
 // next turn so the model reads it then.
 
 import { AgentControl } from "@/agent/control"
+import { Identifier } from "@/id/id"
 import { Effect, Result, Schema, Stream, SubscriptionRef } from "effect"
 import * as Tool from "../tool"
 import DESCRIPTION from "./agent-wait.txt"
@@ -76,6 +82,15 @@ export const AgentWaitTool = Tool.define(
                 metadata: { timeout_ms: timeoutMs },
               })
 
+              // Stable lifecycle id pairing Wait.Started ↔ Wait.Ended.
+              // Use ctx.callID when present (real tool invocation); generate
+              // an ascending id when absent (test contexts pass "").
+              const callID = ctx.callID && ctx.callID.length > 0
+                ? ctx.callID
+                : Identifier.create("wait", "ascending")
+
+              yield* control.emitWaitStarted(ctx.sessionID, callID, timeoutMs)
+
               // Subscribe to the mailbox seq for the calling session.
               // Root and other not-yet-mailboxed sessions return
               // AgentNotFoundError — fall back to a plain sleep + timed_out
@@ -85,6 +100,7 @@ export const AgentWaitTool = Tool.define(
               )
               if (Result.isFailure(seqRef)) {
                 yield* Effect.sleep(`${timeoutMs} millis`)
+                yield* control.emitWaitEnded(ctx.sessionID, callID, true)
                 return formatResult(true, timeoutMs)
               }
 
@@ -92,6 +108,7 @@ export const AgentWaitTool = Tool.define(
               // the watch and return immediately with timed_out=false.
               const pending = yield* control.hasPendingMailboxItems(ctx.sessionID)
               if (pending) {
+                yield* control.emitWaitEnded(ctx.sessionID, callID, false)
                 return formatResult(false, timeoutMs)
               }
 
@@ -107,7 +124,9 @@ export const AgentWaitTool = Tool.define(
               )
 
               const outcome = yield* Effect.raceAll([changesEffect, timeoutEffect])
-              return formatResult(outcome === "timeout", timeoutMs)
+              const timedOut = outcome === "timeout"
+              yield* control.emitWaitEnded(ctx.sessionID, callID, timedOut)
+              return formatResult(timedOut, timeoutMs)
             }),
     }
   }),

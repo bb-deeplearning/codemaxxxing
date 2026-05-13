@@ -1,37 +1,37 @@
 {
-  "captured_at": "2026-05-13T20:30:52.098Z",
-  "git_sha": "446f1bb8f",
+  "captured_at": "2026-05-13T23:25:32.534Z",
+  "git_sha": "b46351336",
   "bun_version": "1.3.13",
   "metrics": {
     "agentControl.spawnAgent": {
       "label": "agentControl.spawnAgent",
       "samples": 200,
-      "p50": 409583,
-      "p95": 822208,
-      "p99": 3810875,
-      "min": 317792,
-      "max": 4239750,
-      "mean": 533674.13
+      "p50": 574125,
+      "p95": 1216792,
+      "p99": 4205250,
+      "min": 437209,
+      "max": 4968333,
+      "mean": 758108.945
     },
     "agentControl.sendInterAgentCommunication": {
       "label": "agentControl.sendInterAgentCommunication",
       "samples": 1000,
-      "p50": 18083,
-      "p95": 34208,
-      "p99": 72958,
-      "min": 12083,
-      "max": 4764542,
-      "mean": 31096.218
+      "p50": 99959,
+      "p95": 175084,
+      "p99": 1392416,
+      "min": 76250,
+      "max": 11699750,
+      "mean": 158302.599
     },
     "agentControl.listAgents.populated": {
       "label": "agentControl.listAgents.populated",
       "samples": 1000,
-      "p50": 11750,
-      "p95": 20833,
-      "p99": 33334,
-      "min": 8208,
-      "max": 2346583,
-      "mean": 15327.083
+      "p50": 11917,
+      "p95": 22666,
+      "p99": 88750,
+      "min": 8083,
+      "max": 9992625,
+      "mean": 32488.157
     }
   }
 }

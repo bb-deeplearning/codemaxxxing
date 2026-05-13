@@ -8,17 +8,17 @@ plan_source: specs/codex-parity-handoff.html
 executor_agent: caveman
 executor_model: ""
 executor_variant: ""
-current_wave: 10
+current_wave: 11
 wave_status: pending
 failure_kind: ""
 retry_count: 0
 verify_count: 0
 user_question: ""
 loop_state: armed
-active_session_id: ses_1dcbb89d3ffe0EQ4B6do4NnUYx
+active_session_id: ses_1dc85d4b8ffeEurxIqQy062Fjn
 active_session_kind: executor
 total_waves: 16
-session_count: 10
+session_count: 11
 created: 2026-05-13
 last_updated: 2026-05-13
 ```
@@ -37,7 +37,7 @@ last_updated: 2026-05-13
 | 7 | complete | ses_1dd139792ffeolvWi0IIwoE1qn | 6e379be37 | AgentControl service: 80 tests across status/live-agent/control, 100% line coverage on all three files (verified via lcov), perf p50 spawn 403µs / send 17µs / list(16) 12µs |
 Six multi-agent v2 tools (spawn/send/followup/wait/list/close) + shared currentAgentPath helper: 172 wave-8 tests, 100% line+branch on all 8 new files, registry + permission defaults wired, integration test walks all six in sequence
 | 9 | complete | ses_1dcbb89d3ffe0EQ4B6do4NnUYx | 12aa8deaf | runLoop integration: SubtaskPart `protocol: "v2"` marker, AgentControl.registerRunLoop + drainMailbox + hasPendingTriggerTurn + cancelChildrenOf, parent cancel cascades to children, mailbox drained at top of every iteration, 7 new prompt-test scenarios cover legacy/v2/drain/empty/cancel/spawn-fail/trigger-defer + slugify, control.ts 100% line, perf p50 8.5µs (baseline 19.5µs) within budget |
-| 10 | pending  | — | — | EventV2 + Bus events for agent lifecycle |
+| 10 | complete | ses_1dc85d4b8ffeEurxIqQy062Fjn | — | EventV2 + Bus events for agent lifecycle (Spawn.Started/Ended, Closed, Wait.Started/Ended, Message.Sent), status derivation from Step.Started/Ended, onSpawnEvent removed, 100% line coverage on touched files |
 | 11 | pending  | — | — | TUI subagent enhancements (status, mailbox renderer) |
 | 12 | pending  | — | — | Permission integration + agent system prompt fragments |
 | 13 | pending  | — | — | Backward compat verification (legacy snapshot, task tool, pty consumer) |

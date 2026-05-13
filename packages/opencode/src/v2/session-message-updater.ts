@@ -401,6 +401,16 @@ export function update<Result>(adapter: Adapter<Result>, event: SessionEvent.Eve
         )
       }
     },
+    // Wave 10: agent lifecycle events do not produce visible message
+    // entries. They live as a sourced log for the TUI subagent enhancements
+    // (Wave 11) and downstream subscribers; the conversation timeline stays
+    // unchanged.
+    "session.next.agent.spawn.started": () => {},
+    "session.next.agent.spawn.ended": () => {},
+    "session.next.agent.closed": () => {},
+    "session.next.agent.wait.started": () => {},
+    "session.next.agent.wait.ended": () => {},
+    "session.next.agent.message.sent": () => {},
   })
 
   return adapter.finish()

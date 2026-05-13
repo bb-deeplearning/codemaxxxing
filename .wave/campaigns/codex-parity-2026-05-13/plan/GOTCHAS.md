@@ -1150,3 +1150,150 @@ If a future wave's bench is suspiciously fast (e.g. -50% vs baseline) AND introd
 - Baseline shape: `packages/opencode/test/perf/baseline/runloop-overhead.bench.ts`
 
 ---
+
+## [bus-subscriber-needs-instance-state-fork-and-instance-ref] long-lived bus subscribers must fork inside InstanceState.make AND re-provide InstanceRef to survive scheduler hops
+
+**Discovered in:** wave_10
+**Date:** 2026-05-13
+**Surfaces affected:** any service that wires a continuous `bus.subscribe(...)` listener inside its layer to react to events from other services — Wave 10's AgentControl status derivation; future Wave 11 TUI subagent enhancements that subscribe to lifecycle events; future bus-driven status/health monitors
+
+**Severity:** correctness-bug (subscriber starts but never receives events; or crashes with `instance: No context found for instance` if forked at the wrong scope)
+
+### Symptom
+
+A layer-scope `Effect.forkScoped(bus.subscribe(def).pipe(Stream.runForEach(...)))` does one of:
+1. Crashes silently with `instance: No context found for instance` from inside the bus's `InstanceState.get(state)` lookup.
+2. Runs without error but the subscriber callback never fires when the test publishes via `yield* Bus.Service` → `bus.publish(def, ...)`.
+3. Runs and sometimes receives events but misses the first publish in a test.
+
+All three symptoms point at the same root tension: the bus subscriber needs Instance.current bound (because Bus.Service is per-instance), but the layer-init scope where it's natural to fork has no Instance bound; and even when forked inside an instance-bound scope, the actual PubSub subscription happens in the next microtask after `Effect.forkScoped` returns, which loses races against an immediate publish.
+
+### Root cause
+
+Three interacting facts:
+- `Bus.Service.subscribe(def)` resolves through `InstanceState.get(state)` to find the per-directory typed PubSub map. That requires Instance.current bound at the time the stream is consumed.
+- Layer init runs once when the runtime materializes the layer; no Instance is bound at that point. So `Effect.forkScoped` at layer scope produces a fiber with no Instance binding, and the subscribe call inside the stream's lazy unwrap throws.
+- `Effect.forkScoped` schedules the forked fiber on the scheduler — its body doesn't execute synchronously. The first `bus.subscribe(...)` call inside the fiber's stream lazy-unwrap doesn't happen until the next tick. A test that calls a service method (which materializes the InstanceState entry and forks) and then immediately publishes will publish into a not-yet-subscribed PubSub.
+
+### Fix pattern
+
+Three coordinated moves:
+
+1. **Fork inside `InstanceState.make`'s builder, not at layer scope.** The builder runs lazily on the first method call for that instance, with Instance.current bound. The forked fiber inherits that scope:
+
+   ```ts
+   yield* InstanceState.make(
+     Effect.fn("Foo.state")(function* () {
+       const ctx = yield* InstanceState.context  // capture for re-injection
+       // ... per-instance state ...
+
+       yield* Effect.forkScoped(
+         bus
+           .subscribe(SomeInbound)
+           .pipe(Stream.runForEach((evt) => handle(evt)))
+           .pipe(Effect.provideService(InstanceRef, ctx)),
+       )
+
+       return state
+     }),
+   )
+   ```
+
+2. **Re-inject `InstanceRef` via `Effect.provideService(InstanceRef, ctx)` on the forked stream.** Effect fibers inherit the parent's Effect Context but Instance.current is in native AsyncLocalStorage — that propagation across scheduler hops isn't reliable on every Effect scheduler implementation. Providing the Reference explicitly (via the captured InstanceContext) makes Bus.subscribe's `InstanceState.context` return the right value through the typed Context path rather than the ALS fallback.
+
+3. **In tests, sleep briefly between the first method call (which triggers builder + fork) and the publish, so the subscriber's lazy stream actually attaches to the PubSub before publish fires:**
+
+   ```ts
+   const live = yield* control.spawnAgent({ ... })   // triggers builder + fork
+   const bus = yield* Bus.Service
+   yield* Effect.sleep(20)                           // let forked fiber subscribe
+   yield* bus.publish(SomeInbound, { ... })
+   yield* Effect.sleep(50)                           // let handler run
+   ```
+
+The Pty pattern in `src/pty/index.ts` doesn't hit this because Pty publishes in response to its own service-method calls (always inside an Instance-bound effect) — it has no continuous subscriber. AgentControl's status derivation is the first wave service that needs a continuous subscriber over a per-instance bus, hence first to hit the gotcha.
+
+### Reference
+
+- Working example: `packages/opencode/src/agent/control.ts` (Wave 10) — `InstanceState.make` builder forks two `bus.subscribe(Inbound.StepStarted/Ended)` streams with `Effect.provideService(InstanceRef, ctx)` re-injection.
+- Test shape: `packages/opencode/src/agent/control.test.ts` `AgentControl status derivation from session events` describe block — every test sleeps 20ms after the first `spawnAgent` and before `bus.publish`.
+- Related: `[agentcontrol-providerref-must-live-in-layer-not-instancestate]` (wave 9) — same Instance-binding-at-layer-scope problem, opposite resolution (hoist to layer scope when state is single-value and instance-agnostic; this gotcha covers the per-instance subscriber case where you can't hoist).
+
+---
+
+## [eventv2-and-bus-dual-emission-with-parallel-type-prefixes] EventV2.run + Bus.publish on different type prefixes avoids registry collision while delivering both sourced log + ephemeral subscribers
+
+**Discovered in:** wave_10
+**Date:** 2026-05-13
+**Surfaces affected:** any wave that introduces a new domain event consumed by BOTH the EventV2 sourced log (DB / replay / projectors) AND in-process Bus subscribers (TUI / plugins / status derivation) — Wave 10's `Agent.*` events; future waves adding lifecycle events for new subsystems
+
+**Severity:** API-quirk (the design path that "looks right" — define EventV2, let SyncEvent.init auto-register a BusEvent under the same type — produces a confusing two-bus mismatch where subscribers compose differently from publishers)
+
+### Symptom
+
+A naive design places EventV2 and BusEvent under the SAME type string (e.g. `session.next.agent.spawn.started`). On wave entry it appears clean — `SyncEvent.init` already auto-registers a BusEvent.define for every EventV2 def (`sync/index.ts:210`), so subscribers might just look up the registered Definition. In practice this routes through the SyncEvent runtime's bus and the test's Bus.Service runtime differently, and consumers that subscribe via `Bus.subscribe(MyDef)` need to construct or import a `BusEvent.Definition` matching the auto-registered shape — which is fragile (the auto-registration is a side effect of init, not an exported handle).
+
+### Root cause
+
+`SyncEvent.init` walks the EventV2 registry and calls `BusEvent.define(def.type, def.properties)` to register each event in the BusEvent registry for SDK generation purposes. The returned Definition is discarded. Subsequent `Bus.subscribe(<defWithSameType>)` calls work for type/payload matching at runtime, but consumers can't import the SAME object the auto-registration produced — they have to construct a matching `{ type, properties }` shape locally, which then drifts the moment the EventV2 schema changes.
+
+Worse: the EventV2's auto-publish on the bus uses the EventV2 def directly (`ProjectBus.publish(def, ...)` in `sync/index.ts:311`). The Bus internally keys typed PubSubs by `def.type`, so the publish lands under the EventV2's type. Subscribers must use a BusEvent.Definition with that same type. If a wave also defines an explicit BusEvent under the same type (e.g. `BusEvent.define("session.next.agent.spawn.started", schema)`), there are now TWO entries for the same type in the BusEvent registry — last-one-wins, and the SDK generator emits whichever wins, breaking type stability.
+
+### Fix pattern
+
+Use **two different type prefixes**:
+- `session.next.<domain>.<event>` for EventV2 defs (sourced log; persisted by projectors; matched in SessionEvent.All union)
+- `<domain>.<event>` for BusEvent defs (in-process pub/sub; the Definition object is exported and stable for subscribers)
+
+Inside the service that owns the event, emit on BOTH channels with the same payload:
+
+```ts
+// session-event.ts (sourced log)
+export namespace Agent {
+  export namespace Spawn {
+    export const Started = EventV2.define({
+      type: "session.next.agent.spawn.started",
+      aggregate: "sessionID",
+      schema: { ...Base, /* fields */ },
+    })
+  }
+}
+
+// agent/control.ts (bus event)
+export const Event = {
+  SpawnStarted: BusEvent.define(
+    "agent.spawn.started",
+    Schema.Struct({ /* same fields */ }),
+  ),
+}
+
+// emission inside the service
+function emitSpawn(payload) {
+  try { EventV2.run(SessionEvent.Agent.Spawn.Started.Sync, payload) } catch { /* swallow */ }
+  yield* bus.publish(Event.SpawnStarted, payload).pipe(Effect.ignore)
+}
+```
+
+The `try/catch` around `EventV2.run` is defensive: in test environments where projectors aren't fully wired (or the experimental flag is off), `SyncEvent.run` can throw. We don't want the bus emission and the operation itself to be killed by a logging-side failure.
+
+For the **inbound** direction (a service subscribes to events emitted by ANOTHER service via EventV2.run), construct a local `BusEvent.Definition` shape from the EventV2 def's `Sync.type` and `Sync.properties`. This sidesteps the lack of exported auto-registered Definition:
+
+```ts
+export const Inbound = {
+  StepStarted: {
+    type: SessionEvent.Step.Started.Sync.type,
+    properties: SessionEvent.Step.Started.Sync.properties,
+  } as const,
+}
+
+// elsewhere
+yield* bus.subscribe(Inbound.StepStarted).pipe(Stream.runForEach(...))
+```
+
+### Reference
+
+- Wave 10 outbound emission: `packages/opencode/src/agent/control.ts` — `Event` const has `SpawnStarted/Ended/Closed/WaitStarted/WaitEnded/MessageSent` BusEvent defs under `agent.*`; `SessionEvent.Agent.*.Sync` defs under `session.next.agent.*`; emission helpers fire both.
+- Wave 10 inbound subscription: same file's `Inbound` const constructs BusEvent.Definition shapes from `SessionEvent.Step.{Started,Ended}.Sync` for the status-derivation subscriber.
+- SyncEvent auto-registration: `packages/opencode/src/sync/index.ts:210` walks EventV2 registry and BusEvent.defines each — explains why the "single-type" approach almost-works and exactly why it's fragile.
+
+---

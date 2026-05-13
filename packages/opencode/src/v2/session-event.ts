@@ -6,6 +6,8 @@ import { Schema } from "effect"
 export { FileAttachment }
 import { ToolOutput } from "./tool-output"
 import { ModelID, ProviderID } from "@/provider/schema"
+import { AgentPath } from "@/agent/agent-path"
+import { AgentStatus } from "@/agent/status"
 import { V2Schema } from "./schema"
 
 export const Source = Schema.Struct({
@@ -349,6 +351,115 @@ export namespace Compaction {
   export type Ended = Schema.Schema.Type<typeof Ended>
 }
 
+// Wave 10 — agent lifecycle events. Sourced log of multi-agent v2
+// operations so the TUI (Wave 11), plugins, and replay tooling can observe
+// spawn / message / wait / close. Codex parity (event-name + payload):
+//   Spawn.Started ↔ CollabAgentSpawnBeginEvent  (protocol.rs:3695-3708)
+//   Spawn.Ended   ↔ CollabAgentSpawnEndEvent    (protocol.rs:3736-3761)
+//   Closed        ↔ CollabCloseEndEvent         (protocol.rs:3843-3862)
+//   Wait.Started  ↔ CollabWaitingBeginEvent     (protocol.rs:3801-3814)
+//   Wait.Ended    ↔ CollabWaitingEndEvent       (protocol.rs:3816-3829)
+//   Message.Sent  ↔ CollabAgentInteractionBegin/End (protocol.rs:3763-3799)
+//
+// `sessionID` is the SENDER (the agent emitting the event) for spawn / wait /
+// message; for `Closed` it is the agent that's now closed (so projection
+// naturally lands in the closed agent's history). Receiver-side fields carry
+// the target IDs/paths.
+export namespace Agent {
+  export namespace Spawn {
+    export const Started = EventV2.define({
+      type: "session.next.agent.spawn.started",
+      aggregate: "sessionID",
+      schema: {
+        ...Base,
+        call_id: Schema.String,
+        task_name: Schema.String,
+        child_path: AgentPath,
+        agent_type: Schema.String.pipe(Schema.optional),
+        prompt: Schema.String,
+      },
+    })
+    export type Started = Schema.Schema.Type<typeof Started>
+
+    export const Ended = EventV2.define({
+      type: "session.next.agent.spawn.ended",
+      aggregate: "sessionID",
+      schema: {
+        ...Base,
+        call_id: Schema.String,
+        task_name: Schema.String,
+        child_path: AgentPath,
+        agent_type: Schema.String.pipe(Schema.optional),
+        // Populated on success; omitted when spawn rejected.
+        child_session_id: SessionID.pipe(Schema.optional),
+        child_nickname: Schema.String.pipe(Schema.optional),
+        // Status reported back to the spawner. Mirrors codex's
+        // `status: AgentStatus` field on CollabAgentSpawnEndEvent. On a
+        // rejection codex uses `AgentStatus::NotFound`; we follow that.
+        status: AgentStatus,
+        // Stable error tag set on rejection — callers (TUI, analytics) can
+        // branch on a string without parsing the prose. Maps to
+        // AgentControl SpawnError._tag.
+        error: Schema.String.pipe(Schema.optional),
+      },
+    })
+    export type Ended = Schema.Schema.Type<typeof Ended>
+  }
+
+  export const Closed = EventV2.define({
+    type: "session.next.agent.closed",
+    aggregate: "sessionID",
+    schema: {
+      ...Base,
+      // sessionID = the closed agent's session.
+      agent_path: AgentPath,
+      previous_status: AgentStatus,
+    },
+  })
+  export type Closed = Schema.Schema.Type<typeof Closed>
+
+  export namespace Wait {
+    export const Started = EventV2.define({
+      type: "session.next.agent.wait.started",
+      aggregate: "sessionID",
+      schema: {
+        ...Base,
+        call_id: Schema.String,
+        timeout_ms: NonNegativeInt,
+      },
+    })
+    export type Started = Schema.Schema.Type<typeof Started>
+
+    export const Ended = EventV2.define({
+      type: "session.next.agent.wait.ended",
+      aggregate: "sessionID",
+      schema: {
+        ...Base,
+        call_id: Schema.String,
+        timed_out: Schema.Boolean,
+      },
+    })
+    export type Ended = Schema.Schema.Type<typeof Ended>
+  }
+
+  export namespace Message {
+    export const Sent = EventV2.define({
+      type: "session.next.agent.message.sent",
+      aggregate: "sessionID",
+      schema: {
+        ...Base,
+        // sessionID = the SENDER's session.
+        sender_path: AgentPath,
+        target_session_id: SessionID,
+        target_path: AgentPath,
+        message_length: NonNegativeInt,
+        trigger_turn: Schema.Boolean,
+      },
+    })
+    export type Sent = Schema.Schema.Type<typeof Sent>
+  }
+}
+
 export const All = Schema.Union(
   [
     AgentSwitched,
@@ -376,6 +487,14 @@ export const All = Schema.Union(
     Compaction.Started,
     Compaction.Delta,
     Compaction.Ended,
+    // Wave 10: agent lifecycle events. Append-only — order matters for
+    // EventV2 union stability across versions (BACKWARD_COMPAT.md).
+    Agent.Spawn.Started,
+    Agent.Spawn.Ended,
+    Agent.Closed,
+    Agent.Wait.Started,
+    Agent.Wait.Ended,
+    Agent.Message.Sent,
   ],
   {
     mode: "oneOf",

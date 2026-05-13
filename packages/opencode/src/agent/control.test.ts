@@ -1,7 +1,8 @@
 import { afterEach, describe, expect } from "bun:test"
-import { Effect, Fiber, Layer, Result, Stream, SubscriptionRef } from "effect"
+import { DateTime, Effect, Fiber, Layer, Result, Stream, SubscriptionRef } from "effect"
 import { Session } from "@/session/session"
 import { SessionID } from "@/session/schema"
+import { Bus } from "@/bus"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Agent } from "../../src/agent/agent"
 import { Config } from "@/config/config"
@@ -14,10 +15,10 @@ import {
   AgentDepthExceededError,
   AgentNotFoundError,
   AgentReferenceInvalidError,
-  type SpawnEvent,
+  spawnErrorTag,
 } from "./control"
-import { AgentPath } from "./agent-path"
-import { AgentLimitReachedError, PathAlreadyExistsError } from "./registry"
+import { AgentPath, AgentPathInvalidError } from "./agent-path"
+import { AgentLimitReachedError, NoNicknameAvailableError, PathAlreadyExistsError } from "./registry"
 import { InterAgentCommunication } from "./inter-agent-communication"
 
 // AgentControl tests use real Session.Service so the spawn flow exercises the
@@ -34,6 +35,7 @@ const it = testEffect(
   Layer.mergeAll(
     AgentControl.defaultLayer,
     Agent.defaultLayer,
+    Bus.defaultLayer,
     Config.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
     Session.defaultLayer,
@@ -241,63 +243,105 @@ describe("AgentControl.spawnAgent", () => {
     ),
   )
 
-  it.live("emits spawn_begin then spawn_end to a registered listener", () =>
+  it.live("emits Agent.Spawn.Started then Spawn.Ended on the bus on success", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         yield* installNeverLoop([])
         const root = yield* seedRoot()
         const control = yield* AgentControl.Service
-        const events: SpawnEvent[] = []
-        yield* control.onSpawnEvent((e) => events.push(e))
+        const bus = yield* Bus.Service
+        const started: Array<{ task_name: string; child_path: string }> = []
+        const ended: Array<{
+          task_name: string
+          child_path: string
+          status: unknown
+          child_session_id?: string
+          error?: string
+        }> = []
+        const offStarted = yield* bus.subscribeCallback(AgentControl.Event.SpawnStarted, (evt) =>
+          started.push({
+            task_name: evt.properties.task_name,
+            child_path: String(evt.properties.child_path),
+          }),
+        )
+        const offEnded = yield* bus.subscribeCallback(AgentControl.Event.SpawnEnded, (evt) =>
+          ended.push({
+            task_name: evt.properties.task_name,
+            child_path: String(evt.properties.child_path),
+            status: evt.properties.status,
+            child_session_id: evt.properties.child_session_id,
+            error: evt.properties.error,
+          }),
+        )
 
-        yield* control.spawnAgent({
-          parentID: root.id,
-          parentPath: ROOT,
-          task_name: "watched",
-          initial_message: "watch me",
-        })
+        try {
+          yield* control.spawnAgent({
+            parentID: root.id,
+            parentPath: ROOT,
+            task_name: "watched",
+            initial_message: "watch me",
+          })
+          // Bus dispatch is synchronous within the same fiber but the
+          // subscriber callback runs through Effect.tryPromise — give it a
+          // microtask to drain.
+          yield* Effect.sleep(20)
 
-        const types = events.map((e) => e.type)
-        expect(types).toEqual(["spawn_begin", "spawn_end"])
-        const end = events.find((e) => e.type === "spawn_end")
-        if (end?.type === "spawn_end") {
-          expect(String(end.path)).toBe("/root/watched")
-          expect(end.metadata.agent_id).toBe(end.sessionID)
+          expect(started.length).toBe(1)
+          expect(started[0]?.task_name).toBe("watched")
+          expect(started[0]?.child_path).toBe("/root/watched")
+
+          expect(ended.length).toBe(1)
+          expect(ended[0]?.task_name).toBe("watched")
+          expect(ended[0]?.child_path).toBe("/root/watched")
+          // Success path: child_session_id is set, error is undefined,
+          // status is non-final (pending_init or running).
+          expect(typeof ended[0]?.child_session_id).toBe("string")
+          expect(ended[0]?.error).toBeUndefined()
+        } finally {
+          offStarted()
+          offEnded()
         }
       }),
     ),
   )
 
-  it.live("emits spawn_error when the spawn rejects (path collision)", () =>
+  it.live("emits Agent.Spawn.Ended with status not_found and error tag on rejection", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         yield* installNeverLoop([])
         const root = yield* seedRoot()
         const control = yield* AgentControl.Service
-        const events: SpawnEvent[] = []
-        yield* control.onSpawnEvent((e) => events.push(e))
+        const bus = yield* Bus.Service
+        const ended: Array<{ status: unknown; error?: string }> = []
+        const off = yield* bus.subscribeCallback(AgentControl.Event.SpawnEnded, (evt) =>
+          ended.push({ status: evt.properties.status, error: evt.properties.error }),
+        )
 
-        yield* control.spawnAgent({
-          parentID: root.id,
-          parentPath: ROOT,
-          task_name: "boom",
-          initial_message: "first",
-        })
-        yield* Effect.result(
-          control.spawnAgent({
+        try {
+          // First spawn succeeds — second spawn collides on the path.
+          yield* control.spawnAgent({
             parentID: root.id,
             parentPath: ROOT,
             task_name: "boom",
-            initial_message: "second",
-          }),
-        )
+            initial_message: "first",
+          })
+          yield* Effect.result(
+            control.spawnAgent({
+              parentID: root.id,
+              parentPath: ROOT,
+              task_name: "boom",
+              initial_message: "second",
+            }),
+          )
+          yield* Effect.sleep(20)
 
-        // Two spawn_begin events (one per attempt), one spawn_end (success), one spawn_error.
-        expect(events.filter((e) => e.type === "spawn_error")).toHaveLength(1)
-        const err = events.find((e) => e.type === "spawn_error")
-        if (err?.type === "spawn_error") {
-          expect(String(err.path)).toBe("/root/boom")
-          expect(err.reason.length).toBeGreaterThan(0)
+          expect(ended.length).toBe(2)
+          // Second emission carries the failure shape.
+          const failure = ended[1]
+          expect(failure?.status).toBe("not_found")
+          expect(failure?.error).toBe("path_exists")
+        } finally {
+          off()
         }
       }),
     ),
@@ -1042,45 +1086,234 @@ describe("AgentControl error classes", () => {
   )
 })
 
-describe("AgentControl.onSpawnEvent unsubscribe", () => {
-  it.live("the returned unsubscribe stops further events from firing", () =>
+describe("AgentControl bus event emission", () => {
+  it.live("spawnErrorTag classifies every SpawnError tag", () =>
+    Effect.sync(() => {
+      // Drives the unreachable-via-spawn `no_nickname` arm directly. The
+      // registry recycles the nickname pool with reset suffixes, so a
+      // genuine NoNicknameAvailableError can't be triggered through the
+      // current default candidates. Exporting + unit-testing the
+      // classifier keeps line coverage honest without forcing a contrived
+      // candidate-pool injection.
+      expect(spawnErrorTag(new AgentDepthExceededError({ depth: 5, max: 4 }))).toBe(
+        "depth_exceeded",
+      )
+      expect(spawnErrorTag(new AgentLimitReachedError({ max_threads: 4 }))).toBe("limit_reached")
+      expect(
+        spawnErrorTag(new AgentPathInvalidError({ input: "bad", reason: "x" })),
+      ).toBe("path_invalid")
+      expect(
+        spawnErrorTag(new PathAlreadyExistsError({ path: AgentPath.root() })),
+      ).toBe("path_exists")
+      expect(spawnErrorTag(new NoNicknameAvailableError({}))).toBe("no_nickname")
+      expect(spawnErrorTag(new Error("anything else"))).toBe("unknown")
+    }),
+  )
+
+  it.live("emits Agent.Message.Sent on sendInterAgentCommunication with sender path and trigger flag", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         yield* installNeverLoop([])
         const root = yield* seedRoot()
         const control = yield* AgentControl.Service
-        const events: SpawnEvent[] = []
-        const off = yield* control.onSpawnEvent((e) => events.push(e))
-        off()
-
-        yield* control.spawnAgent({
+        const child = yield* control.spawnAgent({
           parentID: root.id,
           parentPath: ROOT,
-          task_name: "silent",
-          initial_message: ".",
+          task_name: "tgt",
+          initial_message: "init",
         })
-        expect(events).toEqual([])
+        yield* control.drainMailbox(child.thread_id)
+
+        const bus = yield* Bus.Service
+        const sent: Array<{
+          target_session_id: string
+          target_path: string
+          message_length: number
+          trigger_turn: boolean
+          sender_path: string
+        }> = []
+        const off = yield* bus.subscribeCallback(AgentControl.Event.MessageSent, (evt) =>
+          sent.push({
+            target_session_id: evt.properties.target_session_id,
+            target_path: String(evt.properties.target_path),
+            message_length: evt.properties.message_length,
+            trigger_turn: evt.properties.trigger_turn,
+            sender_path: String(evt.properties.sender_path),
+          }),
+        )
+        try {
+          yield* control.sendInterAgentCommunication(
+            child.thread_id,
+            new InterAgentCommunication({
+              author: ROOT,
+              recipient: path("/root/tgt"),
+              content: "hello sibling",
+              trigger_turn: false,
+              sent_at: 1,
+            }),
+          )
+          yield* Effect.sleep(20)
+
+          expect(sent.length).toBe(1)
+          expect(sent[0]?.target_session_id).toBe(child.thread_id)
+          expect(sent[0]?.target_path).toBe("/root/tgt")
+          expect(sent[0]?.message_length).toBe("hello sibling".length)
+          expect(sent[0]?.trigger_turn).toBe(false)
+          expect(sent[0]?.sender_path).toBe("/root")
+        } finally {
+          off()
+        }
       }),
     ),
   )
 
-  it.live("callback errors do not break the spawn flow", () =>
+  it.live("emits Agent.Closed for closeAgent + each cascaded descendant", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         yield* installNeverLoop([])
         const root = yield* seedRoot()
         const control = yield* AgentControl.Service
-        yield* control.onSpawnEvent(() => {
-          throw new Error("listener exploded")
+        const a = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "a",
+          initial_message: ".",
         })
-        // Spawn must still succeed despite the listener throwing.
+        const b = yield* control.spawnAgent({
+          parentID: a.thread_id,
+          parentPath: path("/root/a"),
+          task_name: "b",
+          initial_message: ".",
+        })
+        const c = yield* control.spawnAgent({
+          parentID: a.thread_id,
+          parentPath: path("/root/a"),
+          task_name: "c",
+          initial_message: ".",
+        })
+
+        const bus = yield* Bus.Service
+        const closed: Array<{ agent_path: string; previous_status: unknown }> = []
+        const off = yield* bus.subscribeCallback(AgentControl.Event.Closed, (evt) =>
+          closed.push({
+            agent_path: String(evt.properties.agent_path),
+            previous_status: evt.properties.previous_status,
+          }),
+        )
+        try {
+          yield* control.closeAgent(a.thread_id)
+          yield* Effect.sleep(20)
+
+          // Three closures: leaves first (b, c) then root of subtree (a).
+          const paths = closed.map((c) => c.agent_path).sort()
+          expect(paths).toEqual(["/root/a", "/root/a/b", "/root/a/c"])
+          // sanity: spawned ids exist (referenced by closure ordering)
+          expect([a.thread_id, b.thread_id, c.thread_id]).toHaveLength(3)
+        } finally {
+          off()
+        }
+      }),
+    ),
+  )
+})
+
+describe("AgentControl status derivation from session events", () => {
+  it.live("Step.Started on a child session transitions status from pending_init to running", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
         const live = yield* control.spawnAgent({
           parentID: root.id,
           parentPath: ROOT,
-          task_name: "resilient",
+          task_name: "stepped",
           initial_message: ".",
         })
-        expect(String(live.metadata.agent_path)).toBe("/root/resilient")
+
+        // Publish a Step.Started event into the test's bus (the same bus
+        // instance AgentControl's subscriber listens to). In production,
+        // processor.ts calls EventV2.run for the same payload, which
+        // ultimately publishes to the same shared bus.
+        const bus = yield* Bus.Service
+        // Allow the InstanceState-bound bus subscriber to actually start
+        // listening before publishing — Effect.forkScoped is asynchronous.
+        yield* Effect.sleep(20)
+        yield* bus.publish(AgentControl.Inbound.StepStarted, {
+          timestamp: DateTime.makeUnsafe(Date.now()),
+          sessionID: live.thread_id,
+          agent: "default",
+          model: { id: "test", providerID: "test" },
+        })
+        yield* Effect.sleep(50)
+
+        const ref = yield* control.subscribeStatus(live.thread_id)
+        const value = yield* SubscriptionRef.get(ref)
+        expect(value).toBe("running")
+      }),
+    ),
+  )
+
+  it.live("Step.Ended on a child session transitions status to completed(null)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const live = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "stepended",
+          initial_message: ".",
+        })
+
+        const bus = yield* Bus.Service
+        // Allow the InstanceState-bound bus subscriber to actually start
+        // listening before publishing — Effect.forkScoped is asynchronous.
+        yield* Effect.sleep(20)
+        yield* bus.publish(AgentControl.Inbound.StepEnded, {
+          timestamp: DateTime.makeUnsafe(Date.now()),
+          sessionID: live.thread_id,
+          finish: "stop",
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        })
+        yield* Effect.sleep(50)
+
+        const ref = yield* control.subscribeStatus(live.thread_id)
+        const value = yield* SubscriptionRef.get(ref)
+        expect(value).toEqual({ completed: null })
+      }),
+    ),
+  )
+
+  it.live("Step events for sessions outside the registry do not affect tracked status", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const live = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "unaffected",
+          initial_message: ".",
+        })
+        const before = yield* SubscriptionRef.get(yield* control.subscribeStatus(live.thread_id))
+
+        const bus = yield* Bus.Service
+        // Allow the InstanceState-bound bus subscriber to start listening.
+        yield* Effect.sleep(20)
+        yield* bus.publish(AgentControl.Inbound.StepStarted, {
+          timestamp: DateTime.makeUnsafe(Date.now()),
+          sessionID: SessionID.descending(),
+          agent: "default",
+          model: { id: "test", providerID: "test" },
+        })
+        yield* Effect.sleep(50)
+
+        const after = yield* SubscriptionRef.get(yield* control.subscribeStatus(live.thread_id))
+        expect(after).toBe(before)
       }),
     ),
   )

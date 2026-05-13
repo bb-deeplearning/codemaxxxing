@@ -8,11 +8,19 @@ import {
   Ref,
   Schema,
   Scope,
+  Stream,
   SubscriptionRef,
 } from "effect"
+import { Identifier } from "@/id/id"
 import { Session } from "@/session/session"
 import { SessionID } from "@/session/schema"
+import { Bus } from "@/bus"
+import { BusEvent } from "@/bus/bus-event"
+import { EventV2 } from "@/v2/event"
+import { SessionEvent } from "@/v2/session-event"
 import { InstanceState } from "@/effect/instance-state"
+import { InstanceRef } from "@/effect/instance-ref"
+import { NonNegativeInt } from "@/util/schema"
 import { AgentPath, AgentPathInvalidError } from "./agent-path"
 import { AgentMetadata } from "./metadata"
 import { AgentStatus } from "./status"
@@ -72,24 +80,125 @@ const DEFAULT_NICKNAME_CANDIDATES = [
 
 const ROOT_LAST_TASK_MESSAGE = "Main thread"
 
-// SpawnEvent fires for every spawn lifecycle phase. Wave 7 surfaces these via
-// `onSpawnEvent` callbacks; Wave 10 will mirror them to Bus events for
-// EventV2 + downstream subscribers (TUI, analytics).
-export type SpawnEvent =
-  | { readonly type: "spawn_begin"; readonly sessionID: SessionID; readonly path: AgentPath }
-  | {
-      readonly type: "spawn_end"
-      readonly sessionID: SessionID
-      readonly path: AgentPath
-      readonly metadata: AgentMetadata
-    }
-  | { readonly type: "spawn_error"; readonly path: AgentPath; readonly reason: string }
-  | {
-      readonly type: "shutdown"
-      readonly sessionID: SessionID
-      readonly path: AgentPath
-      readonly previousStatus: AgentStatus
-    }
+// Wave 10 — bus events. Two-channel emission per lifecycle moment:
+//   - EventV2.run(SessionEvent.Agent.*) — sourced log under
+//     "session.next.agent.*". Persisted to the event log; auto-published on
+//     the project bus by the sync runtime.
+//   - Bus.publish(Event.*) — in-process pub/sub under "agent.*". TUI / plugin
+//     consumers subscribe here. Type-safe payload shapes documented below.
+//
+// Two type prefixes ("session.next.agent.*" vs "agent.*") avoid collision
+// with the auto-registration that SyncEvent.init performs on EventV2 defs
+// (sync/index.ts:210). Both definitions stay live in the BusEvent registry
+// and surface in the SDK.
+export const Event = {
+  SpawnStarted: BusEvent.define(
+    "agent.spawn.started",
+    Schema.Struct({
+      sessionID: SessionID,
+      timestamp: NonNegativeInt,
+      call_id: Schema.String,
+      task_name: Schema.String,
+      child_path: AgentPath,
+      agent_type: Schema.String.pipe(Schema.optional),
+      prompt: Schema.String,
+    }),
+  ),
+  SpawnEnded: BusEvent.define(
+    "agent.spawn.ended",
+    Schema.Struct({
+      sessionID: SessionID,
+      timestamp: NonNegativeInt,
+      call_id: Schema.String,
+      task_name: Schema.String,
+      child_path: AgentPath,
+      agent_type: Schema.String.pipe(Schema.optional),
+      child_session_id: SessionID.pipe(Schema.optional),
+      child_nickname: Schema.String.pipe(Schema.optional),
+      status: AgentStatus,
+      error: Schema.String.pipe(Schema.optional),
+    }),
+  ),
+  Closed: BusEvent.define(
+    "agent.closed",
+    Schema.Struct({
+      sessionID: SessionID,
+      timestamp: NonNegativeInt,
+      agent_path: AgentPath,
+      previous_status: AgentStatus,
+    }),
+  ),
+  WaitStarted: BusEvent.define(
+    "agent.wait.started",
+    Schema.Struct({
+      sessionID: SessionID,
+      timestamp: NonNegativeInt,
+      call_id: Schema.String,
+      timeout_ms: NonNegativeInt,
+    }),
+  ),
+  WaitEnded: BusEvent.define(
+    "agent.wait.ended",
+    Schema.Struct({
+      sessionID: SessionID,
+      timestamp: NonNegativeInt,
+      call_id: Schema.String,
+      timed_out: Schema.Boolean,
+    }),
+  ),
+  MessageSent: BusEvent.define(
+    "agent.message.sent",
+    Schema.Struct({
+      sessionID: SessionID,
+      timestamp: NonNegativeInt,
+      sender_path: AgentPath,
+      target_session_id: SessionID,
+      target_path: AgentPath,
+      message_length: NonNegativeInt,
+      trigger_turn: Schema.Boolean,
+    }),
+  ),
+}
+
+// Inbound subscription adapters — BusEvent.Definition shapes that match the
+// auto-registered types from `SessionEvent.Step.*` so we can subscribe
+// directly via Bus.subscribe with a precise payload type. The `type` strings
+// match what SyncEvent.init registers on the bus (sync/index.ts:210). We
+// don't call BusEvent.define here (the auto-registration already did) so we
+// don't collide; we just construct the Definition shape locally.
+//
+// These are public so tests can publish onto the same PubSub the
+// AgentControl subscriber listens to without going through EventV2.run
+// (which uses a separate, shared runtime that test layers don't share —
+// see GOTCHAS.md `bus-subscribe-helper-vs-service-method-cross-runtime-mismatch`).
+export const Inbound = {
+  StepStarted: {
+    type: SessionEvent.Step.Started.Sync.type,
+    properties: SessionEvent.Step.Started.Sync.properties,
+  } as const,
+  StepEnded: {
+    type: SessionEvent.Step.Ended.Sync.type,
+    properties: SessionEvent.Step.Ended.Sync.properties,
+  } as const,
+}
+
+const newCallID = () => Identifier.create("call", "ascending")
+
+// Stable model-facing error tag derived from a SpawnError class. Surfaces
+// on Agent.Spawn.Ended bus events as `error: <tag>` so subscribers branch
+// without parsing prose. Exported for direct unit testing of the
+// classification — the `no_nickname` arm is structurally defensive (the
+// registry's nickname pool recycles via reset suffixes, so spawn never
+// surfaces NoNicknameAvailableError under current configuration), and
+// only direct invocation can exercise it.
+export const spawnErrorTag = (cause: unknown): string => {
+  if (cause instanceof AgentDepthExceededError) return "depth_exceeded"
+  if (cause instanceof AgentLimitReachedError) return "limit_reached"
+  if (cause instanceof AgentPathInvalidError) return "path_invalid"
+  if (cause instanceof PathAlreadyExistsError) return "path_exists"
+  if (cause instanceof NoNicknameAvailableError) return "no_nickname"
+  return "unknown"
+}
 
 export class AgentDepthExceededError extends Schema.TaggedErrorClass<AgentDepthExceededError>()(
   "AgentDepthExceededError",
@@ -158,7 +267,6 @@ export interface Interface {
   readonly registerRunLoop: (
     fn: (sessionID: SessionID) => Effect.Effect<unknown>,
   ) => Effect.Effect<void>
-  readonly onSpawnEvent: (callback: (event: SpawnEvent) => void) => Effect.Effect<() => void>
   readonly registerSessionRoot: (id: SessionID) => Effect.Effect<void>
   readonly spawnAgent: (input: SpawnAgentInput) => Effect.Effect<LiveAgent, SpawnError>
   readonly sendInterAgentCommunication: (
@@ -192,6 +300,20 @@ export interface Interface {
   // Idempotent: closing an agent whose mailbox or fiber is already gone is a
   // no-op, mirroring `closeAgent`.
   readonly cancelChildrenOf: (parentID: SessionID) => Effect.Effect<void>
+  // Wave 10: emit a paired Wait.Started/Wait.Ended around an outer wait
+  // operation. The wait_agent tool calls this so the bus events are produced
+  // by the AgentControl service (centralized lifecycle bookkeeping) rather
+  // than by every consumer that wants to time a wait.
+  readonly emitWaitStarted: (
+    sessionID: SessionID,
+    callID: string,
+    timeoutMs: number,
+  ) => Effect.Effect<void>
+  readonly emitWaitEnded: (
+    sessionID: SessionID,
+    callID: string,
+    timedOut: boolean,
+  ) => Effect.Effect<void>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/AgentControl") {}
@@ -222,7 +344,6 @@ interface InternalState {
   readonly mailboxes: Map<SessionID, Mailbox.Interface>
   readonly statuses: Map<SessionID, SubscriptionRef.SubscriptionRef<AgentStatus>>
   readonly fibers: Map<SessionID, Fiber.Fiber<unknown, unknown>>
-  readonly listeners: Set<(event: SpawnEvent) => void>
   readonly rootRef: Ref.Ref<SessionID | undefined>
   readonly scope: Scope.Scope
 }
@@ -231,6 +352,7 @@ export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const sessions = yield* Session.Service
+    const bus = yield* Bus.Service
     const providerRef = yield* Ref.make<
       ((sessionID: SessionID) => Effect.Effect<unknown>) | undefined
     >(undefined)
@@ -238,12 +360,63 @@ export const layer = Layer.effect(
     const state = yield* InstanceState.make(
       Effect.fn("AgentControl.state")(function* () {
         const scope = yield* Scope.Scope
+        const ctx = yield* InstanceState.context
         const registry = yield* AgentRegistry.make()
         const mailboxes = new Map<SessionID, Mailbox.Interface>()
         const statuses = new Map<SessionID, SubscriptionRef.SubscriptionRef<AgentStatus>>()
         const fibers = new Map<SessionID, Fiber.Fiber<unknown, unknown>>()
-        const listeners = new Set<(event: SpawnEvent) => void>()
         const rootRef = yield* Ref.make<SessionID | undefined>(undefined)
+
+        // Wave 10 status derivation. Forking the bus subscriber INSIDE
+        // InstanceState.make binds it to the per-instance scope (so the
+        // fiber dies on instance disposal). The captured InstanceContext is
+        // re-injected via `Effect.provideService(InstanceRef, ctx)` so any
+        // sub-effect that reads InstanceState (Bus.subscribe internally
+        // reads its own InstanceState) sees the right Instance binding —
+        // ALS context isn't reliably preserved across Effect.forkScoped on
+        // every scheduler implementation.
+        //
+        // Status mapping mirrors codex `agent_status_from_event`
+        // (codex-rs/core/src/agent/status.rs:6-21): turn_started → running,
+        // turn_complete → completed. Final statuses (shutdown / completed /
+        // errored) are sticky — a late Step.* must not flip a closed agent
+        // back to running.
+        const applyToStatus = (sessionID: SessionID, next: AgentStatus | null) =>
+          Effect.gen(function* () {
+            if (next === null) return
+            const ref = statuses.get(sessionID)
+            if (!ref) return
+            const current = yield* SubscriptionRef.get(ref)
+            if (AgentStatus.isFinal(current) && current !== "interrupted") return
+            yield* SubscriptionRef.set(ref, next)
+          })
+
+        yield* Effect.forkScoped(
+          bus
+            .subscribe(Inbound.StepStarted)
+            .pipe(
+              Stream.runForEach((evt) =>
+                applyToStatus(
+                  evt.properties.sessionID,
+                  AgentStatus.fromSessionEvent({ type: "turn_started" }),
+                ),
+              ),
+            )
+            .pipe(Effect.provideService(InstanceRef, ctx)),
+        )
+        yield* Effect.forkScoped(
+          bus
+            .subscribe(Inbound.StepEnded)
+            .pipe(
+              Stream.runForEach((evt) =>
+                applyToStatus(
+                  evt.properties.sessionID,
+                  AgentStatus.fromSessionEvent({ type: "turn_complete" }),
+                ),
+              ),
+            )
+            .pipe(Effect.provideService(InstanceRef, ctx)),
+        )
 
         // On instance disposal, interrupt every live child fiber so siblings
         // never outlive the project. The forkIn(parentScope) below wires
@@ -257,7 +430,6 @@ export const layer = Layer.effect(
             fibers.clear()
             mailboxes.clear()
             statuses.clear()
-            listeners.clear()
           }),
         )
 
@@ -266,40 +438,16 @@ export const layer = Layer.effect(
           mailboxes,
           statuses,
           fibers,
-          listeners,
           rootRef,
           scope,
         } satisfies InternalState
       }),
     )
 
-    const emit = (data: InternalState, event: SpawnEvent): Effect.Effect<void> =>
-      Effect.sync(() => {
-        for (const cb of data.listeners) {
-          // Listeners are user-supplied; we swallow per-callback errors so a
-          // misbehaving subscriber can't break the spawn flow.
-          try {
-            cb(event)
-          } catch {
-            // intentional swallow — listener errors are isolated.
-          }
-        }
-      })
-
     const registerRunLoop = Effect.fn("AgentControl.registerRunLoop")(function* (
       fn: (sessionID: SessionID) => Effect.Effect<unknown>,
     ) {
       yield* Ref.set(providerRef, fn)
-    })
-
-    const onSpawnEvent = Effect.fn("AgentControl.onSpawnEvent")(function* (
-      callback: (event: SpawnEvent) => void,
-    ) {
-      const data = yield* InstanceState.get(state)
-      data.listeners.add(callback)
-      return () => {
-        data.listeners.delete(callback)
-      }
     })
 
     const registerSessionRoot = Effect.fn("AgentControl.registerSessionRoot")(function* (
@@ -309,8 +457,7 @@ export const layer = Layer.effect(
       yield* data.registry.registerRootThread(id)
       yield* Ref.set(data.rootRef, id)
       // Initialize a status for the root so `subscribeStatus(rootID)` works
-      // and `listAgents` can report a status for root. Real status updates
-      // for root come later when Wave 10 wires SessionEvent.
+      // and `listAgents` can report a status for root.
       if (!data.statuses.has(id)) {
         const status = yield* SubscriptionRef.make<AgentStatus>("running")
         data.statuses.set(id, status)
@@ -319,13 +466,46 @@ export const layer = Layer.effect(
 
     const spawnAgent = Effect.fn("AgentControl.spawnAgent")(function* (input: SpawnAgentInput) {
       const data = yield* InstanceState.get(state)
+      const callID = newCallID()
       // 1. Compute child path. Failure here is AgentPathInvalidError from
       //    AgentPath.join (the leaf failed segment validation).
-      const childPath = yield* AgentPath.join(input.parentPath, input.task_name)
+      const childPath = yield* AgentPath.join(input.parentPath, input.task_name).pipe(
+        Effect.tapError((cause) =>
+          // Failed before we could even fire Spawn.Started. Emit a single
+          // Spawn.Ended carrying the rejection so subscribers see a paired
+          // lifecycle even on path-validation failure.
+          emitSpawnEnded({
+            sessionID: input.parentID,
+            call_id: callID,
+            task_name: input.task_name,
+            // Best-effort path: the parent + task_name as a string. The
+            // AgentPath schema would reject it, so we synthesize a literal
+            // and brand it. Subscribers care about the task_name + error
+            // tag here; the path is informational.
+            child_path: AgentPath.from(
+              `${input.parentPath as string}/${input.task_name}`,
+            ).pipe(
+              Effect.catch(() => Effect.succeed(AgentPath.root())),
+            ),
+            agent_type: input.agent_type,
+            status: "not_found",
+            error: spawnErrorTag(cause),
+          }),
+        ),
+      )
 
       // 2. Depth check before reserving anything — cheap to fail fast.
       const depth = pathDepth(childPath)
       if (exceedsThreadSpawnDepthLimit(depth, AGENT_MAX_DEPTH)) {
+        yield* emitSpawnEnded({
+          sessionID: input.parentID,
+          call_id: callID,
+          task_name: input.task_name,
+          child_path: Effect.succeed(childPath),
+          agent_type: input.agent_type,
+          status: "not_found",
+          error: "depth_exceeded",
+        })
         return yield* new AgentDepthExceededError({ depth, max: AGENT_MAX_DEPTH })
       }
 
@@ -358,7 +538,23 @@ export const layer = Layer.effect(
               permission: parent.permission,
             })
 
-            yield* emit(data, { type: "spawn_begin", sessionID: child.id, path: childPath })
+            // Spawn.Started fires AFTER child session creation (so we have
+            // a real conversation_id available for downstream subscribers
+            // that want to subscribe to that session) but BEFORE forking
+            // the run loop (mirrors codex spawn.rs:68-81).
+            yield* emitSpawn({
+              event: Event.SpawnStarted,
+              sync: SessionEvent.Agent.Spawn.Started.Sync,
+              data: {
+                sessionID: input.parentID,
+                timestamp: Date.now(),
+                call_id: callID,
+                task_name: input.task_name,
+                child_path: childPath,
+                agent_type: input.agent_type,
+                prompt: input.initial_message,
+              },
+            })
 
             const mailbox = yield* Mailbox.make()
             const status = yield* SubscriptionRef.make<AgentStatus>("pending_init")
@@ -423,7 +619,21 @@ export const layer = Layer.effect(
             }
             const finalStatus = yield* SubscriptionRef.get(status)
 
-            yield* emit(data, { type: "spawn_end", sessionID: child.id, path: childPath, metadata })
+            yield* emitSpawn({
+              event: Event.SpawnEnded,
+              sync: SessionEvent.Agent.Spawn.Ended.Sync,
+              data: {
+                sessionID: input.parentID,
+                timestamp: Date.now(),
+                call_id: callID,
+                task_name: input.task_name,
+                child_path: childPath,
+                agent_type: input.agent_type,
+                child_session_id: child.id,
+                child_nickname: nickname,
+                status: finalStatus,
+              },
+            })
 
             return new LiveAgent({
               thread_id: child.id,
@@ -435,15 +645,75 @@ export const layer = Layer.effect(
           Exit.isFailure(exit)
             ? Effect.gen(function* () {
                 yield* reservation.release()
-                yield* emit(data, {
-                  type: "spawn_error",
-                  path: childPath,
-                  reason: Cause.pretty(exit.cause),
+                // Pluck the first typed failure out of the cause to tag it.
+                // Effect v4 exposes this via `Cause.findErrorOption`.
+                const errOpt = Cause.findErrorOption(exit.cause)
+                yield* emitSpawnEnded({
+                  sessionID: input.parentID,
+                  call_id: callID,
+                  task_name: input.task_name,
+                  child_path: Effect.succeed(childPath),
+                  agent_type: input.agent_type,
+                  status: "not_found",
+                  error: spawnErrorTag(errOpt._tag === "Some" ? errOpt.value : exit.cause),
                 })
               })
             : Effect.void,
       )
     })
+
+    // Internal helper for the dual EventV2 + Bus emission. Both fire under
+    // separate type prefixes so subscribers can choose either channel
+    // (sourced log vs ephemeral pub/sub).
+    function emitSpawn<P extends Record<string, unknown>>(input: {
+      event:
+        | typeof Event.SpawnStarted
+        | typeof Event.SpawnEnded
+      sync: typeof SessionEvent.Agent.Spawn.Started.Sync | typeof SessionEvent.Agent.Spawn.Ended.Sync
+      data: P
+    }): Effect.Effect<void> {
+      return Effect.gen(function* () {
+        // EventV2 sourced log. Best-effort: if the SyncEvent runtime isn't
+        // available (test env without preload, or flag off) the call is a
+        // no-op. We don't want logging failures to break the spawn flow.
+        try {
+          EventV2.run(input.sync, input.data as never)
+        } catch {
+          // intentional swallow — projection failure shouldn't kill spawn.
+        }
+        yield* bus.publish(input.event, input.data as never).pipe(Effect.ignore)
+      })
+    }
+
+    function emitSpawnEnded(input: {
+      sessionID: SessionID
+      call_id: string
+      task_name: string
+      child_path: Effect.Effect<AgentPath, never>
+      agent_type?: string
+      status: AgentStatus
+      error?: string
+    }): Effect.Effect<void> {
+      return Effect.gen(function* () {
+        const childPath = yield* input.child_path
+        const data = {
+          sessionID: input.sessionID,
+          timestamp: Date.now(),
+          call_id: input.call_id,
+          task_name: input.task_name,
+          child_path: childPath,
+          agent_type: input.agent_type,
+          status: input.status,
+          error: input.error,
+        }
+        try {
+          EventV2.run(SessionEvent.Agent.Spawn.Ended.Sync, data as never)
+        } catch {
+          // intentional swallow.
+        }
+        yield* bus.publish(Event.SpawnEnded, data).pipe(Effect.ignore)
+      })
+    }
 
     const sendInterAgentCommunication = Effect.fn("AgentControl.sendInterAgentCommunication")(
       function* (targetID: SessionID, comm: InterAgentCommunication) {
@@ -455,8 +725,37 @@ export const layer = Layer.effect(
         }
         yield* mailbox.send(comm)
         yield* data.registry.updateLastTaskMessage(targetID, comm.content)
+        // Wave 10: surface the inter-agent communication on the bus so the
+        // TUI / plugins can render in-flight traffic. Aggregate is the
+        // sender (sessionID = author session); receiver fields carry the
+        // target IDs.
+        const senderID = (yield* lookupSessionForPath(data, comm.author)) ?? targetID
+        const eventData = {
+          sessionID: senderID,
+          timestamp: Date.now(),
+          sender_path: comm.author,
+          target_session_id: targetID,
+          target_path: comm.recipient,
+          message_length: comm.content.length,
+          trigger_turn: comm.trigger_turn,
+        }
+        try {
+          EventV2.run(SessionEvent.Agent.Message.Sent.Sync, eventData as never)
+        } catch {
+          // intentional swallow.
+        }
+        yield* bus.publish(Event.MessageSent, eventData).pipe(Effect.ignore)
       },
     )
+
+    // Resolve a SessionID for a canonical AgentPath, including root. Returns
+    // undefined when the path is not registered (e.g. the sender is a path
+    // not currently held in the registry — rare but legal during cascade).
+    const lookupSessionForPath = (data: InternalState, path: AgentPath) =>
+      Effect.gen(function* () {
+        if (AgentPath.isRoot(path)) return yield* Ref.get(data.rootRef)
+        return yield* data.registry.agentIdForPath(path)
+      })
 
     const closeAgent = Effect.fn("AgentControl.closeAgent")(function* (id: SessionID) {
       const data = yield* InstanceState.get(state)
@@ -528,12 +827,22 @@ export const layer = Layer.effect(
         }
         data.mailboxes.delete(sessionId)
         yield* data.registry.releaseSpawnedThread(sessionId)
-        yield* emit(data, {
-          type: "shutdown",
+
+        // Wave 10: emit Agent.Closed on both channels. Aggregate sessionID
+        // is the closed agent itself so the projection lands in the closed
+        // agent's history.
+        const eventData = {
           sessionID: sessionId,
-          path: agentPath ?? AgentPath.root(),
-          previousStatus,
-        })
+          timestamp: Date.now(),
+          agent_path: agentPath ?? AgentPath.root(),
+          previous_status: previousStatus,
+        }
+        try {
+          EventV2.run(SessionEvent.Agent.Closed.Sync, eventData as never)
+        } catch {
+          // intentional swallow.
+        }
+        yield* bus.publish(Event.Closed, eventData).pipe(Effect.ignore)
       })
 
     const listAgents = Effect.fn("AgentControl.listAgents")(function* (
@@ -700,9 +1009,46 @@ export const layer = Layer.effect(
       }
     })
 
+    const emitWaitStarted = Effect.fn("AgentControl.emitWaitStarted")(function* (
+      sessionID: SessionID,
+      callID: string,
+      timeoutMs: number,
+    ) {
+      const data = {
+        sessionID,
+        timestamp: Date.now(),
+        call_id: callID,
+        timeout_ms: timeoutMs,
+      }
+      try {
+        EventV2.run(SessionEvent.Agent.Wait.Started.Sync, data as never)
+      } catch {
+        // intentional swallow.
+      }
+      yield* bus.publish(Event.WaitStarted, data).pipe(Effect.ignore)
+    })
+
+    const emitWaitEnded = Effect.fn("AgentControl.emitWaitEnded")(function* (
+      sessionID: SessionID,
+      callID: string,
+      timedOut: boolean,
+    ) {
+      const data = {
+        sessionID,
+        timestamp: Date.now(),
+        call_id: callID,
+        timed_out: timedOut,
+      }
+      try {
+        EventV2.run(SessionEvent.Agent.Wait.Ended.Sync, data as never)
+      } catch {
+        // intentional swallow.
+      }
+      yield* bus.publish(Event.WaitEnded, data).pipe(Effect.ignore)
+    })
+
     return Service.of({
       registerRunLoop,
-      onSpawnEvent,
       registerSessionRoot,
       spawnAgent,
       sendInterAgentCommunication,
@@ -716,11 +1062,23 @@ export const layer = Layer.effect(
       hasPendingTriggerTurn,
       drainMailbox,
       cancelChildrenOf,
+      emitWaitStarted,
+      emitWaitEnded,
     })
   }),
 )
 
-export const defaultLayer = layer.pipe(Layer.provide(Session.defaultLayer))
+// AgentControl.defaultLayer self-provides its deps so that consumers of
+// `defaultLayer` (production AppRuntime, every existing test layer that
+// uses ToolRegistry.defaultLayer) don't need to be updated when this
+// service grows new requirements. Bus.layer is included so the in-effect
+// bus subscriber wires up against the same Bus.Service that consumers see
+// when they `yield* Bus.Service` against a test runtime that includes
+// Bus.defaultLayer (mergeAll dedupes by service tag — outer Bus wins).
+export const defaultLayer = layer.pipe(
+  Layer.provide(Session.defaultLayer),
+  Layer.provide(Bus.defaultLayer),
+)
 
 // Mirrors codex `agent_matches_prefix` (control.rs:1217-1229). Returns true
 // when the agent's path is exactly the prefix or sits underneath it as a

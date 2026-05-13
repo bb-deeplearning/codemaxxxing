@@ -1,37 +1,37 @@
 {
-  "captured_at": "2026-05-13T22:31:33.827Z",
-  "git_sha": "8c5e3fdbb",
+  "captured_at": "2026-05-13T23:25:38.304Z",
+  "git_sha": "b46351336",
   "bun_version": "1.3.13",
   "metrics": {
     "runloop.step.empty_mailbox": {
       "label": "runloop.step.empty_mailbox",
       "samples": 200,
-      "p50": 8292,
-      "p95": 14542,
-      "p99": 28292,
-      "min": 6500,
-      "max": 188875,
-      "mean": 10198.965
+      "p50": 11083,
+      "p95": 18167,
+      "p99": 30959,
+      "min": 7125,
+      "max": 42666,
+      "mean": 12005.81
     },
     "runloop.step.4_pending_mailbox": {
       "label": "runloop.step.4_pending_mailbox",
       "samples": 200,
-      "p50": 10541,
-      "p95": 26750,
-      "p99": 57125,
-      "min": 8042,
-      "max": 108833,
-      "mean": 13179.755
+      "p50": 10500,
+      "p95": 26541,
+      "p99": 42708,
+      "min": 7500,
+      "max": 68250,
+      "mean": 12769.84
     },
     "runloop.spawn_v2": {
       "label": "runloop.spawn_v2",
       "samples": 200,
-      "p50": 405583,
-      "p95": 939667,
-      "p99": 6378875,
-      "min": 315209,
-      "max": 7144292,
-      "mean": 596394.18
+      "p50": 505125,
+      "p95": 714625,
+      "p99": 3829625,
+      "min": 430334,
+      "max": 4657500,
+      "mean": 625269.575
     }
   }
 }

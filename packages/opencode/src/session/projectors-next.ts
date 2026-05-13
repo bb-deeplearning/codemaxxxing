@@ -201,4 +201,13 @@ export default [
   SyncEvent.project(SessionEvent.Compaction.Ended.Sync, (db, data, event) => {
     update(db, { id: SessionMessage.ID.make(event.id), type: "session.next.compaction.ended", data })
   }),
+  // Wave 10: agent lifecycle events. No SessionMessage projection — these
+  // are pure event-log entries that the TUI / plugins subscribe to via Bus.
+  // Sequence advancement still happens in `process()` so replays don't gap.
+  SyncEvent.project(SessionEvent.Agent.Spawn.Started.Sync, () => {}),
+  SyncEvent.project(SessionEvent.Agent.Spawn.Ended.Sync, () => {}),
+  SyncEvent.project(SessionEvent.Agent.Closed.Sync, () => {}),
+  SyncEvent.project(SessionEvent.Agent.Wait.Started.Sync, () => {}),
+  SyncEvent.project(SessionEvent.Agent.Wait.Ended.Sync, () => {}),
+  SyncEvent.project(SessionEvent.Agent.Message.Sent.Sync, () => {}),
 ]

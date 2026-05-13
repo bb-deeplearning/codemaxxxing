@@ -4,6 +4,7 @@ import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Agent } from "@/agent/agent"
 import { AgentControl } from "@/agent/control"
 import { AgentPath } from "@/agent/agent-path"
+import { Bus } from "@/bus"
 import { Config } from "@/config/config"
 import { Session } from "@/session/session"
 import { MessageID, SessionID } from "@/session/schema"
@@ -25,6 +26,7 @@ const it = testEffect(
   Layer.mergeAll(
     AgentControl.defaultLayer,
     Agent.defaultLayer,
+    Bus.defaultLayer,
     Config.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
     Session.defaultLayer,
@@ -340,3 +342,102 @@ describe("tool.wait_agent — validation", () => {
 
 // Sanity guard.
 void Result
+
+describe("tool.wait_agent — bus event emission", () => {
+  it.live("emits Agent.Wait.Started before the wait and Wait.Ended after with timed_out=true", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "evt_to",
+          initial_message: "init",
+        })
+        yield* control.drainMailbox(child.thread_id)
+
+        const bus = yield* Bus.Service
+        const started: Array<{ timeout_ms: number; sessionID: string; call_id: string }> = []
+        const ended: Array<{ timed_out: boolean; sessionID: string; call_id: string }> = []
+        const offStarted = yield* bus.subscribeCallback(AgentControl.Event.WaitStarted, (evt) =>
+          started.push({
+            timeout_ms: evt.properties.timeout_ms,
+            sessionID: evt.properties.sessionID,
+            call_id: evt.properties.call_id,
+          }),
+        )
+        const offEnded = yield* bus.subscribeCallback(AgentControl.Event.WaitEnded, (evt) =>
+          ended.push({
+            timed_out: evt.properties.timed_out,
+            sessionID: evt.properties.sessionID,
+            call_id: evt.properties.call_id,
+          }),
+        )
+
+        try {
+          const def = yield* initTool()
+          const { ctx } = makeCtx(child.thread_id)
+          // Use a 1s wait that will time out.
+          yield* def.execute({ timeout_ms: 1000 }, ctx)
+
+          // Bus dispatch happens via Effect.tryPromise inside subscribeCallback;
+          // give it a microtask to drain.
+          yield* Effect.sleep(20)
+
+          expect(started).toHaveLength(1)
+          expect(started[0]?.sessionID).toBe(child.thread_id)
+          expect(started[0]?.timeout_ms).toBe(1000)
+          // call_id is non-empty even when ctx.callID is "" — the wait tool
+          // generates a stable identifier for the lifecycle pair.
+          expect(typeof started[0]?.call_id).toBe("string")
+
+          expect(ended).toHaveLength(1)
+          expect(ended[0]?.sessionID).toBe(child.thread_id)
+          expect(ended[0]?.timed_out).toBe(true)
+          // The call_id pairs Started and Ended for downstream consumers.
+          expect(ended[0]?.call_id).toBe(started[0]?.call_id)
+        } finally {
+          offStarted()
+          offEnded()
+        }
+      }),
+    ),
+  )
+
+  it.live("emits Agent.Wait.Ended with timed_out=false when mailbox is pre-pending", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "evt_pp",
+          initial_message: "seeded",
+        })
+        // Do NOT drain — mailbox stays pre-pending.
+
+        const bus = yield* Bus.Service
+        const ended: Array<{ timed_out: boolean }> = []
+        const off = yield* bus.subscribeCallback(AgentControl.Event.WaitEnded, (evt) =>
+          ended.push({ timed_out: evt.properties.timed_out }),
+        )
+
+        try {
+          const def = yield* initTool()
+          const { ctx } = makeCtx(child.thread_id)
+          yield* def.execute({ timeout_ms: 5_000 }, ctx)
+          yield* Effect.sleep(20)
+
+          expect(ended).toHaveLength(1)
+          expect(ended[0]?.timed_out).toBe(false)
+        } finally {
+          off()
+        }
+      }),
+    ),
+  )
+})
