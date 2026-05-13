@@ -568,3 +568,60 @@ This is a measurement strategy, not a fix to the renderer — picking a less-noi
 - `packages/opencode/test/perf/process-render.bench.tsx` (wave_4) — first use of the best-of-3 pattern
 - Related: `pty-bench-baseline-vs-new-work` (wave_2) — algorithmic-cost variant of the same problem
 
+---
+
+## [effect-v4-either-renamed-to-result] `Either` no longer ships under the `effect` namespace; `Effect.either` does not exist; use `Result` + `Effect.result`
+
+**Discovered in:** wave_5
+**Date:** 2026-05-13
+**Surfaces affected:** every test that converts a typed-error Effect into a non-throwing assertable value — wave_5 AgentPath/InterAgentCommunication tests; future waves that write decode-fail / typed-error tests (wave_7 AgentControl, wave_8 multi-agent tools, wave_12 permission, wave_13 backward-compat, etc.)
+**Severity:** DX-trap (test won't even load — module-resolution error before any assertion runs)
+
+### Symptom
+
+A test that imports `{ Either }` from `effect` and uses `Effect.either(eff)` / `Either.isRight(r)` / `r.right` fails before any test runs:
+
+```
+SyntaxError: Export named 'Either' not found in module '.../effect/dist/index.js'.
+```
+
+After fixing the import (`Either` → `Result`), the analogous calls also need renaming: `Effect.either` → `Effect.result`, `Either.isRight` → `Result.isSuccess`, `Either.isLeft` → `Result.isFailure`, `r.right` / `r.left` → `r.success` / `r.failure`. Same for `Schema.decodeUnknownEither` → `Schema.decodeUnknownResult`.
+
+### Root cause
+
+Effect v4 renamed the `Either` data type (and every API around it — `Effect.either`, `Schema.decodeUnknownEither`, etc.) to `Result`, with field accessors `success`/`failure` instead of `right`/`left`. The `effect` package's top-level barrel no longer re-exports anything named `Either`; the module is `Result` (`node_modules/effect/src/Result.ts`). The same rename applies in every API that previously produced or consumed an Either: `Effect.result`, `Schema.decodeUnknownResult`, etc.
+
+The repo had no prior usage to copy from before this wave (`grep -rn "Effect\.result\|Either" src` came up empty for the typed-error-converter pattern), so the convention isn't visible from the existing source.
+
+### Fix pattern
+
+Test helper for typed-error effects:
+
+```ts
+import { Effect, Result } from "effect"
+
+const runResult = <A>(eff: Effect.Effect<A, MyError>) =>
+  Effect.runSync(Effect.result(eff))
+
+const r = runResult(svc.decode("bad"))
+expect(Result.isFailure(r)).toBe(true)
+if (Result.isFailure(r)) expect(r.failure.reason).toMatch(/.../)
+```
+
+Schema decode without throwing:
+
+```ts
+import { Result, Schema } from "effect"
+
+const r = Schema.decodeUnknownResult(MySchema)(input)
+if (Result.isSuccess(r)) handle(r.success)
+```
+
+### Reference
+
+- Effect v4 Result module: `node_modules/.bun/effect@4.0.0-beta.59/node_modules/effect/src/Result.ts`
+- Effect.result: `node_modules/.bun/effect@4.0.0-beta.59/node_modules/effect/src/Effect.ts:3499`
+- Schema.decodeUnknownResult: `node_modules/.bun/effect@4.0.0-beta.59/node_modules/effect/src/Schema.ts:1227`
+- First in-repo usage: `packages/opencode/src/agent/agent-path.test.ts` (wave 5)
+
+---

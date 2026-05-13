@@ -1,0 +1,189 @@
+import { describe, expect } from "bun:test"
+import { Effect, Fiber, Layer, Stream, SubscriptionRef } from "effect"
+import { testEffect } from "../../test/lib/effect"
+import { AgentPath } from "./agent-path"
+import { InterAgentCommunication } from "./inter-agent-communication"
+import { Mailbox } from "./mailbox"
+
+const it = testEffect(Layer.empty)
+
+const root = AgentPath.root()
+const worker = Effect.runSync(AgentPath.from("/root/worker"))
+
+const mail = (content: string, trigger_turn = false) =>
+  new InterAgentCommunication({
+    author: root,
+    recipient: worker,
+    content,
+    trigger_turn,
+    sent_at: 0,
+  })
+
+describe("Mailbox.make initial state", () => {
+  it.live("new mailbox reports zero pending and zero pending trigger turns", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make()
+      expect(yield* mb.hasPending()).toBe(false)
+      expect(yield* mb.hasPendingTriggerTurn()).toBe(false)
+    }),
+  )
+
+  it.live("subscribe returns a SubscriptionRef whose initial value is 0", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make()
+      const ref = yield* mb.subscribe()
+      const initial = yield* SubscriptionRef.get(ref)
+      expect(initial).toBe(0)
+    }),
+  )
+
+  it.live("drain on a fresh mailbox returns an empty array", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make()
+      const out = yield* mb.drain()
+      expect(out).toEqual([])
+    }),
+  )
+})
+
+describe("Mailbox.send sequencing", () => {
+  it.live("returns monotonically increasing seq numbers starting at 1", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make()
+      const a = yield* mb.send(mail("a"))
+      const b = yield* mb.send(mail("b"))
+      const c = yield* mb.send(mail("c"))
+      expect(a).toBe(1)
+      expect(b).toBe(2)
+      expect(c).toBe(3)
+    }),
+  )
+
+  it.live("send with trigger_turn=false leaves hasPendingTriggerTurn false", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make()
+      yield* mb.send(mail("queued", false))
+      expect(yield* mb.hasPending()).toBe(true)
+      expect(yield* mb.hasPendingTriggerTurn()).toBe(false)
+    }),
+  )
+
+  it.live("send with trigger_turn=true sets hasPendingTriggerTurn", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make()
+      yield* mb.send(mail("wake", true))
+      expect(yield* mb.hasPendingTriggerTurn()).toBe(true)
+    }),
+  )
+
+  it.live("a mix of queued and trigger_turn messages still reports trigger pending", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make()
+      yield* mb.send(mail("q1", false))
+      yield* mb.send(mail("q2", false))
+      yield* mb.send(mail("wake", true))
+      yield* mb.send(mail("q3", false))
+      expect(yield* mb.hasPendingTriggerTurn()).toBe(true)
+    }),
+  )
+})
+
+describe("Mailbox.drain", () => {
+  it.live("returns messages in delivery order then leaves the mailbox empty", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make()
+      const m1 = mail("one")
+      const m2 = mail("two")
+      const m3 = mail("three", true)
+      yield* mb.send(m1)
+      yield* mb.send(m2)
+      yield* mb.send(m3)
+      const out = yield* mb.drain()
+      expect(out.map((m) => m.content)).toEqual(["one", "two", "three"])
+      expect(yield* mb.hasPending()).toBe(false)
+      expect(yield* mb.hasPendingTriggerTurn()).toBe(false)
+      expect(yield* mb.drain()).toEqual([])
+    }),
+  )
+
+  it.live("drain after a notify-and-wait clears the trigger_turn flag for already-drained messages", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make()
+      const ref = yield* mb.subscribe()
+      // Fork a waiter that resumes once the subscription advances past 0.
+      const waiter = yield* SubscriptionRef.changes(ref).pipe(
+        Stream.dropWhile((c) => c <= 0),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.timeout("200 millis"),
+        Effect.forkScoped,
+      )
+      yield* mb.send(mail("wake", true))
+      yield* Fiber.join(waiter)
+
+      // The trigger_turn message is still pending until we drain.
+      expect(yield* mb.hasPendingTriggerTurn()).toBe(true)
+      const out = yield* mb.drain()
+      expect(out.length).toBe(1)
+      expect(out[0].trigger_turn).toBe(true)
+      expect(yield* mb.hasPendingTriggerTurn()).toBe(false)
+    }),
+  )
+})
+
+describe("Mailbox subscribe wakeup", () => {
+  it.live("a subscriber waiting on changes wakes up when send fires", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make()
+      const ref = yield* mb.subscribe()
+
+      const start = Date.now()
+      const waiter = yield* SubscriptionRef.changes(ref).pipe(
+        Stream.dropWhile((c) => c <= 0),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.timeout("100 millis"),
+        Effect.forkScoped,
+      )
+
+      yield* mb.send(mail("hello"))
+      yield* Fiber.join(waiter)
+
+      const elapsed = Date.now() - start
+      // Generous bound — under heavy CI we still expect well under 100ms.
+      expect(elapsed).toBeLessThan(100)
+    }),
+  )
+
+  it.live("subscribe survives multiple sends — each advances the seq", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make()
+      const ref = yield* mb.subscribe()
+
+      yield* mb.send(mail("a"))
+      yield* mb.send(mail("b"))
+      yield* mb.send(mail("c"))
+
+      const seq = yield* SubscriptionRef.get(ref)
+      expect(seq).toBe(3)
+    }),
+  )
+})
+
+describe("Mailbox concurrency", () => {
+  it.live("concurrent sends from N fibers each get a unique seq covering 1..N", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make()
+      const N = 10
+      const seqs = yield* Effect.all(
+        Array.from({ length: N }, (_, i) => mb.send(mail(`m${i}`))),
+        { concurrency: "unbounded" },
+      )
+      const sorted = [...seqs].sort((a, b) => a - b)
+      expect(sorted).toEqual(Array.from({ length: N }, (_, i) => i + 1))
+      // Mailbox state contains all N messages, regardless of arrival order.
+      const drained = yield* mb.drain()
+      expect(drained.length).toBe(N)
+    }),
+  )
+})
