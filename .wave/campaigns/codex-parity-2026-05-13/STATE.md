@@ -35,7 +35,7 @@ last_updated: 2026-05-13
 | 5 | complete | ses_1dd3497d0ffec4zjYC3huPH7Ov | 1d93e7eef | Mailbox + AgentPath + InterAgentCommunication: 68 tests, 100% line coverage on all three files, p99 wakeup ~193µs (PERF.md target: 5ms) |
 | 6 | complete | ses_1dd2597d1ffejgt1r5DVLW37j2 | — | Agent registry + metadata + nickname pool: 70 tests, 100% line coverage on all three files, perf p99 reserveSpawnSlot.then.commit ~29µs / agentIdForPath.lookup ~7.5µs / liveAgents.snapshot ~11µs |
 | 7 | complete | ses_1dd139792ffeolvWi0IIwoE1qn | 6e379be37 | AgentControl service: 80 tests across status/live-agent/control, 100% line coverage on all three files (verified via lcov), perf p50 spawn 403µs / send 17µs / list(16) 12µs |
-| 8 | complete | ses_1dcf1eb72ffetwweTfX1CKNfDG | — | Six multi-agent v2 tools (spawn/send/followup/wait/list/close) + shared currentAgentPath helper: 172 wave-8 tests, 100% line+branch on all 8 new files, registry + permission defaults wired, integration test walks all six in sequence
+| 8 | complete | ses_1dcf1eb72ffetwweTfX1CKNfDG | 813cf9ac4 | Six multi-agent v2 tools (spawn/send/followup/wait/list/close) + shared currentAgentPath helper: 172 wave-8 tests, 100% line+branch on all 8 new files, registry + permission defaults wired, integration test walks all six in sequence
 | 9 | pending  | — | — | runLoop integration (dispatch swap + mailbox drain) |
 | 10 | pending  | — | — | EventV2 + Bus events for agent lifecycle |
 | 11 | pending  | — | — | TUI subagent enhancements (status, mailbox renderer) |
