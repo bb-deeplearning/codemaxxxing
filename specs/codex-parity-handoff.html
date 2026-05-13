@@ -1,0 +1,150 @@
+<!doctype html>
+<title>Codex parity handoff: unified_exec + interactive subagents</title>
+<meta charset="utf-8">
+
+<h1>Handoff: two codex-cli capabilities Rohan wants to discuss bringing to opencode</h1>
+
+<p><b>Audience:</b> a fresh agent picking up a discussion with Rohan about whether/how to add two specific capabilities from openai/codex-cli to this fork (codemaxxxing, based on opencode).</p>
+
+<p><b>Non-goals of this doc:</b> do not propose an implementation. The next conversation is about scoping and trade-offs. This doc only conveys what was already established so you don't repeat the exploration.</p>
+
+<h2>Repo layout on disk</h2>
+<ul>
+<li><b>This repo (codemaxxxing / opencode fork):</b> <code>/Users/rohan/Documents/Personal/codemaxxxing</code></li>
+<li><b>Reference repo (openai codex-cli, Rust):</b> <code>/Users/rohan/Documents/Personal/experiments/codemaxxxing-codex</code></li>
+</ul>
+
+<h2>Conversation context</h2>
+<p>Rohan was comparing the harness loops of the two CLIs. The full architectural comparison covered loop topology, tool dispatch, sandboxing, compaction, cancellation, streaming, hooks, sub-agents, and background terminals. After reviewing it, Rohan singled out two capabilities as the most impactful gaps:</p>
+<ol>
+<li><b>Reusable PIDs</b> &mdash; processes the agent can re-enter across multiple tool calls, not "spawn-die-spawn-die".</li>
+<li><b>Interactive subagents</b> &mdash; subagents that run concurrently and can message each other and the main agent, not isolated one-shot child sessions.</li>
+</ol>
+<p>Companion human-facing HTML (already shown to Rohan, served via Tailscale on port 8765 from <code>/var/folders/n7/ffc4xm556dx2q5fm9qxf2d3r0000gn/T/opencode/</code>):</p>
+<ul>
+<li><code>codex-vs-opencode.html</code> &mdash; full architecture diff</li>
+<li><code>two-big-wins.html</code> &mdash; deep dive on these two features with worked examples (PyTorch debug, npm dev server, PR review committee, cross-stack rename)</li>
+</ul>
+
+<hr>
+
+<h2>Capability 1: Reusable PIDs (codex's <code>unified_exec</code>)</h2>
+
+<h3>Functional summary</h3>
+<p>Codex exposes a process manager that holds up to 64 PTY-backed processes simultaneously, keyed by integer <code>process_id</code>. The model-facing tool surface has three operations:</p>
+<ul>
+<li><code>exec_command(command, cwd, ...)</code> &mdash; spawn a new PTY-backed process; returns a <code>process_id</code> and an initial output chunk.</li>
+<li><code>write_stdin(process_id, input, yield_time_ms, max_output_tokens)</code> &mdash; write to an existing process's stdin and poll for new output. <code>input=""</code> is a pure poll.</li>
+<li>(implicit) terminate-all on session close.</li>
+</ul>
+<p>Output is held in a 1 MiB head-tail ring buffer per process so the model can poll without losing the prologue. Yield times clamp 250ms&ndash;30s; default background idle is 5 min. Approval/sandbox runs once on first spawn and is cached so reuse doesn't re-prompt.</p>
+
+<h3>Codex source files (read order)</h3>
+<ul>
+<li><code>codex-rs/core/src/unified_exec/mod.rs</code> (183 lines) &mdash; types, constants (<code>MAX_UNIFIED_EXEC_PROCESSES=64</code>, <code>DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS=300_000</code>, <code>UNIFIED_EXEC_OUTPUT_MAX_BYTES=1 MiB</code>), public surface.</li>
+<li><code>codex-rs/core/src/unified_exec/process_manager.rs</code> (1277 lines) &mdash; <code>UnifiedExecProcessManager</code>, the <code>ProcessStore</code>, <code>exec_command</code>, <code>write_stdin</code>, <code>open_session_with_exec_env</code>, <code>terminate_all_processes</code>. Approval/sandbox orchestration plumbed here.</li>
+<li><code>codex-rs/core/src/unified_exec/process.rs</code> (507 lines) &mdash; PTY process lifecycle (<code>UnifiedExecProcess</code>), output buffering, spawn lifecycle.</li>
+<li><code>codex-rs/core/src/unified_exec/head_tail_buffer.rs</code> (183 lines) &mdash; the 1 MiB ring buffer that preserves head + tail of long output.</li>
+<li><code>codex-rs/core/src/unified_exec/async_watcher.rs</code> (334 lines) &mdash; output streaming, exit watchers, deferred network approval finalization.</li>
+<li><code>codex-rs/core/src/unified_exec/process_state.rs</code> (24 lines) &mdash; shared exit/failure state.</li>
+<li><code>codex-rs/core/src/tools/runtimes/unified_exec.rs</code> &mdash; tool runtime side (sandbox transform).</li>
+<li><code>codex-rs/core/src/tools/handlers/unified_exec.rs</code> &mdash; tool handler the model invokes.</li>
+<li><code>codex-rs/core/src/tools/orchestrator.rs</code> (485 lines) &mdash; approval+sandbox+retry wrapper that fronts <code>unified_exec</code> and other exec tools.</li>
+</ul>
+
+<h3>Opencode current state (the surface that would be touched/extended)</h3>
+<ul>
+<li><code>packages/opencode/src/tool/shell.ts</code> (631 lines) &mdash; the current shell tool. One-shot only: spawn <code>ChildProcess</code>, race <code>[exitCode, abort, sleep(timeout)]</code>, kill on timeout. <code>DEFAULT_TIMEOUT</code> is 2 min (<code>tool/shell.ts:29</code>). The actual race is at <code>tool/shell.ts:515</code>. No notion of <code>process_id</code>, no stdin write, no reuse.</li>
+<li><code>packages/opencode/src/tool/shell/</code> &mdash; supporting files (<code>id.ts</code>, <code>prompt.ts</code>, <code>shell.txt</code>).</li>
+<li><code>packages/opencode/src/pty/</code> &mdash; <b>opencode already has PTY infrastructure</b> (<code>pty.ts</code>, <code>pty.bun.ts</code>, <code>pty.node.ts</code>, <code>input.ts</code>, <code>schema.ts</code>). It is currently used to power the TUI's interactive shell pane, not as a tool surface for the model.</li>
+<li><code>packages/opencode/src/shell/shell.ts</code> &mdash; shell detection (acceptable shells, posix vs ps).</li>
+<li><code>packages/opencode/src/permission/</code> &mdash; the existing approval flow that any new persistent-process tool would need to integrate with (<code>evaluate.ts</code>, <code>arity.ts</code>, <code>schema.ts</code>).</li>
+<li><code>packages/opencode/src/tool/truncate.ts</code> &mdash; existing output-truncation service used by <code>shell.ts</code>; potentially relevant for the head/tail-buffer equivalent.</li>
+</ul>
+
+<h3>Concrete behavioral gaps Rohan noticed</h3>
+<ul>
+<li>Cannot run a Python REPL / pdb / ipython interactively across calls. Each "check" reloads imports and state.</li>
+<li>Cannot run <code>npm run dev</code> / file watchers / live servers and react to streaming output &mdash; the 2-min timeout kills them.</li>
+<li>Cannot keep a <code>psql</code> / <code>redis-cli</code> / SSH session open across tool calls.</li>
+<li>State (loaded models, DB connections, env mutations) cannot persist between tool calls without writing to disk.</li>
+</ul>
+
+<hr>
+
+<h2>Capability 2: Interactive subagents (codex's <code>AgentControl</code>)</h2>
+
+<h3>Functional summary</h3>
+<p>Codex has a real multi-agent system. An <code>AgentControl</code> object is shared across a tree of agents rooted in a top-level session. The model-facing tool surface (multi-agent v2) is a set of tools exposed as functions:</p>
+<ul>
+<li><code>spawn</code> &mdash; create a sibling subagent with role/initial-operation; runs concurrently with siblings.</li>
+<li><code>send_message</code> &mdash; deliver a message to a named sibling or to the parent (mailbox-backed).</li>
+<li><code>followup_task</code> &mdash; queue a continuation for an existing subagent.</li>
+<li><code>wait</code> &mdash; block on a subagent's completion or on an inbound mailbox message.</li>
+<li><code>list_agents</code> &mdash; introspect siblings and their state.</li>
+<li><code>close_agent</code> &mdash; terminate a subagent.</li>
+<li><code>message_tool</code> &mdash; (v2) message-passing variant.</li>
+</ul>
+<p>Subagents are full sibling Sessions running on the same Tokio runtime, sharing the <code>AgentControl</code>. Each has its own conversation history and turn loop. Cross-agent messages flow through a shared <code>Mailbox</code>. Lifecycle events (<code>CollabAgentSpawnBegin/End</code>, <code>CollabAgentInteractionBegin/End</code>, <code>CollabWaitingBegin/End</code>, <code>CollabCloseBegin/End</code>, <code>CollabResumeBegin/End</code>) are emitted to the parent's event stream.</p>
+<p>There are two generations of the protocol: <code>multi_agents</code> (v1) and <code>multi_agents_v2</code>, gated by the <code>MultiAgentV2</code> feature flag. v2 is the newer/active path; v1 still exists.</p>
+
+<h3>Codex source files (read order)</h3>
+<ul>
+<li><code>codex-rs/core/src/agent/control.rs</code> (1258 lines) &mdash; <code>AgentControl</code>, <code>spawn_agent</code>, <code>spawn_agent_with_metadata</code>, <code>spawn_agent_internal</code>, fork modes, session-prefix formatting for subagent context. The core orchestration object.</li>
+<li><code>codex-rs/core/src/agent/mailbox.rs</code> (161 lines) &mdash; the shared message queue between agents.</li>
+<li><code>codex-rs/core/src/agent/registry.rs</code> (344 lines) &mdash; agent registry / lookup by name.</li>
+<li><code>codex-rs/core/src/agent/role.rs</code> (433 lines) &mdash; role definitions, role tests.</li>
+<li><code>codex-rs/core/src/agent/status.rs</code> (28 lines) &mdash; agent status enum.</li>
+<li><code>codex-rs/core/src/agent/agent_resolver.rs</code> (36 lines) &mdash; resolution from name to role.</li>
+<li><code>codex-rs/core/src/agent/builtins/</code> &mdash; built-in role definitions; <code>agent_names.txt</code> lists them.</li>
+<li><code>codex-rs/core/src/tools/handlers/multi_agents_v2.rs</code> &mdash; v2 tool dispatch.</li>
+<li><code>codex-rs/core/src/tools/handlers/multi_agents_v2/</code> &mdash; per-tool handler files: <code>spawn.rs</code>, <code>send_message.rs</code>, <code>followup_task.rs</code>, <code>wait.rs</code>, <code>list_agents.rs</code>, <code>close_agent.rs</code>, <code>message_tool.rs</code>.</li>
+<li><code>codex-rs/core/src/tools/handlers/multi_agents.rs</code> + <code>codex-rs/core/src/tools/handlers/multi_agents/</code> &mdash; v1 handlers: <code>spawn.rs</code>, <code>send_input.rs</code>, <code>wait.rs</code>, <code>resume_agent.rs</code>, <code>close_agent.rs</code>.</li>
+<li><code>codex-rs/core/src/tools/handlers/agent_jobs/</code> &mdash; <code>spawn_agents_on_csv.rs</code>, <code>report_agent_job_result.rs</code> (batch agent jobs).</li>
+<li><code>codex-rs/core/src/session/multi_agents.rs</code> &mdash; session-side multi-agent integration.</li>
+<li><code>codex-rs/core/src/collaboration-mode-templates/</code> (workspace crate) &mdash; templates for collaboration modes.</li>
+<li><code>codex-rs/core/src/session/turn.rs:1523</code> approx. &mdash; the <code>EventMsg::CollabAgent*</code> event variants flowing through the realtime stream.</li>
+</ul>
+
+<h3>Opencode current state (the surface that would be touched/extended)</h3>
+<ul>
+<li><code>packages/opencode/src/tool/task.ts</code> (180 lines) &mdash; the existing Task tool. Recursively invokes <code>SessionPrompt.loop</code> with a child sessionID, awaits the child's last assistant message, returns it as a string. No mailbox, no concurrency, no streaming back.</li>
+<li><code>packages/opencode/src/agent/agent.ts</code> (428 lines) &mdash; agent definitions, role resolution, prompt resolution per agent/model.</li>
+<li><code>packages/opencode/src/agent/prompt/</code> &mdash; per-agent prompt fragments.</li>
+<li><code>packages/opencode/src/session/prompt.ts:1485</code> &mdash; <code>handleSubtask</code> in the outer <code>runLoop</code>: how a subtask task is currently dispatched.</li>
+<li><code>packages/opencode/src/session/prompt.ts:1480-1646</code> &mdash; the outer <code>runLoop</code> that any new subagent orchestration would need to integrate with.</li>
+<li><code>packages/opencode/src/session/processor.ts</code> &mdash; the per-stream event handler; subagent lifecycle events would surface here.</li>
+<li><code>packages/opencode/src/bus/</code> (<code>bus.ts</code>, <code>bus-event.ts</code>, <code>global.ts</code>) &mdash; the existing event bus that any cross-agent message stream would likely use.</li>
+<li><code>packages/opencode/src/v2/</code> (<code>event.ts</code>, <code>session-event.ts</code>) &mdash; the new EventV2 schema being migrated to; new subagent events would land here.</li>
+<li><code>packages/opencode/src/session/session.sql.ts</code> &mdash; Drizzle schema; subagent persistence may need fields here.</li>
+</ul>
+
+<h3>Concrete behavioral gaps Rohan noticed</h3>
+<ul>
+<li>Subagents currently run sequentially &mdash; N subagents take ~N&times; the wall time of one.</li>
+<li>Subagents run in isolation &mdash; cannot send each other messages mid-work to coordinate.</li>
+<li>Subagents return only a single final string to the parent &mdash; no streaming, no intermediate signals.</li>
+<li>The main agent has to absorb every subagent's full transcript-summary into its own context to do correlation work; this both bloats main-agent context and offloads coordination to it.</li>
+<li>Patterns like "debate two agents", "split-and-conquer over a monorepo with cross-talk", or "observer + worker" are not natively expressible.</li>
+</ul>
+
+<hr>
+
+<h2>What Rohan probably wants to discuss next</h2>
+<p>(For your orientation. Don't lead with these &mdash; let him drive.)</p>
+<ul>
+<li>Whether to do one or both. They are independent; either can ship without the other.</li>
+<li>Scope: minimum useful slice vs. parity with codex. For unified_exec specifically, the slice "just expose <code>spawn / write_stdin / poll</code> over the existing <code>pty/</code> module" might be 80% of the value at 20% of the cost.</li>
+<li>Tool surface naming and how it interacts with the existing <code>shell</code> tool (additive new tool? replacement? mode flag?).</li>
+<li>For subagents: whether to bolt on a mailbox / concurrent <code>spawn</code> to the existing Task tool, or to introduce a parallel multi-agent tool family.</li>
+<li>Permission/approval integration. The existing <code>permission/</code> ruleset assumes one-shot prompts; persistent processes and concurrent agents need different lifetime semantics.</li>
+<li>Persistence model. Codex uses append-only JSONL rollouts; opencode uses Drizzle SQLite with projectors. Subagent histories will need a home.</li>
+<li>Effect / runtime mechanics specific to this codebase &mdash; concurrent subagents need <code>Effect.forkScoped</code> + scope plumbing; persistent processes need <code>InstanceState</code>-style lifecycle. See <code>packages/opencode/AGENTS.md</code> for the local Effect rules.</li>
+</ul>
+
+<h2>Useful preflight reading inside this repo before responding</h2>
+<ul>
+<li><code>packages/opencode/AGENTS.md</code> &mdash; Effect v4 conventions, module shape rules, runtime vs InstanceState rules. Anything new must conform.</li>
+<li><code>AGENTS.md</code> (repo root) &mdash; default branch is <code>dev</code>, style guide.</li>
+<li><code>specs/</code> &mdash; existing in-progress specs, for tone/format matching if a spec ends up being written.</li>
+</ul>
