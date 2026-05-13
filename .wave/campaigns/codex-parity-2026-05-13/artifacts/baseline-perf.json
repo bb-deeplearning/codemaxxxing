@@ -1,0 +1,117 @@
+{
+  "captured_at": "2026-05-13T16:31:35.286Z",
+  "git_sha": "18369b2a8",
+  "bun_version": "1.3.13",
+  "metrics": {
+    "pty.push.4kb": {
+      "label": "pty.push.4kb",
+      "samples": 200,
+      "p50": 1875,
+      "p95": 4583,
+      "p99": 7667,
+      "min": 1583,
+      "max": 12334,
+      "mean": 2480.235
+    },
+    "runloop.step.no_op": {
+      "label": "runloop.step.no_op",
+      "samples": 200,
+      "p50": 19542,
+      "p95": 70750,
+      "p99": 293792,
+      "min": 7833,
+      "max": 1015667,
+      "mean": 34822.915
+    },
+    "session.render.first_paint": {
+      "label": "session.render.first_paint",
+      "samples": 30,
+      "p50": 936333,
+      "p95": 1495875,
+      "p99": 1631250,
+      "min": 768292,
+      "max": 1631250,
+      "mean": 1009973.6
+    },
+    "session.render.steady": {
+      "label": "session.render.steady",
+      "samples": 100,
+      "p50": 52958,
+      "p95": 127125,
+      "p99": 185083,
+      "min": 37542,
+      "max": 335583,
+      "mean": 64244.14
+    },
+    "eventv2.run.text_delta": {
+      "label": "eventv2.run.text_delta",
+      "samples": 1000,
+      "p50": 72708,
+      "p95": 98167,
+      "p99": 129875,
+      "min": 54584,
+      "max": 369042,
+      "mean": 76311.228
+    },
+    "bus.publish.no_subscribers": {
+      "label": "bus.publish.no_subscribers",
+      "samples": 500,
+      "p50": 9959,
+      "p95": 19542,
+      "p99": 43458,
+      "min": 7250,
+      "max": 263666,
+      "mean": 12108.388
+    },
+    "bus.publish.one_subscriber": {
+      "label": "bus.publish.one_subscriber",
+      "samples": 500,
+      "p50": 13333,
+      "p95": 28333,
+      "p99": 46042,
+      "min": 9750,
+      "max": 112958,
+      "mean": 15682.286
+    },
+    "permission.ask.cached": {
+      "label": "permission.ask.cached",
+      "samples": 500,
+      "p50": 14667,
+      "p95": 25333,
+      "p99": 42834,
+      "min": 10166,
+      "max": 4193125,
+      "mean": 24911.902
+    },
+    "permission.ask.uncached": {
+      "label": "permission.ask.uncached",
+      "samples": 500,
+      "p50": 22333,
+      "p95": 34042,
+      "p99": 54792,
+      "min": 17083,
+      "max": 81875,
+      "mean": 23935.34
+    },
+    "snapshot.track": {
+      "label": "snapshot.track",
+      "samples": 30,
+      "p50": 24003292,
+      "p95": 30688458,
+      "p99": 51315792,
+      "min": 22666875,
+      "max": 51315792,
+      "mean": 25874387.566666666
+    },
+    "snapshot.patch": {
+      "label": "snapshot.patch",
+      "samples": 30,
+      "p50": 33610208,
+      "p95": 108972208,
+      "p99": 166458583,
+      "min": 22527458,
+      "max": 166458583,
+      "mean": 44421332.03333333
+    }
+  }
+}

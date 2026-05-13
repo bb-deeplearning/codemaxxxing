@@ -8,3 +8,4 @@ src/provider/models-snapshot.d.ts
 script/build-*.ts
 temporary-*.md
 .artifacts
+coverage

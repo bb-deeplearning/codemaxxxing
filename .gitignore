@@ -22,6 +22,13 @@ a.out
 target
 .scripts
 .direnv/
+.wave/campaigns/*/artifacts/*.png
+.wave/campaigns/*/artifacts/*.jpg
+.wave/campaigns/*/artifacts/*.jpeg
+.wave/campaigns/*/artifacts/*.gif
+.wave/campaigns/*/artifacts/*.log
+.wave/campaigns/*/artifacts/screenshots/
+.wave/campaigns/*/artifacts/logs/
 
 # Local dev files
 opencode-dev
@@ -29,5 +36,4 @@ UPCOMING_CHANGELOG.md
 logs/
 *.bun-build
 SYNC.md
-.wave
 tsconfig.tsbuildinfo
