@@ -8,17 +8,17 @@ plan_source: specs/codex-parity-handoff.html
 executor_agent: caveman
 executor_model: ""
 executor_variant: ""
-current_wave: 7
+current_wave: 8
 wave_status: pending
 failure_kind: ""
 retry_count: 0
 verify_count: 1
 user_question: ""
 loop_state: armed
-active_session_id: ses_1dd2597d1ffejgt1r5DVLW37j2
+active_session_id: ses_1dd139792ffeolvWi0IIwoE1qn
 active_session_kind: executor
 total_waves: 16
-session_count: 7
+session_count: 8
 created: 2026-05-13
 last_updated: 2026-05-13
 ```
@@ -34,7 +34,7 @@ last_updated: 2026-05-13
 | 4 | complete | ses_1dd52940effeiPrvcnsgnW511R | f24c48713 | Process + ProcessWriteStdin TUI renderers: 22 tests, 100% line coverage, perf within budget (best-of-3 to suppress opentui render noise) |
 | 5 | complete | ses_1dd3497d0ffec4zjYC3huPH7Ov | 1d93e7eef | Mailbox + AgentPath + InterAgentCommunication: 68 tests, 100% line coverage on all three files, p99 wakeup ~193µs (PERF.md target: 5ms) |
 | 6 | complete | ses_1dd2597d1ffejgt1r5DVLW37j2 | — | Agent registry + metadata + nickname pool: 70 tests, 100% line coverage on all three files, perf p99 reserveSpawnSlot.then.commit ~29µs / agentIdForPath.lookup ~7.5µs / liveAgents.snapshot ~11µs |
-| 7 | pending  | — | — | AgentControl service (spawn/send/close/list) |
+| 7 | complete | ses_1dd139792ffeolvWi0IIwoE1qn | — | AgentControl service: 80 tests across status/live-agent/control, 100% line coverage on all three files (verified via lcov), perf p50 spawn 403µs / send 17µs / list(16) 12µs |
 | 8 | pending  | — | — | Six multi-agent v2 tools (parallel sub-agents) |
 | 9 | pending  | — | — | runLoop integration (dispatch swap + mailbox drain) |
 | 10 | pending  | — | — | EventV2 + Bus events for agent lifecycle |

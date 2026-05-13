@@ -625,3 +625,136 @@ if (Result.isSuccess(r)) handle(r.success)
 - First in-repo usage: `packages/opencode/src/agent/agent-path.test.ts` (wave 5)
 
 ---
+
+## [bench-managed-runtime-needs-effect-scoped] `provideTmpdirInstance` requires an explicit `Effect.scoped` wrap when run via `ManagedRuntime`
+
+**Discovered in:** wave_7
+**Date:** 2026-05-13
+**Surfaces affected:** any wave perf bench file (`test/perf/<area>.bench.ts`) that needs an instance-bound effectful service like `Session.Service`, `AgentControl.Service`, or `Pty.Service` — wave_7 agent-control bench, future wave_8 / wave_11 / wave_14 benches that call into Session.* code paths
+**Severity:** DX-trap (cryptic "Service not found: effect/Scope" runtime error)
+
+### Symptom
+
+A bench file uses `ManagedRuntime.make(layer).runPromise(provideTmpdirInstance((dir) => Effect.gen(...)))` and crashes immediately with:
+
+```
+error: Service not found: effect/Scope (defined at .../effect/dist/internal/effect.js:1471:46)
+```
+
+The layer is correct, the bench body is correct, the tmpdir helper is the same one used everywhere in tests.
+
+### Root cause
+
+`provideTmpdirInstance(self)` (`packages/opencode/test/fixture/fixture.ts:166`) returns an `Effect<A, E, R | Scope.Scope>` — it uses `Effect.addFinalizer` for the directory cleanup, which requires a Scope in the context. `it.instance(...)` in the test runner already wraps the body in `Effect.scoped` so the requirement is invisible. `ManagedRuntime.make(layer)` does NOT provide a default scope; the runtime's context is purely the layer-derived services.
+
+### Fix pattern
+
+Wrap the `provideTmpdirInstance` call with `Effect.scoped` before handing it to the runtime:
+
+```ts
+const runWithInstance = <A, E, R>(self: Effect.Effect<A, E, R>) => {
+  const runtime = ManagedRuntime.make(layer)
+  return runtime
+    .runPromise(
+      Effect.scoped(provideTmpdirInstance(() => self)) as Effect.Effect<A, E, never>,
+    )
+    .finally(() => runtime.dispose())
+}
+```
+
+The `as Effect.Effect<A, E, never>` cast is needed because `provideTmpdirInstance` adds `TestInstance` and platform requirements that the runtime's layer satisfies — the cast tells TS the residual `R` is empty after `Effect.scoped`. (Functionally equivalent to providing the runtime's full layer to the inner effect explicitly; the cast just keeps the call site terse.)
+
+### Reference
+
+- Working example: `packages/opencode/test/perf/agent-control.bench.ts` `runWithInstance` helper
+- Source: `packages/opencode/test/fixture/fixture.ts:166-187` (`provideTmpdirInstance` body uses `Effect.addFinalizer`)
+- Background reading on Effect v4 Scope semantics: `node_modules/.bun/effect@4.0.0-beta.59/node_modules/effect/src/Scope.ts`
+
+---
+
+## [subscriptionref-changes-is-top-level] `SubscriptionRef.changes(ref)` replaces the v3 `ref.changes` accessor
+
+**Discovered in:** wave_7
+**Date:** 2026-05-13
+**Surfaces affected:** any test or production code that subscribes to a SubscriptionRef's change stream — wave_7 control test for status subscribe/changes; future waves that subscribe to mailbox seq, agent status, Pty notify (wave_8 wait_agent, wave_11 TUI subagent enhancements)
+**Severity:** DX-trap (TypeError at runtime — the property simply doesn't exist on the v4 instance)
+
+### Symptom
+
+Test crashes with `TypeError: undefined is not an object (evaluating 'ref.changes.pipe')` when reading the change stream from a SubscriptionRef the v3 way:
+
+```ts
+const stream = ref.changes.pipe(Stream.take(1))  // BAD — v4 has no .changes property
+```
+
+TypeScript does not flag the call because `ref.changes` resolves to the AnyZod-style any path on a SubscriptionRef object that doesn't expose it.
+
+### Root cause
+
+In Effect v4, the `changes` stream is exposed as a top-level function `SubscriptionRef.changes(ref)` rather than an instance accessor. The v3 instance method is gone. The repo's existing usage in `src/pty/index.ts:513` shows the correct pattern (`SubscriptionRef.changes(session.notify).pipe(...)`); waves that wrote tests against SubscriptionRef without checking pty/index.ts hit the runtime error instead of a typecheck error.
+
+### Fix pattern
+
+Use the top-level helper:
+
+```ts
+import { SubscriptionRef, Stream } from "effect"
+
+const stream = SubscriptionRef.changes(ref).pipe(Stream.take(1))
+const collected = yield* Stream.runCollect(stream)
+```
+
+The contract is identical: a `Stream<A>` of every value the ref takes after subscription, starting with the current value.
+
+### Reference
+
+- Working production example: `packages/opencode/src/pty/index.ts:513`
+- Effect v4 source: `node_modules/.bun/effect@4.0.0-beta.59/node_modules/effect/src/SubscriptionRef.ts` — `changes` exported as a top-level function
+- Test that hit it: `packages/opencode/src/agent/control.test.ts` (wave 7) `subscribeStatus on a shutdown agent yields the final status without further changes`
+
+---
+
+## [bun-coverage-line1-schema-class-only] the line-1 coverage quirk hits Schema.Class-only files differently from Schema.Union files
+
+**Discovered in:** wave_7
+**Date:** 2026-05-13
+**Surfaces affected:** any new file that declares ONLY a `Schema.Class<...>` (no top-level Schema.Union, no top-level value variable) — wave_7 `live-agent.ts`; future waves that add small "shape-only" modules (likely in wave_8 tool input/output schemas, wave_10 EventV2 payload structs)
+**Severity:** DX-trap (false-positive coverage gap — extends prior `bun-coverage-line1-quirk` gotcha)
+
+### Symptom
+
+A file consisting of imports + a single `Schema.Class` declaration reports the `import { Schema } from "effect"` line on line 1 as 0 hits in lcov (`DA:1,0`), even though every import is evaluated when the test loads the file. Counter-intuitively, a sibling file with the SAME `import { Schema } from "effect"` on line 1 — but that ALSO declares a top-level Schema.Union assigned to a const — reports the same line at 100% hits.
+
+The earlier `bun-coverage-line1-quirk` gotcha noted the issue for files starting with default imports or comments. This wave found that the same fix (reorder so line 1 is something else) works even for the named import `{ Schema } from "effect"` — but only when the file body is purely a `Schema.Class` declaration.
+
+### Root cause
+
+Bun's V8 coverage instrumentation hooks differently depending on what executes synchronously at import time. A `Schema.Union(...)` or `Schema.Struct(...)` assigned to a const triggers the synthetic IIFE-style execution that records line 1. A `Schema.Class<...>(name)(fields) {}` declaration uses a TS class-like path that bypasses the synthetic record, leaving line 1 marked as 0 hits in the LCOV output even though TS evaluation clearly happened (the class IS available in the test's module scope).
+
+### Fix pattern
+
+For Schema.Class-only files, reorder imports so line 1 is anything other than `import { Schema } from "effect"`. A workspace-relative import works fine:
+
+```ts
+// BAD — Schema.Class-only file, line 1 reads 0 hits
+import { Schema } from "effect"
+import { SessionID } from "@/session/schema"
+// ... imports
+export class Foo extends Schema.Class<Foo>("Foo")({ ... }) {}
+
+// GOOD — same imports, different order
+import { SessionID } from "@/session/schema"
+import { Schema } from "effect"
+// ... imports
+export class Foo extends Schema.Class<Foo>("Foo")({ ... }) {}
+```
+
+The `Schema` import still loads at module-load time; only the coverage report changes.
+
+### Reference
+
+- Failing case: `packages/opencode/src/agent/live-agent.ts` pre-fix had `Schema` on line 1 → `DA:1,0`; post-reorder reports `DA:1,7` and the file hits 100%
+- Comparison case: `packages/opencode/src/agent/status.ts` has `Schema` on line 1 AND a top-level `Schema.Union(...)` const → `DA:1,32` from the start
+- Prior gotcha: `bun-coverage-line1-quirk` (wave_0)
+
+---
