@@ -184,7 +184,14 @@ export interface Interface {
     id: SessionID,
   ) => Effect.Effect<SubscriptionRef.SubscriptionRef<number>, AgentNotFoundError>
   readonly hasPendingMailboxItems: (id: SessionID) => Effect.Effect<boolean>
+  readonly hasPendingTriggerTurn: (id: SessionID) => Effect.Effect<boolean>
   readonly drainMailbox: (id: SessionID) => Effect.Effect<readonly InterAgentCommunication[]>
+  // Wave 9: cascade cancel — interrupt every live agent whose canonical path
+  // sits beneath `parentID`'s subtree. Used by SessionPrompt.cancel to bring
+  // down v2-spawned children when the user aborts the parent session.
+  // Idempotent: closing an agent whose mailbox or fiber is already gone is a
+  // no-op, mirroring `closeAgent`.
+  readonly cancelChildrenOf: (parentID: SessionID) => Effect.Effect<void>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/AgentControl") {}
@@ -202,13 +209,20 @@ const pathDepth = (p: AgentPath): number => {
 // Internal mutable state held in InstanceState. One instance per project
 // directory; wired up exactly once and torn down with the directory's
 // disposal.
+//
+// `providerRef` lives at LAYER scope (not InstanceState), because
+// SessionPrompt's layer init registers the run-loop provider once at layer
+// build time when no Instance is yet bound. The function itself is
+// instance-agnostic (it returns an Effect that resolves InstanceState.context
+// internally at execution time), so sharing one provider across every
+// instance the layer serves is safe and matches how SessionPrompt's `loop`
+// closure already behaves.
 interface InternalState {
   readonly registry: AgentRegistry.Interface
   readonly mailboxes: Map<SessionID, Mailbox.Interface>
   readonly statuses: Map<SessionID, SubscriptionRef.SubscriptionRef<AgentStatus>>
   readonly fibers: Map<SessionID, Fiber.Fiber<unknown, unknown>>
   readonly listeners: Set<(event: SpawnEvent) => void>
-  readonly providerRef: Ref.Ref<((sessionID: SessionID) => Effect.Effect<unknown>) | undefined>
   readonly rootRef: Ref.Ref<SessionID | undefined>
   readonly scope: Scope.Scope
 }
@@ -217,6 +231,9 @@ export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const sessions = yield* Session.Service
+    const providerRef = yield* Ref.make<
+      ((sessionID: SessionID) => Effect.Effect<unknown>) | undefined
+    >(undefined)
 
     const state = yield* InstanceState.make(
       Effect.fn("AgentControl.state")(function* () {
@@ -226,9 +243,6 @@ export const layer = Layer.effect(
         const statuses = new Map<SessionID, SubscriptionRef.SubscriptionRef<AgentStatus>>()
         const fibers = new Map<SessionID, Fiber.Fiber<unknown, unknown>>()
         const listeners = new Set<(event: SpawnEvent) => void>()
-        const providerRef = yield* Ref.make<
-          ((sessionID: SessionID) => Effect.Effect<unknown>) | undefined
-        >(undefined)
         const rootRef = yield* Ref.make<SessionID | undefined>(undefined)
 
         // On instance disposal, interrupt every live child fiber so siblings
@@ -253,7 +267,6 @@ export const layer = Layer.effect(
           statuses,
           fibers,
           listeners,
-          providerRef,
           rootRef,
           scope,
         } satisfies InternalState
@@ -276,8 +289,7 @@ export const layer = Layer.effect(
     const registerRunLoop = Effect.fn("AgentControl.registerRunLoop")(function* (
       fn: (sessionID: SessionID) => Effect.Effect<unknown>,
     ) {
-      const data = yield* InstanceState.get(state)
-      yield* Ref.set(data.providerRef, fn)
+      yield* Ref.set(providerRef, fn)
     })
 
     const onSpawnEvent = Effect.fn("AgentControl.onSpawnEvent")(function* (
@@ -375,7 +387,7 @@ export const layer = Layer.effect(
             data.mailboxes.set(child.id, mailbox)
             data.statuses.set(child.id, status)
 
-            const provider = yield* Ref.get(data.providerRef)
+            const provider = yield* Ref.get(providerRef)
             const loopEffect: Effect.Effect<unknown> = provider ? provider(child.id) : Effect.never
 
             const fiber = yield* loopEffect.pipe(
@@ -628,11 +640,64 @@ export const layer = Layer.effect(
       return yield* mailbox.hasPending()
     })
 
+    const hasPendingTriggerTurn = Effect.fn("AgentControl.hasPendingTriggerTurn")(function* (
+      id: SessionID,
+    ) {
+      const data = yield* InstanceState.get(state)
+      const mailbox = data.mailboxes.get(id)
+      if (!mailbox) return false
+      return yield* mailbox.hasPendingTriggerTurn()
+    })
+
     const drainMailbox = Effect.fn("AgentControl.drainMailbox")(function* (id: SessionID) {
       const data = yield* InstanceState.get(state)
       const mailbox = data.mailboxes.get(id)
       if (!mailbox) return [] as readonly InterAgentCommunication[]
       return yield* mailbox.drain()
+    })
+
+    const cancelChildrenOf = Effect.fn("AgentControl.cancelChildrenOf")(function* (
+      parentID: SessionID,
+    ) {
+      const data = yield* InstanceState.get(state)
+      // Determine the parent's canonical path. Three cases:
+      //  - parent is a registered agent → its metadata's agent_path
+      //  - parent is the registered root → AgentPath.root()
+      //  - parent is neither (a regular session that never spawned children)
+      //    → no descendants to cancel; bail.
+      const meta = yield* data.registry.agentMetadataForThread(parentID)
+      const rootID = yield* Ref.get(data.rootRef)
+      const parentPath: AgentPath | undefined =
+        meta?.agent_path ?? (parentID === rootID ? AgentPath.root() : undefined)
+      if (!parentPath) return
+
+      const prefix =
+        (parentPath as string) === "/root" ? "/root/" : (parentPath as string) + "/"
+
+      const live = yield* data.registry.liveAgents()
+      // Iterate descendants leaves-first so each shutdownOne sees its own
+      // metadata before its parent's closeAgent cascade rips it out from
+      // under it. Sort by path-depth descending — deeper paths first.
+      const descendants = live
+        .filter(
+          (m) =>
+            m.agent_id !== undefined &&
+            m.agent_id !== parentID &&
+            m.agent_path !== undefined &&
+            (m.agent_path as string).startsWith(prefix),
+        )
+        .sort((a, b) =>
+          ((b.agent_path as string) ?? "").split("/").length -
+          ((a.agent_path as string) ?? "").split("/").length,
+        )
+
+      for (const child of descendants) {
+        if (!child.agent_id) continue
+        // closeAgent itself cascades, but a leaves-first iteration plus the
+        // idempotent shortcut at the top of closeAgent (returns shutdown when
+        // the registry slot is already released) keeps each invocation cheap.
+        yield* closeAgent(child.agent_id).pipe(Effect.catch(() => Effect.void))
+      }
     })
 
     return Service.of({
@@ -648,7 +713,9 @@ export const layer = Layer.effect(
       subscribeStatus,
       subscribeMailboxSeq,
       hasPendingMailboxItems,
+      hasPendingTriggerTurn,
       drainMailbox,
+      cancelChildrenOf,
     })
   }),
 )

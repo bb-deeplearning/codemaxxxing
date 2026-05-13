@@ -55,6 +55,10 @@ import { InstanceState } from "@/effect/instance-state"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { SessionRunState } from "./run-state"
 import { EffectBridge } from "@/effect/bridge"
+import { AgentControl } from "@/agent/control"
+import { AgentToolContext } from "@/tool/agents/current-path"
+import { AgentPath } from "@/agent/agent-path"
+import { InterAgentCommunication } from "@/agent/inter-agent-communication"
 import { EventV2 } from "@/v2/event"
 import { SessionEvent } from "@/v2/session-event"
 import { AgentAttachment, FileAttachment, Source } from "@/v2/session-prompt"
@@ -78,6 +82,15 @@ const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested struc
 
 const log = Log.create({ service: "session.prompt" })
 const elog = EffectLogger.create({ service: "session.prompt" })
+
+// Wave 9: SubtaskPart's `description` is free text but AgentPath demands
+// `[a-z0-9_]+` for the leaf segment. Slugify lowercases, collapses any
+// non-matching run into a single `_`, trims leading/trailing underscores,
+// and returns "" if nothing survives. The runLoop falls through to a
+// hardcoded fallback when both `description` and `agent` slugify to "".
+// Exported for direct test coverage of the empty-fallback branch.
+export const slugifyTaskName = (raw: string): string =>
+  raw.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "")
 
 export interface Interface {
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
@@ -117,6 +130,12 @@ export const layer = Layer.effect(
     const summary = yield* SessionSummary.Service
     const sys = yield* SystemPrompt.Service
     const llm = yield* LLM.Service
+    // Wave 9: AgentControl is the multi-agent v2 orchestration layer. We
+    // yield it here so (a) the layer init can register the run-loop provider
+    // (resolves the AgentControl ↔ SessionPrompt cycle — see wave_7/ADR.md)
+    // and (b) the runLoop body can drain mailboxes + dispatch v2 spawns
+    // without re-resolving the service per call.
+    const agentControl = yield* AgentControl.Service
     const runner = Effect.fn("SessionPrompt.runner")(function* () {
       return yield* EffectBridge.make()
     })
@@ -132,6 +151,12 @@ export const layer = Layer.effect(
     const cancel = Effect.fn("SessionPrompt.cancel")(function* (sessionID: SessionID) {
       yield* elog.info("cancel", { sessionID })
       yield* state.cancel(sessionID)
+      // Cascade cancel: bring down every v2-spawned child whose canonical
+      // path sits beneath this session. Children are forked into
+      // AgentControl's instance scope and would otherwise outlive a
+      // user-initiated parent cancel. closeAgent shuts each child's fiber +
+      // releases its registry slot; idempotent on already-shutdown children.
+      yield* agentControl.cancelChildrenOf(sessionID)
     })
 
     const resolvePromptParts = Effect.fn("SessionPrompt.resolvePromptParts")(function* (template: string) {
@@ -1420,6 +1445,67 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       throw new Error("Impossible")
     })
 
+    // Wave 9: drain queued cross-agent messages into a fresh synthesized
+    // user message before each model call so the model sees them as the next
+    // user turn. The shape (synthetic text part with `metadata.from`,
+    // `metadata.sent_at`, `metadata.trigger_turn`, body prefixed with
+    // "[from <author>]: ") is fixed by MESSAGE_SHAPES.md § "Cross-agent
+    // message injection" — Wave 11's TUI renderer and Wave 13's
+    // backward-compat tests both depend on it. The function returns the
+    // synthesized user message so the runLoop can use it as `lastUser`
+    // without an extra DB roundtrip.
+    const injectMailboxMessages = Effect.fn("SessionPrompt.injectMailboxMessages")(function* (
+      sessionID: SessionID,
+      messages: readonly InterAgentCommunication[],
+    ) {
+      // Resolve agent + model defaults. Subsequent turns inherit from the
+      // latest user message; freshly-spawned children have no user message
+      // yet, so we fall back to the session's configured agent and that
+      // agent's preferred model. Both fields are required by MessageV2.User.
+      const existing = yield* sessions.findMessage(sessionID, (m) => m.info.role === "user")
+      let agentName: string
+      let modelRef: { providerID: ProviderID; modelID: ModelID; variant?: string }
+      if (Option.isSome(existing) && existing.value.info.role === "user") {
+        agentName = existing.value.info.agent
+        modelRef = existing.value.info.model
+      } else {
+        const sess = yield* sessions.get(sessionID)
+        agentName = sess.agent ?? (yield* agents.defaultAgent())
+        const ag = yield* agents.get(agentName)
+        modelRef = ag?.model ?? (yield* lastModel(sessionID))
+      }
+
+      const userMsg: MessageV2.User = {
+        id: MessageID.ascending(),
+        sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: agentName,
+        model: modelRef,
+      }
+      yield* sessions.updateMessage(userMsg)
+
+      // Mailbox.drain returns delivery order (Wave 5); preserve it so the
+      // model sees the conversation in the order siblings sent.
+      for (const comm of messages) {
+        const author = String(comm.author)
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: userMsg.id,
+          sessionID,
+          type: "text",
+          text: `[from ${author}]: ${comm.content}`,
+          synthetic: true,
+          metadata: {
+            from: author,
+            sent_at: comm.sent_at,
+            trigger_turn: comm.trigger_turn,
+          },
+        } satisfies MessageV2.TextPart)
+      }
+      return userMsg
+    })
+
     const runLoop: (sessionID: SessionID) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.run")(
       function* (sessionID: SessionID) {
         const ctx = yield* InstanceState.context
@@ -1431,6 +1517,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         while (true) {
           yield* status.set(sessionID, { type: "busy" })
           yield* slog.info("loop", { step })
+
+          // Wave 9: drain queued sibling messages BEFORE computing lastUser
+          // so they participate in this turn's model call. Empty mailbox is
+          // a true no-op (returns []); the cost when nothing's queued is a
+          // single Map.get + Ref.modify in AgentControl/Mailbox — the perf
+          // bench `runloop.step.empty_mailbox` enforces the budget.
+          const drained = yield* agentControl.drainMailbox(sessionID)
+          if (drained.length > 0) {
+            yield* injectMailboxMessages(sessionID, drained)
+          }
 
           let msgs = yield* MessageV2.filterCompactedEffect(sessionID)
 
@@ -1466,6 +1562,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             !hasToolCalls &&
             lastUser.id < lastAssistant.id
           ) {
+            // Wave 9 gotcha 5: even when the assistant has finished, a
+            // sibling may have queued a `trigger_turn` mailbox message
+            // between this iteration's drain and now. Defer the exit so the
+            // next iteration's drain materializes that message as a fresh
+            // user turn.
+            if (yield* agentControl.hasPendingTriggerTurn(sessionID)) {
+              yield* slog.info("trigger_turn pending, continuing loop")
+              continue
+            }
             yield* slog.info("exiting loop")
             break
           }
@@ -1483,6 +1588,76 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const task = tasks.pop()
 
           if (task?.type === "subtask") {
+            // Wave 9 dispatch swap. The protocol marker is set by callers
+            // that want concurrent v2 semantics (slash commands enqueueing
+            // declarative spawns). Absent or non-"v2" → legacy `task` tool
+            // semantics: blocking handleSubtask call. See
+            // MESSAGE_SHAPES.md § "Subtask v2 marker" + the wave 7 ADR.
+            if (task.protocol === "v2") {
+              const parentPath = yield* AgentToolContext.currentAgentPath(agentControl, sessionID)
+              const taskName =
+                slugifyTaskName(task.description) || slugifyTaskName(task.agent) || "task"
+              const result = yield* agentControl
+                .spawnAgent({
+                  parentID: sessionID,
+                  parentPath,
+                  task_name: taskName,
+                  agent_type: task.agent,
+                  initial_message: task.prompt,
+                })
+                .pipe(
+                  Effect.map((live) => ({ ok: true as const, live })),
+                  Effect.catchCause((cause) =>
+                    Effect.gen(function* () {
+                      const err = Cause.squash(cause)
+                      log.error("v2 subtask spawn failed", {
+                        error: err,
+                        agent: task.agent,
+                        description: task.description,
+                      })
+                      return {
+                        ok: false as const,
+                        message: err instanceof Error ? err.message : String(err),
+                      }
+                    }),
+                  ),
+                )
+
+              // Record the spawn outcome in the parent's transcript so the
+              // dispatch is observable from the TUI / persisted log without
+              // a follow-up model call. The synthesized assistant message is
+              // marked finish="stop"; the next loop iteration's exit check
+              // sees it and exits cleanly. The model never gets invoked for
+              // a v2 dispatch — slash-command callers want fire-and-forget.
+              const spawnSummary: MessageV2.Assistant = yield* sessions.updateMessage({
+                id: MessageID.ascending(),
+                role: "assistant",
+                parentID: lastUser.id,
+                sessionID,
+                mode: lastUser.agent,
+                agent: lastUser.agent,
+                variant: lastUser.model.variant,
+                path: { cwd: ctx.directory, root: ctx.worktree },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: model.id,
+                providerID: model.providerID,
+                time: { created: Date.now(), completed: Date.now() },
+                finish: "stop",
+              })
+              const spawnText = result.ok
+                ? `Spawned agent ${String(result.live.metadata.agent_path ?? taskName)} (@${result.live.metadata.agent_nickname})`
+                : `Failed to spawn agent ${taskName}: ${result.message}`
+              yield* sessions.updatePart({
+                id: PartID.ascending(),
+                messageID: spawnSummary.id,
+                sessionID,
+                type: "text",
+                text: spawnText,
+                synthetic: true,
+              } satisfies MessageV2.TextPart)
+              continue
+            }
             yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
             continue
           }
@@ -1656,6 +1831,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       return yield* state.ensureRunning(input.sessionID, lastAssistant(input.sessionID), runLoop(input.sessionID))
     })
 
+    // Wave 9: register the run-loop provider with AgentControl now that
+    // `loop` is defined. AgentControl uses this to fork v2-spawned children
+    // into its instance scope. The cycle is broken because AgentControl's
+    // layer never names SessionPrompt as a dep — it just receives the
+    // function pointer and calls it. See wave_7/ADR.md for the full design.
+    yield* agentControl.registerRunLoop((sid) => loop({ sessionID: sid }))
+
     const shell: (input: ShellInput) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.shell")(
       function* (input: ShellInput) {
         const ready = yield* Latch.make()
@@ -1811,6 +1993,9 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Session.defaultLayer),
     Layer.provide(SessionRevert.defaultLayer),
     Layer.provide(SessionSummary.defaultLayer),
+    // Wave 9: AgentControl is now a SessionPrompt dep so layer init can wire
+    // the run-loop provider. defaultLayer consumers get it transitively.
+    Layer.provide(AgentControl.defaultLayer),
     Layer.provide(
       Layer.mergeAll(
         Agent.defaultLayer,

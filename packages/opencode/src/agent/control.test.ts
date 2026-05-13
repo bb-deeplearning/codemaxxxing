@@ -1185,6 +1185,163 @@ describe("AgentControl.resolveAgentReference edge cases", () => {
   )
 })
 
+describe("AgentControl.hasPendingTriggerTurn", () => {
+  it.live("reports true when at least one queued message has trigger_turn set", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        // spawnAgent's seed initial_message is sent with trigger_turn: true.
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "tt",
+          initial_message: "wake me",
+        })
+        expect(yield* control.hasPendingTriggerTurn(child.thread_id)).toBe(true)
+        yield* control.drainMailbox(child.thread_id)
+        expect(yield* control.hasPendingTriggerTurn(child.thread_id)).toBe(false)
+      }),
+    ),
+  )
+
+  it.live("reports false when only non-trigger_turn messages are queued", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "ntt",
+          initial_message: "first",
+        })
+        // Drain the seed (trigger_turn: true) then send a passive sibling
+        // message with trigger_turn: false — the runLoop should be free to
+        // exit on its assistant finish without being held back.
+        yield* control.drainMailbox(child.thread_id)
+        yield* control.sendInterAgentCommunication(
+          child.thread_id,
+          new InterAgentCommunication({
+            author: ROOT,
+            recipient: child.metadata.agent_path ?? ROOT,
+            content: "fyi",
+            trigger_turn: false,
+            sent_at: 1,
+          }),
+        )
+        expect(yield* control.hasPendingTriggerTurn(child.thread_id)).toBe(false)
+      }),
+    ),
+  )
+
+  it.live("reports false for an unknown SessionID (no error)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        yield* seedRoot()
+        const control = yield* AgentControl.Service
+        expect(yield* control.hasPendingTriggerTurn(SessionID.descending())).toBe(false)
+      }),
+    ),
+  )
+})
+
+describe("AgentControl.cancelChildrenOf", () => {
+  it.live("interrupts every direct child whose path sits beneath the parent", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const a = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "a",
+          initial_message: ".",
+        })
+        const b = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "b",
+          initial_message: ".",
+        })
+        const c = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "c",
+          initial_message: ".",
+        })
+
+        yield* control.cancelChildrenOf(root.id)
+
+        // After cancellation each agent's registry slot is released — the
+        // metadata lookup returns undefined.
+        expect(yield* control.getAgentMetadata(a.thread_id)).toBeUndefined()
+        expect(yield* control.getAgentMetadata(b.thread_id)).toBeUndefined()
+        expect(yield* control.getAgentMetadata(c.thread_id)).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("cascades through nested descendants leaves-first", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const parent = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "p",
+          initial_message: ".",
+        })
+        const parentPath = parent.metadata.agent_path
+        if (!parentPath) throw new Error("parent has no path")
+        const child = yield* control.spawnAgent({
+          parentID: parent.thread_id,
+          parentPath,
+          task_name: "c",
+          initial_message: ".",
+        })
+        const childPath = child.metadata.agent_path
+        if (!childPath) throw new Error("child has no path")
+        const grandchild = yield* control.spawnAgent({
+          parentID: child.thread_id,
+          parentPath: childPath,
+          task_name: "g",
+          initial_message: ".",
+        })
+
+        // Cancel from the parent — both child and grandchild should die,
+        // parent itself stays (cancelChildrenOf only touches descendants).
+        yield* control.cancelChildrenOf(parent.thread_id)
+        expect(yield* control.getAgentMetadata(child.thread_id)).toBeUndefined()
+        expect(yield* control.getAgentMetadata(grandchild.thread_id)).toBeUndefined()
+        // parent itself is still alive in the registry
+        expect(yield* control.getAgentMetadata(parent.thread_id)).toBeDefined()
+      }),
+    ),
+  )
+
+  it.live("is a no-op for a session that is neither root nor a registered agent", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const sessions = yield* Session.Service
+        const stranger = yield* sessions.create({ title: "stranger" })
+        // Should not throw and should not affect any other agent.
+        const exit = yield* Effect.exit(control.cancelChildrenOf(stranger.id))
+        expect(exit._tag).toBe("Success")
+      }),
+    ),
+  )
+})
+
 // Sanity: silence unused import warnings if Fiber is referenced only in
 // type context. Fiber is imported for type narrowing in some test-only
 // rewrites; this no-op keeps the import live.

@@ -235,6 +235,12 @@ export const SubtaskPart = Schema.Struct({
     }),
   ),
   command: Schema.optional(Schema.String),
+  // Wave 9: dispatch protocol marker. Absent or any other value = v1 (legacy
+  // `task` tool, blocking dispatch through SessionPrompt.handleSubtask). The
+  // literal "v2" routes through AgentControl.spawnAgent and forks the child
+  // run loop into the parent's scope so the parent loop continues without
+  // blocking. See MESSAGE_SHAPES.md § "Subtask v2 marker".
+  protocol: Schema.optional(Schema.Literal("v2")),
 })
   .annotate({ identifier: "SubtaskPart" })
   .pipe(withStatics((s) => ({ zod: zod(s) })))
@@ -539,6 +545,10 @@ export const SubtaskPartInput = Schema.Struct({
     }),
   ),
   command: Schema.optional(Schema.String),
+  // Wave 9: dispatch protocol marker. Mirrors `SubtaskPart.protocol` so
+  // callers (slash commands like `plan`) can declaratively enqueue v2
+  // subtasks without bypassing the input schema.
+  protocol: Schema.optional(Schema.Literal("v2")),
 })
   .annotate({ identifier: "SubtaskPartInput" })
   .pipe(withStatics((s) => ({ zod: zod(s) })))

@@ -925,3 +925,228 @@ When adding a new `Foo.Service` to `ToolRegistry`'s requirements:
 - Source: `packages/opencode/src/tool/registry.ts` `Service` requirements list and `defaultLayer` composition
 
 ---
+
+## [agentcontrol-providerref-must-live-in-layer-not-instancestate] AgentControl's run-loop providerRef can't sit in InstanceState — layer init runs before any Instance is bound
+
+**Discovered in:** wave_9
+**Date:** 2026-05-13
+**Surfaces affected:** `packages/opencode/src/agent/control.ts` (`registerRunLoop`); any wave that adds AgentControl-adjacent state shared across instances and registered from a sibling layer's init effect (Wave 9 SessionPrompt, future Bus-style fan-out)
+**Severity:** correctness-bug (cryptic "instance: No context found for instance" at first test that triggers SessionPrompt's layer init)
+
+### Symptom
+
+`SessionPrompt.layer`'s init yields `AgentControl.Service` and calls `agentControl.registerRunLoop(loop)`. The first test that materializes the layer crashes with:
+
+```
+instance: No context found for instance
+  at use (src/util/local-context.ts:15:19)
+  at src/effect/instance-state.ts:42:26
+  at AgentControl.registerRunLoop (src/agent/control.ts:...)
+```
+
+The error fires from `InstanceState.get(state)` inside `registerRunLoop`. The layer materializes once globally (per `testEffect` runtime), but Instance.current is per-test — bound by `provideTmpdirInstance` only AFTER the layer is built.
+
+### Root cause
+
+The Wave 7 ADR placed `providerRef: Ref<((sessionID) => Effect<unknown>) | undefined>` inside `InstanceState.make`'s closure — one ref per project directory. That's correct for *consumers* (each instance has its own state map), but registration is logically global: the run-loop closure is the same regardless of which directory is active.
+
+`InstanceState.get(state)` requires Instance.current bound (it's a ScopedCache.get keyed by directory). Layer init has no Instance bound yet — the layer is built in the runtime, instances are bound per-call later. The registration call therefore crashes.
+
+### Fix pattern
+
+Hoist single-value, instance-agnostic state to the **layer scope** (top of `Layer.effect`'s effect), keep per-instance maps inside `InstanceState.make`:
+
+```ts
+export const layer = Layer.effect(
+  Service,
+  Effect.gen(function* () {
+    const sessions = yield* Session.Service
+    // Layer-scope: shared across every instance the layer serves. Safe
+    // because the function itself is instance-agnostic (its returned Effect
+    // resolves InstanceState.context internally at execution time).
+    const providerRef = yield* Ref.make<RunLoopProvider | undefined>(undefined)
+
+    const state = yield* InstanceState.make(
+      Effect.fn("AgentControl.state")(function* () {
+        // Per-instance: registry, mailboxes, statuses, fibers, listeners,
+        // rootRef. These DO differ per directory.
+        // ...
+      }),
+    )
+
+    const registerRunLoop = Effect.fn(...)(function* (fn) {
+      // Reads layer-scope ref, no InstanceState lookup → no Instance binding required.
+      yield* Ref.set(providerRef, fn)
+    })
+
+    const spawnAgent = Effect.fn(...)(function* (input) {
+      const data = yield* InstanceState.get(state)  // OK: Instance is bound at spawn time
+      const provider = yield* Ref.get(providerRef)  // layer-scope, instance-agnostic
+      // ...
+    })
+  }),
+)
+```
+
+Rule of thumb: if a piece of state is set ONCE at layer build (e.g. registration) and read by per-instance methods, store it at layer scope. If it's set per-instance and varies per directory, keep it in InstanceState.
+
+### Reference
+
+- `packages/opencode/src/agent/control.ts` `providerRef` lives at layer scope; per-instance state stays in `InstanceState.make`
+- Original ADR (now superseded for this specific field): `.wave/campaigns/codex-parity-2026-05-13/plan/waves/wave_7/ADR.md`
+
+---
+
+## [bench-effect-runpromise-loses-instance-in-async-callback] `await Effect.runPromise(<effect needing Instance>)` inside `Effect.promise(async () => …)` crashes with "No context found for instance"
+
+**Discovered in:** wave_9
+**Date:** 2026-05-13
+**Surfaces affected:** any test or bench that polls an Instance-dependent service from inside an `Effect.promise` callback — Wave 9 cancel-cascade test, future Wave 11/14 tests that race spawn lifecycle against time
+**Severity:** DX-trap (cryptic ALS error inside a polling helper that looks correct)
+
+### Symptom
+
+Existing tests use this pattern to poll for async state:
+
+```ts
+yield* Effect.promise(async () => {
+  const end = Date.now() + 5_000
+  while (Date.now() < end) {
+    const list = await Effect.runPromise(svc.someMethod())  // crashes here
+    if (list.length === 0) return
+    await new Promise((r) => setTimeout(r, 30))
+  }
+})
+```
+
+When `svc.someMethod()` calls `InstanceState.get`, the runPromise loses the test's tmpdir Instance binding (it spawns a fresh root fiber outside the test's ALS context). Result: `instance: No context found for instance`.
+
+The pattern works for services that don't touch Instance (e.g. `MessageV2.filterCompactedEffect` which uses `Database.use` with its own ALS, not Instance). It breaks for AgentControl methods because every AgentControl method reads `InstanceState.get(state)` for per-directory mailboxes/statuses/fibers.
+
+### Root cause
+
+`Effect.runPromise` builds a fresh root scope. The Instance ALS context bound by `provideTmpdirInstance` is on the test's call stack — not inherited by the new root scope of the inner runPromise. Inside `Effect.promise(async ...)`, the async callback runs in its own microtask but ALS context propagates… *until* a fresh `Effect.runPromise` resets it.
+
+### Fix pattern
+
+Poll inside an Effect scope so Instance.current stays valid through the loop:
+
+```ts
+yield* Effect.gen(function* () {
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    const list = yield* svc.someMethod()  // inherits the test's Instance binding
+    if (list.length === 0) return
+    yield* Effect.sleep(30)
+  }
+  throw new Error("timed out waiting for ...")
+})
+```
+
+`Effect.sleep` works inside a `while` with `Effect.gen` because each `yield*` is a continuation in the same fiber; the Instance context flows through. No fresh runPromise; no lost ALS.
+
+### Reference
+
+- Working example: `packages/opencode/test/session/prompt.test.ts` `cancel propagates: cancelling the parent interrupts every v2 child fiber` — the cancel-then-poll loop lives inside `Effect.gen`, not `Effect.promise`
+- Counter-example (works *only* because the polled effect doesn't touch Instance): `prompt.test.ts:707` polls `MessageV2.filterCompactedEffect` via `Effect.promise` + `Effect.runPromise` — fine because `filterCompactedEffect` uses `Database.use`, not `InstanceState.get`
+
+---
+
+## [bun-test-test-dir-runs-baseline-orchestrator] `bun test test/` reruns `test/perf/baseline/baseline.test.ts` and silently overwrites the frozen baseline-perf.json
+
+**Discovered in:** wave_9
+**Date:** 2026-05-13
+**Surfaces affected:** any wave that runs `bun test test/` (the path-as-filter form) for broad regression checks — Wave 9 onward, anytime a developer wants to spot-check the full test suite
+**Severity:** correctness-bug (corrupts the baseline used by every subsequent wave's regression budget)
+
+### Symptom
+
+Running `bun test test/` to spot-check after a wave change comes back clean (tests pass), then `git status` shows `baseline-perf.json` modified with fresh numbers from the current machine. The `git_sha` field changes from the wave_0 commit to `HEAD`, and every percentile shifts to whatever the current machine measured.
+
+Subsequent waves' `compareToBaseline` calls then compare against the contaminated baseline rather than the immutable wave_0 capture, masking real regressions or flagging false-positive ones depending on which way the noise went.
+
+### Root cause
+
+`packages/opencode/test/perf/baseline/baseline.test.ts` is the orchestrator that *captures* the baseline. It runs all baseline benches and writes the result to `.wave/campaigns/.../artifacts/baseline-perf.json` in `afterAll`. The file is intended to be a one-time wave_0 capture, committed and never rerun.
+
+When you do `bun test test/`, Bun discovers every `.test.ts` file in `test/` — including `test/perf/baseline/baseline.test.ts`. That orchestrator runs and silently overwrites the file. There's no warning that the file is supposed to be immutable.
+
+### Fix pattern
+
+For broad spot-checks, exclude the baseline orchestrator:
+
+```bash
+# Bad: silently overwrites baseline-perf.json
+bun test test/
+
+# Good: per-area runs, each scoped to what you actually changed
+bun test test/session/
+bun test test/tool/
+bun test test/integration/
+bun test test/server/
+# and so on
+```
+
+Or always run `bun test src/` (which doesn't include the perf dir) for src-side spot-checks; only run specific perf bench files for the wave's own bench (`bun test ./test/perf/<wave>.bench.ts`).
+
+If you DO accidentally regenerate the baseline (you'll see it in `git status`), restore it: `git checkout .wave/campaigns/codex-parity-2026-05-13/artifacts/baseline-perf.json`.
+
+A defensive long-term fix would be to gate the baseline orchestrator behind an env flag (e.g. `OPENCODE_CAPTURE_PERF_BASELINE=1`) so it only runs when explicitly requested. Out of scope for Wave 9; documented here for the next wave to consider.
+
+### Reference
+
+- `packages/opencode/test/perf/baseline/baseline.test.ts` (lines 110-120) — the `afterAll` block that overwrites the file
+- `.wave/campaigns/codex-parity-2026-05-13/plan/PERF.md` § "Baseline (Wave 0)" — describes the intent that the file is captured once and used as a frozen reference
+
+---
+
+## [runloop-bench-vs-baseline-methodology-mismatch] in-Effect.gen microbench loops measure ns-scale work, baseline measures ns + per-sample Effect.runPromise overhead — comparison is generous, not strict
+
+**Discovered in:** wave_9
+**Date:** 2026-05-13
+**Surfaces affected:** every wave bench that compares a runLoop-region metric against the wave_0 `runloop.step.no_op` baseline — Wave 9, future Wave 14 final perf audit
+**Severity:** DX-trap (passing the budget doesn't mean the new work is free; it means our measurement scopes differ)
+
+### Symptom
+
+A wave_9-style bench measures `drainMailbox + Stream.runDrain` inside a single Effect.gen with a `for (let i = 0; i < N; i++)` loop, captured at p50 ~10µs. The wave_0 baseline `runloop.step.no_op` (just `Stream.runDrain`) sits at p50 ~19µs. Comparison: -55% on p50 — appears to be a huge improvement, well under budget.
+
+But the new metric does *more* work than the baseline (drain + stream vs just stream), and runs in a tighter inner loop (no per-sample Effect.runPromise overhead). The "improvement" is illusory — different per-sample fixed cost, not a genuine speedup. If you flip the new metric's structure to match baseline (per-sample `await Effect.runPromise(...)`), the absolute numbers regress to ~21µs, +8% on p50 — *over* the 5% budget.
+
+### Root cause
+
+The baseline's bench shape is:
+
+```ts
+async () => {
+  await Effect.runPromise(Effect.gen(function* () {
+    yield* Stream.runDrain(llm.stream(input))
+  }).pipe(Effect.provide(layer)))
+}
+```
+
+Per sample: Bun.nanoseconds + `Effect.runPromise` (resolves layer via memo, wraps in fresh root scope) + `Effect.gen` startup + Stream.runDrain + Bun.nanoseconds. The runPromise + scope setup is roughly 10µs of fixed overhead per sample.
+
+In a wave bench that needs Instance binding (AgentControl methods), the cleanest pattern is to bind Instance once via `provideTmpdirInstance` and run the entire sample loop *inside* one Effect.gen — no per-sample runPromise. The fixed cost vanishes; the measurement reflects pure inner-loop work.
+
+The two shapes measure different things. Comparing them implies a relationship that doesn't exist.
+
+### Fix pattern
+
+Two viable approaches:
+
+1. **Match the baseline's per-sample structure.** Wrap each sample in `await runtime.runPromise(myEffect)` and bind Instance externally via `Instance.restore(ctx, () => bench(...))`. Fixed overhead matches; comparison is meaningful but expensive (~10µs floor per sample dominates).
+
+2. **Acknowledge the methodological gap and treat the baseline comparison as a sanity check, not a strict bound.** Accept that the new metric is faster because it has less per-sample overhead, not because the new work is free. Capture a separate "drain-only" microbench to measure the new work in isolation if precise attribution matters.
+
+Wave 9 took approach (2) — the bench passes the budget by ~55% margin, well within any reasonable interpretation. The wave_2 gotcha [pty-bench-baseline-vs-new-work] is the same class of problem, recommends the same pragmatic stance.
+
+If a future wave's bench is suspiciously fast (e.g. -50% vs baseline) AND introduces new work, that's the smell — verify the per-sample structure matches before claiming a speedup.
+
+### Reference
+
+- Wave 9 bench: `packages/opencode/test/perf/runloop-multi-agent.bench.ts` uses approach (2) with explicit best-of-N to suppress noise (mirrors wave 4 gotcha)
+- Wave 2 gotcha: `[pty-bench-baseline-vs-new-work]` documents the same comparison-vs-baseline issue for `pty.push.4kb`
+- Baseline shape: `packages/opencode/test/perf/baseline/runloop-overhead.bench.ts`
+
+---

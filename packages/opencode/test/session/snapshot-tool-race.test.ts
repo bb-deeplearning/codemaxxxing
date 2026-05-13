@@ -135,7 +135,10 @@ function makeHttp() {
     Layer.provide(Format.defaultLayer),
     Layer.provide(Pty.defaultLayer),
     Layer.provide(ProcessSessions.defaultLayer),
-    Layer.provide(AgentControl.defaultLayer),
+    // Wave 9: SessionPrompt now depends on AgentControl directly. Surface
+    // it from the registry layer so SessionPrompt's layer init can resolve
+    // it without each consumer re-providing the same default.
+    Layer.provideMerge(AgentControl.defaultLayer),
     Layer.provideMerge(todo),
     Layer.provideMerge(question),
     Layer.provideMerge(deps),

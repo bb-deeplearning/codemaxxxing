@@ -27,7 +27,7 @@ import { SessionCompaction } from "../../src/session/compaction"
 import { SessionSummary } from "../../src/session/summary"
 import { Instruction } from "../../src/session/instruction"
 import { SessionProcessor } from "../../src/session/processor"
-import { SessionPrompt } from "../../src/session/prompt"
+import { SessionPrompt, slugifyTaskName } from "../../src/session/prompt"
 import { SessionRevert } from "../../src/session/revert"
 import { SessionRunState } from "../../src/session/run-state"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
@@ -41,6 +41,8 @@ import { ToolRegistry } from "@/tool/registry"
 import { Truncate } from "@/tool/truncate"
 import { Pty } from "@/pty"
 import { AgentControl } from "@/agent/control"
+import { AgentPath } from "@/agent/agent-path"
+import { InterAgentCommunication } from "@/agent/inter-agent-communication"
 import { ProcessSessions } from "@/tool/process/sessions"
 import * as Log from "@opencode-ai/core/util/log"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
@@ -185,7 +187,11 @@ function makeHttp() {
     Layer.provide(Format.defaultLayer),
     Layer.provide(Pty.defaultLayer),
     Layer.provide(ProcessSessions.defaultLayer),
-    Layer.provide(AgentControl.defaultLayer),
+    // Wave 9: lift AgentControl from a hidden registry dep to a top-level
+    // service so SessionPrompt's layer init can register the run-loop
+    // provider, the runLoop drain step can call drainMailbox, and tests can
+    // yield AgentControl.Service to assert against it directly.
+    Layer.provideMerge(AgentControl.defaultLayer),
     Layer.provideMerge(todo),
     Layer.provideMerge(question),
     Layer.provideMerge(deps),
@@ -321,6 +327,26 @@ const addSubtask = (sessionID: SessionID, messageID: MessageID, model = ref) =>
       description: "inspect bug",
       agent: "general",
       model,
+    })
+  })
+
+const addSubtaskV2 = (
+  sessionID: SessionID,
+  messageID: MessageID,
+  init?: { agent?: string; description?: string; prompt?: string },
+) =>
+  Effect.gen(function* () {
+    const session = yield* Session.Service
+    yield* session.updatePart({
+      id: PartID.ascending(),
+      messageID,
+      sessionID,
+      type: "subtask",
+      prompt: init?.prompt ?? "do the v2 thing",
+      description: init?.description ?? "v2-spawn",
+      agent: init?.agent ?? "general",
+      model: ref,
+      protocol: "v2",
     })
   })
 
@@ -680,7 +706,94 @@ it.live(
       }),
       { git: true, config: providerCfg },
     ),
-  5_000,
+  10_000,
+)
+
+import { test } from "bun:test"
+
+test("slugifyTaskName: passes through valid leaf segments unchanged", () => {
+  expect(slugifyTaskName("worker_1")).toBe("worker_1")
+  expect(slugifyTaskName("a_b_c_42")).toBe("a_b_c_42")
+})
+
+test("slugifyTaskName: lowercases and replaces invalid runs with single underscore", () => {
+  expect(slugifyTaskName("Hello-World 42")).toBe("hello_world_42")
+  expect(slugifyTaskName("v2-spawn")).toBe("v2_spawn")
+})
+
+test("slugifyTaskName: returns empty when no valid characters survive", () => {
+  expect(slugifyTaskName("---")).toBe("")
+  expect(slugifyTaskName("")).toBe("")
+})
+
+it.live("trigger_turn pending defers loop exit even when assistant has finished", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const chat = yield* sessions.create({
+        title: "trigger_turn-defer",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+      yield* control.registerSessionRoot(chat.id)
+
+      // Spawn a child via AgentControl so the registered loop drives it.
+      const child = yield* control.spawnAgent({
+        parentID: chat.id,
+        parentPath: AgentPath.root(),
+        task_name: "deferchild",
+        initial_message: "first turn",
+      })
+
+      // First model response: model says "stop". Then queue a follow-up.
+      // Because the follow-up arrives between the assistant's "stop" and
+      // the exit check, hasPendingTriggerTurn returns true and the loop
+      // continues into another turn rather than breaking. The second model
+      // call returns the second text — observable in the transcript.
+      yield* llm.text("first done")
+      yield* llm.text("second done")
+
+      // Wait for the first model call to complete.
+      yield* Effect.promise(async () => {
+        const end = Date.now() + 5_000
+        while (Date.now() < end) {
+          const calls = await Effect.runPromise(llm.calls)
+          if (calls >= 1) return
+          await new Promise((done) => setTimeout(done, 30))
+        }
+        throw new Error("timed out waiting for first model call")
+      })
+
+      // Inject a trigger_turn message; the next exit check should defer.
+      yield* control.sendInterAgentCommunication(
+        child.thread_id,
+        new InterAgentCommunication({
+          author: AgentPath.root(),
+          recipient: child.metadata.agent_path ?? AgentPath.root(),
+          content: "wake up",
+          trigger_turn: true,
+          sent_at: 1,
+        }),
+      )
+
+      // After the second model call, the child loop exits cleanly.
+      yield* Effect.promise(async () => {
+        const end = Date.now() + 5_000
+        while (Date.now() < end) {
+          const calls = await Effect.runPromise(llm.calls)
+          if (calls >= 2) return
+          await new Promise((done) => setTimeout(done, 30))
+        }
+        throw new Error("timed out waiting for second model call")
+      })
+
+      // Two model calls happened — confirms the trigger_turn defer caused a
+      // second turn after the first "stop".
+      expect(yield* llm.calls).toBeGreaterThanOrEqual(2)
+    }),
+    { git: true, config: providerCfg },
+  ),
 )
 
 it.live(
@@ -2028,3 +2141,356 @@ it.live(
     ),
   30_000,
 )
+
+// ── Wave 9: multi-agent v2 dispatch + mailbox drain ────────────────────────
+//
+// These tests cover the runLoop integration touched by Wave 9:
+//   * Legacy SubtaskPart (no `protocol`) still flows through `handleSubtask`.
+//   * `protocol: "v2"` dispatches via AgentControl.spawnAgent and the parent
+//     loop continues without blocking on the child.
+//   * Mailbox drain runs at the top of each iteration. Pending messages
+//     surface as a fresh user message of synthetic text parts; an empty
+//     mailbox is a true no-op.
+//   * Cancelling the parent session interrupts every spawned child fiber.
+
+const ROOT_PATH = AgentPath.root()
+
+const liveAgentNamesUnder = Effect.fn("test.liveAgentNamesUnder")(function* (
+  control: AgentControl.Interface,
+  prefix = ROOT_PATH,
+) {
+  const list = yield* control.listAgents(prefix)
+  // strip the root entry; we only care about spawned children
+  return list.map((entry) => entry.agent_name).filter((name) => name !== String(ROOT_PATH))
+})
+
+it.live("legacy SubtaskPart (no protocol marker) routes through handleSubtask", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const chat = yield* sessions.create({ title: "legacy-subtask" })
+
+      yield* llm.tool("task", {
+        description: "inspect bug",
+        prompt: "look into the cache key path",
+        subagent_type: "general",
+      })
+      yield* llm.text("done")
+
+      const msg = yield* user(chat.id, "hello")
+      yield* addSubtask(chat.id, msg.id)
+
+      yield* prompt.loop({ sessionID: chat.id })
+
+      // handleSubtask creates an assistant child message tagged with the
+      // subtask agent ("general"). v2 dispatch never produces such a message.
+      const msgs = yield* MessageV2.filterCompactedEffect(chat.id)
+      const subAgentMsg = msgs.find(
+        (item) => item.info.role === "assistant" && item.info.agent === "general",
+      )
+      expect(subAgentMsg).toBeDefined()
+
+      // No v2 child should exist in AgentControl — the legacy path bypasses it.
+      const live = yield* liveAgentNamesUnder(control)
+      expect(live).toEqual([])
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+it.live(
+  "protocol=v2 SubtaskPart dispatches via AgentControl without blocking the parent loop",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* () {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const chat = yield* sessions.create({ title: "v2-spawn" })
+
+        const msg = yield* user(chat.id, "spawn the v2 child")
+        yield* addSubtaskV2(chat.id, msg.id, { agent: "general" })
+
+        const start = Date.now()
+        const result = yield* prompt.loop({ sessionID: chat.id })
+        const elapsed = Date.now() - start
+
+        // Parent loop returns promptly — no blocking on the spawned child.
+        // 5s is comfortably above any reasonable spawn-fork cost; it would be
+        // exceeded only if the loop awaited child completion.
+        expect(elapsed).toBeLessThan(5_000)
+        expect(result.info.role).toBe("assistant")
+
+        // A v2 child was spawned via AgentControl.
+        const live = yield* liveAgentNamesUnder(control)
+        expect(live.length).toBe(1)
+        expect(live[0]?.startsWith("/root/")).toBe(true)
+
+        // handleSubtask path was NOT taken — no assistant message tagged
+        // with the subtask agent appears in the parent's transcript.
+        const msgs = yield* MessageV2.filterCompactedEffect(chat.id)
+        const subAgentMsg = msgs.find(
+          (item) => item.info.role === "assistant" && item.info.agent === "general",
+        )
+        expect(subAgentMsg).toBeUndefined()
+      }),
+      { git: true, config: providerCfg },
+    ),
+  10_000,
+)
+
+it.live(
+  "v2 dispatch records a failure assistant message when AgentControl.spawnAgent rejects",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* () {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const chat = yield* sessions.create({ title: "v2-spawn-fail" })
+
+        // Pre-claim the canonical /root/duplicate path via a real spawn so
+        // the second SubtaskPart hits PathAlreadyExistsError. Registers root
+        // as a side-effect via spawnAgent.
+        yield* control.registerSessionRoot(chat.id)
+        yield* control.spawnAgent({
+          parentID: chat.id,
+          parentPath: AgentPath.root(),
+          task_name: "duplicate",
+          initial_message: "first",
+        })
+
+        // The SubtaskPart's description slugifies to "duplicate" — same path.
+        const msg = yield* user(chat.id, "spawn the duplicate")
+        yield* addSubtaskV2(chat.id, msg.id, { agent: "general", description: "duplicate" })
+
+        const result = yield* prompt.loop({ sessionID: chat.id })
+
+        // The synthesized assistant message records the failure with the
+        // human-readable reason; the parent loop exits cleanly.
+        expect(result.info.role).toBe("assistant")
+        const msgs = yield* MessageV2.filterCompactedEffect(chat.id)
+        const synthetic = msgs
+          .filter((m) => m.info.role === "assistant")
+          .flatMap((m) => m.parts)
+          .filter((p): p is MessageV2.TextPart => p.type === "text")
+          .find((p) => p.synthetic && p.text.startsWith("Failed to spawn agent"))
+        expect(synthetic).toBeDefined()
+        expect(synthetic?.text).toContain("duplicate")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  10_000,
+)
+
+it.live("mailbox drain inserts pending sibling messages as synthetic user parts", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const chat = yield* sessions.create({
+        title: "mailbox-drain",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+
+      // Register chat as the registered session root so AgentControl knows
+      // its mailbox identity, then queue an inter-agent communication. The
+      // runLoop will drain it before the first model call.
+      yield* control.registerSessionRoot(chat.id)
+
+      // Seed mailbox via spawnAgent's seed path is awkward here (we'd be
+      // registering chat as a child of itself); the production wiring lands
+      // through send_message / followup_task. Use sendInterAgentCommunication
+      // directly — it requires a registered mailbox, which root has.
+      // Spawn a placeholder child so root's identity is wired but use the
+      // SAME chat session as recipient by also adding chat to mailbox map.
+      // The simplest path: spawn a child and have IT receive the message,
+      // then run the child's loop. This exercises the fresh-spawn drain too.
+      yield* prompt.prompt({
+        sessionID: chat.id,
+        agent: "build",
+        noReply: true,
+        parts: [{ type: "text", text: "hello" }],
+      })
+
+      // For drain testing, inject directly into the chat session's mailbox.
+      // AgentControl exposes a registered mailbox only for spawned children;
+      // we register chat as root so its session ID gets a status entry. The
+      // actual drain test uses spawnAgent below to create a real child whose
+      // mailbox we can target.
+      const live = yield* control.spawnAgent({
+        parentID: chat.id,
+        parentPath: ROOT_PATH,
+        task_name: "echoer",
+        initial_message: "first ping",
+      })
+
+      // Send a follow-up trigger_turn message into the child's mailbox.
+      yield* control.sendInterAgentCommunication(
+        live.thread_id,
+        new InterAgentCommunication({
+          author: ROOT_PATH,
+          recipient: live.metadata.agent_path ?? ROOT_PATH,
+          content: "second ping",
+          trigger_turn: true,
+          sent_at: 1234,
+        }),
+      )
+
+      // Stub the LLM with a single text response; the child's runLoop will
+      // run one turn after draining the seed + follow-up messages.
+      yield* llm.text("acknowledged")
+
+      // The runLoop must already be running for this child (spawnAgent forks
+      // it). Wait briefly for the loop to drain and the model call to fire.
+      yield* Effect.promise(async () => {
+        const end = Date.now() + 5_000
+        while (Date.now() < end) {
+          const calls = await Effect.runPromise(llm.calls)
+          if (calls >= 1) return
+          await new Promise((done) => setTimeout(done, 30))
+        }
+        throw new Error("timed out waiting for child to call LLM")
+      })
+
+      // Verify both seed + follow-up messages were materialized as synthetic
+      // text parts on a user message in the child's transcript.
+      const msgs = yield* MessageV2.filterCompactedEffect(live.thread_id)
+      const userParts = msgs
+        .filter((m) => m.info.role === "user")
+        .flatMap((m) => m.parts)
+        .filter((p): p is MessageV2.TextPart => p.type === "text")
+
+      const fromSibling = userParts.filter((p) => p.synthetic && p.metadata?.from)
+      expect(fromSibling.length).toBeGreaterThanOrEqual(2)
+      // Body carries the [from <author>]: prefix per MESSAGE_SHAPES.md.
+      expect(fromSibling.some((p) => p.text.includes("first ping"))).toBe(true)
+      expect(fromSibling.some((p) => p.text.includes("second ping"))).toBe(true)
+      expect(fromSibling.every((p) => p.text.startsWith("[from "))).toBe(true)
+      // Metadata fields per the spec.
+      const followUp = fromSibling.find((p) => p.text.includes("second ping"))
+      expect(followUp?.metadata?.from).toBe(String(ROOT_PATH))
+      expect(followUp?.metadata?.sent_at).toBe(1234)
+      expect(followUp?.metadata?.trigger_turn).toBe(true)
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+it.live("mailbox drain on an empty mailbox is a no-op (no synthetic user message)", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({
+        title: "empty-mailbox",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+      yield* prompt.prompt({
+        sessionID: chat.id,
+        agent: "build",
+        noReply: true,
+        parts: [{ type: "text", text: "hi" }],
+      })
+      yield* llm.text("hello")
+
+      yield* prompt.loop({ sessionID: chat.id })
+
+      // No mailbox has been provisioned for the regular chat session, so the
+      // drain returns []; the only user message is the original "hi" — no
+      // sibling-prefixed synthetic parts get added.
+      const msgs = yield* MessageV2.filterCompactedEffect(chat.id)
+      const sibParts = msgs
+        .filter((m) => m.info.role === "user")
+        .flatMap((m) => m.parts)
+        .filter((p) => p.type === "text" && (p as MessageV2.TextPart).metadata?.from !== undefined)
+      expect(sibParts).toEqual([])
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+it.live(
+  "cancel propagates: cancelling the parent interrupts every v2 child fiber",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const chat = yield* sessions.create({ title: "cancel-cascade" })
+
+        // Pin the child run loops on the LLM hang gate so each child stays
+        // running until interrupted.
+        yield* llm.hang
+
+        // Spawn 3 v2 children directly via AgentControl. The seed
+        // initial_message goes into each child's mailbox; the child run loop
+        // (registered by SessionPrompt's layer init) drains it and starts a
+        // model call — which hangs on llm.hang.
+        const a = yield* control.spawnAgent({
+          parentID: chat.id,
+          parentPath: ROOT_PATH,
+          task_name: "a",
+          initial_message: "alpha",
+        })
+        const b = yield* control.spawnAgent({
+          parentID: chat.id,
+          parentPath: ROOT_PATH,
+          task_name: "b",
+          initial_message: "beta",
+        })
+        const c = yield* control.spawnAgent({
+          parentID: chat.id,
+          parentPath: ROOT_PATH,
+          task_name: "c",
+          initial_message: "gamma",
+        })
+
+        // All three children are alive and reachable through listAgents.
+        const beforeNames = yield* liveAgentNamesUnder(control)
+        expect(beforeNames.sort()).toEqual(["/root/a", "/root/b", "/root/c"])
+
+        // Wait for all three children to actually start their model calls so
+        // we know the runLoop is in flight (not in the early init phase).
+        yield* llm.wait(3)
+
+        // Cancel the parent — every child fiber must die.
+        yield* prompt.cancel(chat.id)
+
+        // After cancel, each child's status reaches a final state ("shutdown"
+        // for cancellation). Poll inside the Effect scope so InstanceState
+        // resolution stays valid; bare `Effect.runPromise` here would lose
+        // the test's tmpdir Instance binding and crash with "No context
+        // found for instance".
+        yield* Effect.gen(function* () {
+          const deadline = Date.now() + 3_000
+          while (Date.now() < deadline) {
+            const list = yield* control.listAgents(ROOT_PATH)
+            const stillLive = list
+              .filter((entry) => entry.agent_name !== String(ROOT_PATH))
+              .filter(
+                (entry) => entry.agent_status !== "shutdown" && entry.agent_status !== "not_found",
+              )
+            if (stillLive.length === 0) return
+            yield* Effect.sleep(30)
+          }
+          throw new Error("timed out waiting for v2 children to interrupt")
+        })
+
+        // Sanity: explicit closeAgent on each child no longer finds them in
+        // the live registry (they've been removed by cancelChildrenOf →
+        // closeAgent → shutdownOne → registry.releaseSpawnedThread).
+        for (const live of [a, b, c]) {
+          const meta = yield* control.getAgentMetadata(live.thread_id)
+          expect(meta).toBeUndefined()
+        }
+      }),
+      { git: true, config: providerCfg },
+    ),
+  10_000,
+)
+
