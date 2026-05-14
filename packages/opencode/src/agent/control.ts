@@ -5,6 +5,7 @@ import {
   Exit,
   Fiber,
   Layer,
+  Option,
   Ref,
   Schema,
   Scope,
@@ -485,6 +486,44 @@ export const layer = Layer.effect(
       yield* ensureRootSlot(data, id)
     })
 
+    // Fork an agent's runLoop fiber and wire its lifecycle hooks. Used by
+    // the initial spawn and by revival from sendInterAgentCommunication
+    // when a trigger_turn message lands on a previously-completed agent.
+    // The onExit closure handles three terminal cases:
+    //   - success → status becomes { completed: null } (mailbox can revive)
+    //   - interrupt → status untouched (caller controls — closeAgent path)
+    //   - any other failure → status becomes { errored: <pretty cause> }
+    // The `data.scope` parent ensures the fiber dies with the per-root slot
+    // (and never outlives its registered root).
+    const startAgentFiber = Effect.fn("AgentControl.startAgentFiber")(function* (
+      data: InternalState,
+      slot: PerRootData,
+      sessionID: SessionID,
+    ) {
+      const provider = yield* Ref.get(providerRef)
+      const loopEffect: Effect.Effect<unknown> = provider ? provider(sessionID) : Effect.never
+      const status = slot.statuses.get(sessionID)
+      const fiber = yield* loopEffect.pipe(
+        Effect.onExit((exit: Exit.Exit<unknown, unknown>) =>
+          Effect.gen(function* () {
+            slot.fibers.delete(sessionID)
+            if (!status) return
+            if (Exit.isSuccess(exit)) {
+              yield* SubscriptionRef.set(status, { completed: null })
+              return
+            }
+            if (Cause.hasInterrupts(exit.cause)) return
+            yield* SubscriptionRef.set(status, {
+              errored: Cause.pretty(exit.cause),
+            })
+          }),
+        ),
+        Effect.forkIn(data.scope),
+      )
+      slot.fibers.set(sessionID, fiber)
+      return fiber
+    })
+
     const spawnAgent = Effect.fn("AgentControl.spawnAgent")(function* (input: SpawnAgentInput) {
       const data = yield* InstanceState.get(state)
       const callID = newCallID()
@@ -602,28 +641,7 @@ export const layer = Layer.effect(
             // the child resolve to the right slot.
             data.sessionToRoot.set(child.id, slot.rootID)
 
-            const provider = yield* Ref.get(providerRef)
-            const loopEffect: Effect.Effect<unknown> = provider ? provider(child.id) : Effect.never
-
-            const fiber = yield* loopEffect.pipe(
-              Effect.onExit((exit: Exit.Exit<unknown, unknown>) =>
-                Effect.gen(function* () {
-                  slot.fibers.delete(child.id)
-                  if (Exit.isSuccess(exit)) {
-                    yield* SubscriptionRef.set(status, { completed: null })
-                    return
-                  }
-                  if (Cause.hasInterrupts(exit.cause)) {
-                    return
-                  }
-                  yield* SubscriptionRef.set(status, {
-                    errored: Cause.pretty(exit.cause),
-                  })
-                }),
-              ),
-              Effect.forkIn(data.scope),
-            )
-            slot.fibers.set(child.id, fiber)
+            yield* startAgentFiber(data, slot, child.id)
 
             // Sibling completion watcher. Mirrors codex
             // maybe_start_completion_watcher (codex-rs/core/src/agent/control.rs:943-1015):
@@ -632,12 +650,28 @@ export const layer = Layer.effect(
             // into data.scope so the watcher dies with the per-root slot
             // (and never outlives the parent root).
             //
+            // Codex stops at a JSON status notification because its V2 design
+            // expects subagents to push results explicitly via send_message.
+            // We diverge: ALSO fetch the child's last finished assistant
+            // message body and inline it after the status line so the parent
+            // sees the actual deliverable without the child having to remember
+            // to send_message before going idle. Falls back to status-only
+            // when no finished assistant message exists (early failure, etc).
+            //
             // Skip on shutdown: closeAgent is the only path that sets status
             // to "shutdown"; the parent invoked the close itself, so a
             // notification here would be confusing. See MESSAGE_SHAPES.md
             // § "Skip rule: closeAgent-triggered shutdown".
+            //
+            // Race rule (do NOT drop(1) the changes stream): a fast-failing
+            // runLoop (e.g. Effect.die before any sleep) can flip status to
+            // its terminal value BEFORE this watcher subscribes. Dropping
+            // the initial emission then loses the only signal we'd ever
+            // see. Instead we accept the initial emission and filter on
+            // isFinal — pending_init / running / interrupted are skipped,
+            // the next change is awaited.
             yield* Stream.runForEach(
-              SubscriptionRef.changes(status).pipe(Stream.drop(1)),
+              SubscriptionRef.changes(status),
               (next) =>
                 Effect.gen(function* () {
                   if (!AgentStatus.isFinal(next)) return
@@ -646,6 +680,26 @@ export const layer = Layer.effect(
                     typeof next === "object" && "completed" in next
                       ? "completed"
                       : "errored"
+                  const finalAssistant = yield* sessions
+                    .findMessage(
+                      child.id,
+                      (m) =>
+                        m.info.role === "assistant" &&
+                        typeof m.info.finish === "string" &&
+                        m.info.finish !== "tool-calls",
+                    )
+                    .pipe(Effect.orElseSucceed(() => Option.none<never>()))
+                  const body = Option.match(finalAssistant, {
+                    onNone: () => "",
+                    onSome: (msg) =>
+                      msg.parts
+                        .filter((p) => p.type === "text" && typeof p.text === "string")
+                        .map((p) => (p as { text: string }).text)
+                        .join("\n")
+                        .trim(),
+                  })
+                  const header = `Agent ${String(childPath)} reached status: ${label}`
+                  const content = body.length > 0 ? `${header}\n\n${body}` : header
                   // The watcher's send may race with parent deletion. If the
                   // parent root is gone, sendInterAgentCommunication fails
                   // with AgentNotFoundError — absorb it; nothing to wake.
@@ -654,13 +708,22 @@ export const layer = Layer.effect(
                     new InterAgentCommunication({
                       author: childPath,
                       recipient: input.parentPath,
-                      content: `Agent ${String(childPath)} reached status: ${label}`,
+                      content,
                       trigger_turn: false,
                       sent_at: Date.now(),
                     }),
                     child.id,
                   ).pipe(Effect.catch(() => Effect.void))
-                  yield* Effect.interrupt
+                  // Do NOT interrupt here. The watcher must keep listening
+                  // because Bug 3's revival path (sendInterAgentCommunication
+                  // restarting the runLoop fiber on trigger_turn) drives the
+                  // status from {completed: null} → "running" → next terminal
+                  // value. A self-interrupt after the first notification
+                  // means subsequent revival cycles complete silently —
+                  // the parent's wait_agent then times out forever. The
+                  // watcher dies on its own when:
+                  //   - status flips to "shutdown" (closeAgent path), or
+                  //   - data.scope is destroyed (root deletion).
                 }),
             ).pipe(Effect.forkIn(data.scope))
 
@@ -783,6 +846,31 @@ export const layer = Layer.effect(
         }
         yield* mailbox.send(comm)
         yield* slot.registry.updateLastTaskMessage(targetID, comm.content)
+        // Codex parity: trigger_turn mail revives an idle agent.
+        // codex-rs/core/src/session/handlers.rs:310-321 — after enqueueing,
+        // if trigger_turn is true, codex calls
+        // `maybe_start_turn_for_pending_work_with_sub_id` which spawns a
+        // fresh task that drains the mailbox and runs a new turn. Codex's
+        // session stays alive idle between turns; ours forks a fiber per
+        // turn that exits on finish, so we revive by forking a fresh
+        // runLoop fiber when:
+        //   - the message wakes the recipient (trigger_turn=true), AND
+        //   - the target is not the root (root never "completes"), AND
+        //   - the target has no live fiber, AND
+        //   - the previous status is final but not "shutdown" (closeAgent
+        //     marks a permanent kill — don't resurrect explicitly-closed
+        //     agents). The status reset to "running" lets the runLoop's
+        //     normal Step.* events overwrite it as turns progress.
+        if (comm.trigger_turn && targetID !== slot.rootID && !slot.fibers.has(targetID)) {
+          const status = slot.statuses.get(targetID)
+          if (status) {
+            const current = yield* SubscriptionRef.get(status)
+            if (AgentStatus.isFinal(current) && current !== "shutdown") {
+              yield* SubscriptionRef.set(status, "running")
+              yield* startAgentFiber(data, slot, targetID)
+            }
+          }
+        }
         // Surface the inter-agent communication on the bus.
         const sourceID = (yield* lookupSessionForPath(slot, comm.author)) ?? targetID
         const eventData = {

@@ -20,6 +20,7 @@ import {
   approxTokenCount,
   clampEmptyPollYieldTime,
   clampWriteYieldTime,
+  formatExecResponse,
 } from "./constants"
 import { PositiveInt } from "@/util/schema"
 
@@ -142,9 +143,10 @@ export const WriteStdinTool = Tool.define(
               const exited = read.exited
               if (exited) yield* sessions.remove(params.session_id)
 
+              const original_token_count = approxTokenCount(decoded)
               const metadata: Record<string, unknown> = {
                 wall_time_seconds: wallMs / 1000,
-                original_token_count: approxTokenCount(decoded),
+                original_token_count,
                 ...(exited && read.exitCode !== undefined
                   ? { exit_code: read.exitCode }
                   : { session_id: params.session_id }),
@@ -153,7 +155,13 @@ export const WriteStdinTool = Tool.define(
               return {
                 title: `write_stdin ${params.session_id}`,
                 metadata,
-                output: decoded || "(no output)",
+                output: formatExecResponse({
+                  wallMs,
+                  output: decoded,
+                  originalTokenCount: original_token_count,
+                  exitCode: exited && read.exitCode !== undefined ? read.exitCode : undefined,
+                  sessionId: !exited ? params.session_id : undefined,
+                }),
               }
             }),
         }

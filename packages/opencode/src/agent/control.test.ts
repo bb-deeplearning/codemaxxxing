@@ -1,7 +1,8 @@
 import { afterEach, describe, expect } from "bun:test"
 import { DateTime, Effect, Fiber, Layer, Result, Stream, SubscriptionRef } from "effect"
 import { Session } from "@/session/session"
-import { SessionID } from "@/session/schema"
+import { SessionID, MessageID, PartID } from "@/session/schema"
+import { ModelID, ProviderID } from "@/provider/schema"
 import { Bus } from "@/bus"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Agent } from "../../src/agent/agent"
@@ -1863,6 +1864,407 @@ describe("AgentControl per-root scoping", () => {
           ),
         )
         expect(Result.isFailure(result)).toBe(true)
+      }),
+    ),
+  )
+})
+
+describe("AgentControl.sendInterAgentCommunication revival", () => {
+  it.live("trigger_turn=true on a completed agent restarts its run-loop fiber", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+        // The runLoop completes immediately on each invocation; the second
+        // call must be observable (revival from trigger_turn).
+        const invocations: SessionID[] = []
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            invocations.push(sid)
+            return "done"
+          }),
+        )
+        const root = yield* seedRoot()
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "revivable",
+          initial_message: ".",
+        })
+        // First spawn invokes the runLoop once and exits.
+        yield* Effect.sleep(20)
+        expect(invocations.length).toBe(1)
+        const ref = yield* control.subscribeStatus(child.thread_id)
+        expect(yield* SubscriptionRef.get(ref)).toEqual({ completed: null })
+
+        // Second message with trigger_turn=true must revive the fiber and
+        // result in a second runLoop invocation. Drain the seeded mailbox
+        // first so the new send is the only pending message.
+        yield* control.drainMailbox(child.thread_id)
+        yield* control.sendInterAgentCommunication(
+          child.thread_id,
+          new InterAgentCommunication({
+            author: ROOT,
+            recipient: path("/root/revivable"),
+            content: "wake up",
+            trigger_turn: true,
+            sent_at: 1,
+          }),
+          root.id,
+        )
+        yield* Effect.sleep(20)
+        expect(invocations.length).toBe(2)
+        // Status returns to completed after the second turn finishes.
+        expect(yield* SubscriptionRef.get(ref)).toEqual({ completed: null })
+      }),
+    ),
+  )
+
+  it.live("trigger_turn=false does NOT revive a completed agent (queue-only)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+        const invocations: SessionID[] = []
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            invocations.push(sid)
+            return "done"
+          }),
+        )
+        const root = yield* seedRoot()
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "queueonly",
+          initial_message: ".",
+        })
+        yield* Effect.sleep(20)
+        expect(invocations.length).toBe(1)
+
+        yield* control.drainMailbox(child.thread_id)
+        yield* control.sendInterAgentCommunication(
+          child.thread_id,
+          new InterAgentCommunication({
+            author: ROOT,
+            recipient: path("/root/queueonly"),
+            content: "fyi",
+            trigger_turn: false,
+            sent_at: 1,
+          }),
+          root.id,
+        )
+        yield* Effect.sleep(20)
+        // No revival — fiber stays dead, message just sits in mailbox.
+        expect(invocations.length).toBe(1)
+      }),
+    ),
+  )
+
+  it.live("trigger_turn=true on a shutdown (closed) agent does NOT revive", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+        const invocations: SessionID[] = []
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            invocations.push(sid)
+            return "done"
+          }),
+        )
+        const root = yield* seedRoot()
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "closed",
+          initial_message: ".",
+        })
+        yield* Effect.sleep(20)
+        expect(invocations.length).toBe(1)
+        // closeAgent removes the mailbox AND sets status to "shutdown".
+        // The send_inter_agent_communication mailbox-not-found branch
+        // fires before the revival check, so revival never runs. Verify
+        // the contract: an explicitly-closed agent never resurrects.
+        yield* control.closeAgent(child.thread_id)
+        const result = yield* Effect.result(
+          control.sendInterAgentCommunication(
+            child.thread_id,
+            new InterAgentCommunication({
+              author: ROOT,
+              recipient: path("/root/closed"),
+              content: "wake up",
+              trigger_turn: true,
+              sent_at: 1,
+            }),
+            root.id,
+          ),
+        )
+        expect(Result.isFailure(result)).toBe(true)
+        // Sleep then re-assert no revival fired despite trigger_turn=true.
+        yield* Effect.sleep(20)
+        expect(invocations.length).toBe(1)
+      }),
+    ),
+  )
+
+  it.live("trigger_turn=true on the root agent does NOT spawn a new fiber (root has no managed loop)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+        const invocations: SessionID[] = []
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            invocations.push(sid)
+            return "done"
+          }),
+        )
+        const root = yield* seedRoot()
+        // Spawn one child so we have a sender; the root receives.
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "sender",
+          initial_message: ".",
+        })
+        yield* Effect.sleep(20)
+        const beforeCount = invocations.length
+
+        // Send to root with trigger_turn=true. Root's runLoop is owned
+        // by the chat front-end, not AgentControl — revival here would
+        // spawn a duplicate loop and double-process the user's input.
+        yield* control.sendInterAgentCommunication(
+          root.id,
+          new InterAgentCommunication({
+            author: path("/root/sender"),
+            recipient: ROOT,
+            content: "ping",
+            trigger_turn: true,
+            sent_at: 1,
+          }),
+          child.thread_id,
+        )
+        yield* Effect.sleep(20)
+        // No new invocation — only the original child.
+        expect(invocations.length).toBe(beforeCount)
+      }),
+    ),
+  )
+})
+
+describe("AgentControl completion watcher body inclusion", () => {
+  it.live("forwards the child's last finished assistant text to the parent's mailbox on completion", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+
+        // The runLoop writes a finished assistant message to the child
+        // session, then exits successfully. The completion watcher must
+        // observe the status flip and look that message up to inline its
+        // text in the notification it sends to the parent's mailbox.
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            const userMsg = {
+              id: MessageID.ascending(),
+              sessionID: sid,
+              role: "user" as const,
+              time: { created: Date.now() },
+              agent: "build",
+              model: { providerID: ProviderID.make("anthropic"), modelID: ModelID.make("claude-3-5-sonnet") },
+            }
+            yield* sessions.updateMessage(userMsg)
+            const assistantMsg = {
+              id: MessageID.ascending(),
+              sessionID: sid,
+              parentID: userMsg.id,
+              role: "assistant" as const,
+              mode: "build",
+              agent: "build",
+              path: { cwd: ".", root: "." },
+              time: { created: Date.now(), completed: Date.now() },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("claude-3-5-sonnet"),
+              providerID: ProviderID.make("anthropic"),
+              finish: "stop",
+            }
+            yield* sessions.updateMessage(assistantMsg)
+            yield* sessions.updatePart({
+              id: PartID.ascending(),
+              messageID: assistantMsg.id,
+              sessionID: sid,
+              type: "text",
+              text: "Here is the final deliverable.",
+            })
+            return "done"
+          }),
+        )
+
+        const root = yield* seedRoot()
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "answers",
+          initial_message: ".",
+        })
+        // Wait for the child runLoop to finish + completion watcher to fire.
+        yield* Effect.sleep(50)
+
+        const drained = yield* control.drainMailbox(root.id)
+        expect(drained.length).toBeGreaterThanOrEqual(1)
+        const fromChild = drained.find(
+          (m) => String(m.author) === String(child.metadata.agent_path),
+        )
+        expect(fromChild).toBeDefined()
+        // The notification still includes the status header so existing
+        // consumers (TUI / log scrapers) see the lifecycle event.
+        expect(fromChild?.content).toContain("reached status: completed")
+        // AND it now also includes the child's final assistant text so the
+        // parent sees the actual deliverable on its next turn drain. This
+        // is the divergence from codex's V2 behaviour described in the
+        // watcher comment in control.ts.
+        expect(fromChild?.content).toContain("Here is the final deliverable.")
+      }),
+    ),
+  )
+
+  it.live("falls back to status-only when the child has no finished assistant message (early failure)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+        // The runLoop dies before producing any assistant message — the
+        // watcher must still send a notification, just without a body.
+        yield* control.registerRunLoop(() => Effect.die("boom"))
+        const root = yield* seedRoot()
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "fails",
+          initial_message: ".",
+        })
+        yield* Effect.sleep(50)
+
+        const drained = yield* control.drainMailbox(root.id)
+        const fromChild = drained.find(
+          (m) => String(m.author) === String(child.metadata.agent_path),
+        )
+        expect(fromChild).toBeDefined()
+        expect(fromChild?.content).toContain("reached status: errored")
+        // No body to inline — the notification is the bare status header.
+        // Asserting absence of a stray "deliverable" sentinel so a future
+        // regression that double-renders the failure cause doesn't sneak
+        // through.
+        expect(fromChild?.content).not.toContain("Here is the final deliverable.")
+      }),
+    ),
+  )
+
+  it.live("watcher fires on EVERY revival cycle, not just the first turn (Bug 2b + Bug 3 interaction)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        // Regression: the original watcher self-interrupted after the
+        // first send. Bug 3's revival path then ran subsequent turns
+        // silently because no watcher was left to fire. The smoke-test
+        // failure mode looked like: parent's wait_agent times out
+        // forever after followup_task even though list_agents shows the
+        // child as completed. The fix removed the self-interrupt; this
+        // test pins it.
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+
+        let turn = 0
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            turn += 1
+            const localTurn = turn
+            const userMsg = {
+              id: MessageID.ascending(),
+              sessionID: sid,
+              role: "user" as const,
+              time: { created: Date.now() },
+              agent: "build",
+              model: { providerID: ProviderID.make("anthropic"), modelID: ModelID.make("claude-3-5-sonnet") },
+            }
+            yield* sessions.updateMessage(userMsg)
+            const assistantMsg = {
+              id: MessageID.ascending(),
+              sessionID: sid,
+              parentID: userMsg.id,
+              role: "assistant" as const,
+              mode: "build",
+              agent: "build",
+              path: { cwd: ".", root: "." },
+              time: { created: Date.now(), completed: Date.now() },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("claude-3-5-sonnet"),
+              providerID: ProviderID.make("anthropic"),
+              finish: "stop",
+            }
+            yield* sessions.updateMessage(assistantMsg)
+            yield* sessions.updatePart({
+              id: PartID.ascending(),
+              messageID: assistantMsg.id,
+              sessionID: sid,
+              type: "text",
+              text: `answer-${localTurn}`,
+            })
+            return "done"
+          }),
+        )
+        const root = yield* seedRoot()
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "multi",
+          initial_message: ".",
+        })
+        // Wait for first turn to complete + watcher to fire.
+        yield* Effect.sleep(50)
+        // Drain root's mailbox: must contain the first answer.
+        const after1 = yield* control.drainMailbox(root.id)
+        const first = after1.find((m) => String(m.author) === String(child.metadata.agent_path))
+        expect(first).toBeDefined()
+        expect(first?.content).toContain("answer-1")
+
+        // Trigger revival via followup_task semantics.
+        yield* control.sendInterAgentCommunication(
+          child.thread_id,
+          new InterAgentCommunication({
+            author: ROOT,
+            recipient: path("/root/multi"),
+            content: "second please",
+            trigger_turn: true,
+            sent_at: 1,
+          }),
+          root.id,
+        )
+        yield* Effect.sleep(50)
+        // The pre-fix bug: watcher had self-interrupted after turn 1;
+        // turn 2 completed silently and root's mailbox stayed empty.
+        // Post-fix: watcher kept listening, fires again on turn 2's
+        // terminal status, root receives "answer-2".
+        const after2 = yield* control.drainMailbox(root.id)
+        const second = after2.find((m) => String(m.author) === String(child.metadata.agent_path))
+        expect(second).toBeDefined()
+        expect(second?.content).toContain("answer-2")
+
+        // One more cycle to lock in the multi-revival contract.
+        yield* control.sendInterAgentCommunication(
+          child.thread_id,
+          new InterAgentCommunication({
+            author: ROOT,
+            recipient: path("/root/multi"),
+            content: "third please",
+            trigger_turn: true,
+            sent_at: 2,
+          }),
+          root.id,
+        )
+        yield* Effect.sleep(50)
+        const after3 = yield* control.drainMailbox(root.id)
+        const third = after3.find((m) => String(m.author) === String(child.metadata.agent_path))
+        expect(third).toBeDefined()
+        expect(third?.content).toContain("answer-3")
+        expect(turn).toBe(3)
       }),
     ),
   )

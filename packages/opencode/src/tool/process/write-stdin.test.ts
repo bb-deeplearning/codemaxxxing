@@ -173,6 +173,11 @@ describe("tool.write_stdin", () => {
       const result = yield* writeDef.execute({ session_id: sid, chars: "q\n", yield_time_ms: 2000 }, ctx)
       expect(result.metadata.exit_code).toBe(0)
       expect(result.metadata.session_id).toBeUndefined()
+      // Codex parity: the model-visible output must surface the exit code
+      // (not just the metadata side-channel) so the model can see the
+      // process is gone without inspecting structured fields.
+      expect(result.output).toContain("Process exited with code 0")
+      expect(result.output).not.toContain("Process running with session ID")
       const pty = yield* Pty.Service
       yield* pty.terminateAll()
     }),

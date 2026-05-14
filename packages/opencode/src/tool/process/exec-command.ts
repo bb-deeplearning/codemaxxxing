@@ -15,7 +15,7 @@ import * as Tool from "../tool"
 import { ProcessSessions } from "./sessions"
 import { ExecCommandID, PermissionKey, pidPattern } from "./id"
 import { EXEC_COMMAND_PROMPT } from "./prompt"
-import { DEFAULT_EXEC_YIELD_TIME_MS, DEFAULT_TTY, UNIFIED_EXEC_ENV, approxTokenCount } from "./constants"
+import { DEFAULT_EXEC_YIELD_TIME_MS, DEFAULT_TTY, UNIFIED_EXEC_ENV, approxTokenCount, formatExecResponse } from "./constants"
 import { PositiveInt } from "@/util/schema"
 import path from "path"
 
@@ -185,9 +185,12 @@ export const ExecCommandTool = Tool.define(
                           aborted: true,
                           original_token_count: approxTokenCount(decoded),
                         },
-                        output: decoded
-                          ? `${decoded}\n\n<exec_metadata>\nUser aborted the command\n</exec_metadata>`
-                          : "User aborted the command",
+                        output: formatExecResponse({
+                          wallMs,
+                          output: decoded,
+                          originalTokenCount: approxTokenCount(decoded),
+                          abortNote: "User aborted the command",
+                        }),
                       }
                     }
 
@@ -212,7 +215,13 @@ export const ExecCommandTool = Tool.define(
                     return {
                       title: `exec ${head}`,
                       metadata,
-                      output: decoded || "(no output)",
+                      output: formatExecResponse({
+                        wallMs,
+                        output: decoded,
+                        originalTokenCount: original_token_count,
+                        exitCode: exited && read?.exitCode !== undefined ? read.exitCode : undefined,
+                        sessionId: !exited ? session.processId : undefined,
+                      }),
                     }
                   }),
                 ({ info, session }, exit) =>

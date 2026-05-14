@@ -58,6 +58,33 @@ export function approxTokenCount(text: string): number {
   return Math.ceil(Buffer.byteLength(text, "utf-8") / 4)
 }
 
+// Build the model-visible tool response. Codex parity:
+// codex-rs/core/src/tools/context.rs:461-487 (ExecCommandToolOutput::response_text).
+// The model only sees the tool's `output` string (metadata is a side channel
+// for the TUI / event log) — without this header the model never learns the
+// `session_id` it needs to round-trip into write_stdin. Sections appear in
+// the same order as codex so trace transfer keeps working.
+export function formatExecResponse(opts: {
+  wallMs: number
+  output: string
+  exitCode?: number
+  sessionId?: number
+  originalTokenCount?: number
+  abortNote?: string
+}): string {
+  const sections: string[] = []
+  sections.push(`Wall time: ${(opts.wallMs / 1000).toFixed(4)} seconds`)
+  if (opts.exitCode !== undefined) sections.push(`Process exited with code ${opts.exitCode}`)
+  if (opts.sessionId !== undefined) sections.push(`Process running with session ID ${opts.sessionId}`)
+  if (opts.originalTokenCount !== undefined && opts.originalTokenCount > 0) {
+    sections.push(`Original token count: ${opts.originalTokenCount}`)
+  }
+  if (opts.abortNote) sections.push(opts.abortNote)
+  sections.push("Output:")
+  sections.push(opts.output.length > 0 ? opts.output : "(no output)")
+  return sections.join("\n")
+}
+
 // Yield-time clamp for non-empty stdin writes. Mirrors process_manager.rs:646
 // and :650 — at least MIN_YIELD_TIME_MS, at most MAX_YIELD_TIME_MS.
 export function clampWriteYieldTime(yieldTimeMs: number): number {

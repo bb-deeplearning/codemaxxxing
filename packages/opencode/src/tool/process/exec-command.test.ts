@@ -113,22 +113,68 @@ describe("tool.exec_command", () => {
       const { ctx } = makeCtx()
       const result = yield* def.execute(
         {
-          // Small burst that fits comfortably under the 1 MiB Pty.read cap;
-          // both markers should land within the yield window. Head/tail
-          // truncation behaviour itself is exercised by the Pty layer's
-          // wave_2 tests; here we just verify exec_command surfaces the
-          // decoded string output.
-          cmd: `${process.execPath} -e "process.stdout.write('START'); for (let i=0;i<2000;i++) process.stdout.write('A'); process.stdout.write('END'); setTimeout(()=>{},5000)"`,
+          // Tiny single-flush burst that always lands within the yield
+          // window — the previous test command (START + 2000 As + END)
+          // was racy because PTY reads cap at the first available chunk
+          // before END flushes. Codex parity test, not a PTY-buffering
+          // exercise; that's owned by the wave_2 Pty tests.
+          cmd: `${process.execPath} -e "process.stdout.write('START-AND-END'); setTimeout(()=>{},5000)"`,
           tty: false,
           yield_time_ms: 2000,
         },
         ctx,
       )
       expect(typeof result.output).toBe("string")
-      expect(result.output).toContain("START")
-      expect(result.output).toContain("END")
+      expect(result.output).toContain("START-AND-END")
       const pty = yield* Pty.Service
       yield* pty.terminateAll()
+    }),
+  )
+
+  it.instance("model-visible output embeds session_id and wall_time (codex response_text parity)", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return
+      const def = yield* initTool()
+      const { ctx } = makeCtx()
+      const result = yield* def.execute(
+        {
+          cmd: `${process.execPath} -e "process.stdout.write('hello'); setInterval(()=>{},1000)"`,
+          tty: true,
+          yield_time_ms: 500,
+        },
+        ctx,
+      )
+      // The metadata side-channel still carries the structured fields for
+      // the TUI / event log.
+      const sid = result.metadata.session_id as number
+      expect(typeof sid).toBe("number")
+      // The model-visible output string must round-trip session_id so the
+      // model can pass it back to write_stdin. Codex parity: response_text
+      // sections (codex-rs/core/src/tools/context.rs:461-487).
+      expect(result.output).toContain("Wall time:")
+      expect(result.output).toContain(`Process running with session ID ${sid}`)
+      expect(result.output).toContain("Output:")
+      expect(result.output).toContain("hello")
+      const pty = yield* Pty.Service
+      yield* pty.terminateAll()
+    }),
+  )
+
+  it.instance("model-visible output reports exit_code when process finishes", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return
+      const def = yield* initTool()
+      const { ctx } = makeCtx()
+      const result = yield* def.execute(
+        { cmd: `${process.execPath} -e "process.exit(7)"`, yield_time_ms: 5000 },
+        ctx,
+      )
+      expect(result.metadata.exit_code).toBe(7)
+      expect(result.output).toContain("Process exited with code 7")
+      // session_id must NOT appear in the model-visible output once the
+      // process has exited — codex's response_text omits the running-id
+      // line in this branch (matching ExecCommandToolOutput's discriminant).
+      expect(result.output).not.toContain("Process running with session ID")
     }),
   )
 
