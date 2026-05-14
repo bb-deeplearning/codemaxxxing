@@ -86,7 +86,8 @@ import { DialogTimeline } from "./dialog-timeline"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
 import { Sidebar } from "./sidebar"
-import { SubagentFooter } from "./subagent-footer.tsx"
+import { SubagentFooter } from "./subagent-footer-mount.tsx"
+import { isMailboxPart, MailboxMessage } from "./mailbox-message"
 import { Process, ProcessWriteStdin } from "./process-tool"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
@@ -1500,6 +1501,11 @@ function UserMessage(props: {
     return texts.join("\n\n")
   })
   const files = createMemo(() => props.parts.flatMap((x) => (x.type === "file" ? [x] : [])))
+  // Wave 11: cross-agent mailbox messages — synthetic text parts injected
+  // by Wave 9's runLoop, discriminated by metadata.from. The body memo
+  // already filters synthetic parts out so they don't appear as real user
+  // input; here we surface them via the dedicated MailboxMessage chrome.
+  const mail = createMemo(() => props.parts.filter((x) => isMailboxPart(x as TextPart)) as TextPart[])
   const { theme } = useTheme()
   const [hover, setHover] = createSignal(false)
   const queued = createMemo(() => props.pending && props.message.id > props.pending)
@@ -1545,22 +1551,23 @@ function UserMessage(props: {
 
   return (
     <>
-      <Show when={text()}>
+      <Show when={text() || mail().length > 0}>
         {/* Marginalia 'u·N' as an absolutely-positioned overlay in the
             left gutter — same pattern as AssistantMessage. paddingLeft
             reserves the gutter; the marginalia <text> sits in it via
             position="absolute" so it doesn't participate in flex flow.
 
-            Body text, files, and queued/timestamp stack vertically as
-            siblings in this column box. They are NOT wrapped in a
-            flexDirection="row" — opentui can't lay out a flex row
-            whose body cell contains very tall content (a multi-KB
-            pasted block wraps to many rows). Once the row's measurement
-            blows past opentui's internal budget, paint stalls past the
-            row and the rest of the session appears frozen until a
-            later layout pass releases it. Queued/timestamp render as
-            their own right-aligned row at the bottom, mirroring the
-            pattern AssistantMessage uses for its closing summary. */}
+            Body text, files, mailbox messages, and queued/timestamp stack
+            vertically as siblings in this column box. They are NOT
+            wrapped in a flexDirection="row" — opentui can't lay out a
+            flex row whose body cell contains very tall content (a
+            multi-KB pasted block wraps to many rows; a forwarded sibling
+            tool-output the same). Once the row's measurement blows past
+            opentui's internal budget, paint stalls past the row and the
+            rest of the session appears frozen until a later layout pass
+            releases it. Queued/timestamp render as their own
+            right-aligned row at the bottom, mirroring the pattern
+            AssistantMessage uses for its closing summary. */}
         <box
           id={props.message.id}
           marginTop={props.index === 0 ? 0 : 1}
@@ -1574,7 +1581,9 @@ function UserMessage(props: {
             u<span style={{ fg: color() }}>·</span>
             {userIndex()}
           </text>
-          <text fg={theme.text}>{text()}</text>
+          <Show when={text()}>
+            <text fg={theme.text}>{text()}</text>
+          </Show>
           <Show when={files().length}>
             <box flexDirection="row" paddingTop={1} gap={1} flexWrap="wrap">
               <For each={files()}>
@@ -1593,6 +1602,18 @@ function UserMessage(props: {
                 }}
               </For>
             </box>
+          </Show>
+          <Show when={mail().length}>
+            <For each={mail()}>
+              {(part) => (
+                <MailboxMessage
+                  part={part}
+                  theme={theme}
+                  agentColor={color()}
+                  triggerTurn={part.metadata?.["trigger_turn"] === true}
+                />
+              )}
+            </For>
           </Show>
           <Show when={queued()}>
             <box flexDirection="row" justifyContent="flex-end">
