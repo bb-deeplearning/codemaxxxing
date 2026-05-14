@@ -2,11 +2,13 @@
 // exec_command and returns recent output. Codex parity:
 // codex-rs/core/src/tools/handlers/unified_exec/write_stdin.rs.
 //
-// Permission caching: write_stdin shares permission key `exec_command` with
-// the spawn tool. The first exec_command call registers `pid:<process_id>`
-// as an "always" pattern; subsequent write_stdin calls evaluate the same
-// permission with that pattern and find the always-allow rule, so no
-// re-prompt fires per process.
+// Permission caching: write_stdin shares permission key `bash` with the
+// spawn tool (Wave 2 of replace-bash-task-2026-05-15 collapsed both onto
+// the legacy bash key so saved `permission.bash` rules transparently
+// gate the unified_exec family). The first exec_command call registers
+// `pid:<process_id>` as an "always" pattern under bash; subsequent
+// write_stdin calls evaluate the same permission with that pattern and
+// find the always-allow rule, so no re-prompt fires per process.
 
 import { Pty } from "@/pty"
 import { Effect, Schema } from "effect"

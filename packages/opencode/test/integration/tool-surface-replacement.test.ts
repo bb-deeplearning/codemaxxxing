@@ -10,24 +10,30 @@
 // can grep for them.
 
 import { afterEach, describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect, Fiber, Layer, Schema } from "effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { Agent } from "@/agent/agent"
 import { AgentControl } from "@/agent/control"
+import { Bus } from "@/bus"
 import { Config } from "@/config/config"
+import { ConfigPermission } from "@/config/permission"
 import { InstanceState } from "@/effect/instance-state"
-import { Permission } from "@/permission"
+import { Permission, SHELL_TOOLS } from "@/permission"
 import { Plugin } from "@/plugin"
+import { Pty } from "@/pty"
 import { Session } from "@/session/session"
 import { Shell } from "@/shell/shell"
 import { Truncate } from "@/tool/truncate"
 import { ShellScan } from "@/tool/shell/scan"
+import { ProcessSessions } from "@/tool/process/sessions"
+import { ExecCommandTool } from "@/tool/process/exec-command"
+import { WriteStdinTool } from "@/tool/process/write-stdin"
 import { ToolRegistry } from "@/tool/registry"
 import * as Tool from "@/tool/tool"
 import { MessageID, SessionID } from "@/session/schema"
 import { disposeAllInstances } from "../fixture/fixture"
-import { loadScannerCorpus } from "../fixtures/load-config"
+import { loadPermissionConfig, loadScannerCorpus } from "../fixtures/load-config"
 import { generateCommand, makeRng, scanEqual } from "../fixtures/fuzz"
 import { testEffect } from "../lib/effect"
 
@@ -40,10 +46,13 @@ const it = testEffect(
     Agent.defaultLayer,
     AgentControl.defaultLayer,
     AppFileSystem.defaultLayer,
+    Bus.defaultLayer,
     Config.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
     Permission.defaultLayer,
     Plugin.defaultLayer,
+    ProcessSessions.defaultLayer,
+    Pty.defaultLayer,
     Session.defaultLayer,
     Truncate.defaultLayer,
     ToolRegistry.defaultLayer,
@@ -80,6 +89,117 @@ function captureCtx(opts?: { stopOnFirst?: boolean }): {
 
 const sortedUnique = (arr: ReadonlyArray<string>) => Array.from(new Set(arr)).sort()
 const dirFromGlob = (g: string) => g.replace(/[/\\]\*$/, "")
+
+// Wave 2 helpers below — wires Permission.Service into a Tool.Context, mirrors
+// session/llm.ts:resolveTools' SHELL_TOOLS-aware filter, and converts a
+// fixture's user-config + agent-config layering into a single ruleset that
+// matches what agent.ts assembles in production.
+
+function permissionWiredCtx(opts: {
+  permission: Permission.Interface
+  ruleset: Permission.Ruleset
+  sessionID: SessionID
+}): Tool.Context {
+  return {
+    sessionID: opts.sessionID,
+    messageID: MessageID.make(""),
+    callID: "",
+    agent: "build",
+    abort: AbortSignal.any([]),
+    messages: [],
+    metadata: () => Effect.void,
+    ask: (req) =>
+      opts.permission
+        .ask({
+          ...req,
+          sessionID: opts.sessionID,
+          ruleset: opts.ruleset,
+        })
+        .pipe(Effect.orDie),
+  }
+}
+
+// Poll Permission.list and reply "once" to every pending request until the
+// target count of replies has been issued OR the watched fiber finishes.
+function autoReplyOnce(opts: {
+  permission: Permission.Interface
+  untilFiber?: Fiber.Fiber<unknown, unknown>
+  untilFibers?: ReadonlyArray<Fiber.Fiber<unknown, unknown>>
+  target: number
+}): Effect.Effect<void> {
+  return Effect.gen(function* () {
+    let replied = 0
+    for (let i = 0; i < 2000; i++) {
+      const pending = yield* opts.permission.list()
+      for (const req of pending) {
+        yield* opts.permission.reply({ requestID: req.id, reply: "once" })
+        replied++
+      }
+      if (replied >= opts.target) return
+      yield* Effect.sleep("5 millis")
+    }
+  })
+}
+
+function autoReplyAlways(opts: {
+  permission: Permission.Interface
+  untilFiber?: Fiber.Fiber<unknown, unknown>
+  target: number
+}): Effect.Effect<void> {
+  return Effect.gen(function* () {
+    let replied = 0
+    for (let i = 0; i < 2000; i++) {
+      const pending = yield* opts.permission.list()
+      for (const req of pending) {
+        yield* opts.permission.reply({ requestID: req.id, reply: "always" })
+        replied++
+      }
+      if (replied >= opts.target) return
+      yield* Effect.sleep("5 millis")
+    }
+  })
+}
+
+// Reproduce the agent.ts ruleset assembly for a single named agent from a
+// raw fixture object. Mirrors agent.ts:127-153 (user fromConfig +
+// allow built-ins) and agent.ts:330 (agent override appended LAST so
+// findLast picks it). Built-in defaults (truncate-glob, etc.) intentionally
+// omitted — they don't intersect SHELL_TOOLS keys.
+async function fixtureRulesetSync(
+  cfg: { permission?: Record<string, unknown>; agent?: Record<string, { permission?: Record<string, unknown> }> },
+  agentName: string,
+): Promise<Permission.Ruleset> {
+  const userConfig = Schema.decodeUnknownSync(ConfigPermission.Info)(cfg.permission ?? {})
+  const user = Permission.fromConfig(userConfig)
+  const agentOverrideRaw = cfg.agent?.[agentName]?.permission
+  const agentOverride = agentOverrideRaw
+    ? Permission.fromConfig(Schema.decodeUnknownSync(ConfigPermission.Info)(agentOverrideRaw))
+    : []
+  return Permission.merge(user, agentOverride)
+}
+
+// Synchronous fixture loader that returns the ruleset only — used by the
+// allow-pattern invariant which never inspects user.tools.
+const fixtureRuleset = async (name: string): Promise<Permission.Ruleset> => {
+  const cfg = (await loadPermissionConfig(name)) as { permission?: Record<string, unknown> }
+  return fixtureRulesetSync(cfg, "build")
+}
+
+// Mirror session/llm.ts:resolveTools — Permission.disabled drops tools whose
+// effective key has a wildcard deny; the SHELL_TOOLS group is also dropped
+// when `tools.bash === false` (Wave 2 user-config grouping).
+function visibleTools(
+  toolIDs: string[],
+  opts: { ruleset: Permission.Ruleset; userTools: Record<string, boolean> },
+): string[] {
+  const disabled = Permission.disabled(toolIDs, opts.ruleset)
+  const shellGroupDisabled = opts.userTools.bash === false
+  return toolIDs.filter((id) => {
+    if (opts.userTools[id] === false) return false
+    if (shellGroupDisabled && SHELL_TOOLS.includes(id)) return false
+    return !disabled.has(id)
+  })
+}
 
 describe("INTEGRATION_INVARIANTS — tool surface replacement", () => {
   // Wave 1 — extract preserves bash-output: every corpus entry produces the
@@ -219,38 +339,266 @@ describe("INTEGRATION_INVARIANTS — tool surface replacement", () => {
   )
 
   // TODO(wave_2): unskip when exec_command honors saved permission.bash allow patterns.
-  it.instance.skip("exec-command-honors-saved-bash-allow-pattern", () =>
+  it.instance("exec-command-honors-saved-bash-allow-pattern", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      if (process.platform === "win32") return
+      // Wave 2 invariant: saved `permission.bash: { "git *": "allow" }` rule
+      // applies to `exec_command(cmd: "git status")` because the AST scan
+      // emits patterns axis ["git status"] under permission key "bash" and
+      // "git *" wildcard-matches it. The rule resolves to `allow` BEFORE
+      // Permission.Service publishes Event.Asked, so no event must fire.
+      //
+      // Inline ruleset (single rule) sidesteps the order-sensitivity of
+      // findLast semantics in multi-rule fixtures (the WAVE.md fixture
+      // order would let `*: ask` shadow `git *: allow`; this test exists
+      // to verify the rule shape, not the order rule).
+      const ruleset: Permission.Ruleset = [
+        { permission: "bash", pattern: "git *", action: "allow" },
+      ]
+      const permission = yield* Permission.Service
+      const bus = yield* Bus.Service
+      const events: Permission.Request[] = []
+      const off = yield* bus.subscribeCallback(Permission.Event.Asked, (e) => {
+        events.push(e.properties)
+      })
+      try {
+        const def = yield* Effect.flatMap(ExecCommandTool, (info) => info.init())
+        const ctx = permissionWiredCtx({
+          permission,
+          ruleset,
+          sessionID: SessionID.make("ses_inv_allow"),
+        })
+        yield* def.execute({ cmd: "git status", yield_time_ms: 5000 }, ctx)
+        // Bus events are async via PubSub — give them a beat to drain.
+        yield* Effect.sleep("100 millis")
+        const bashEvents = events.filter((e) => e.permission === "bash")
+        expect(bashEvents).toHaveLength(0)
+      } finally {
+        off()
+      }
     }),
   )
 
   // TODO(wave_2): unskip when exec_command triggers external_directory before bash for outside-cwd paths.
-  it.instance.skip("exec-command-triggers-external-directory-for-outside-cwd-paths", () =>
-    Effect.gen(function* () {
-      yield* Effect.void
-    }),
+  it.instance(
+    "exec-command-triggers-external-directory-for-outside-cwd-paths",
+    () =>
+      Effect.gen(function* () {
+        if (process.platform === "win32") return
+        // Wave 2 invariant: `rm /tmp/<nonexistent>` from a workspace tmpdir
+        // produces TWO asks in fixed order — `external_directory` for
+        // `/tmp/*` first, then `bash` for `rm *`. Wave 0 snapshot pinned
+        // this order; reordering here breaks the Wave 6 snapshot diff.
+        const permission = yield* Permission.Service
+        const bus = yield* Bus.Service
+        const events: Permission.Request[] = []
+        const off = yield* bus.subscribeCallback(Permission.Event.Asked, (e) => {
+          events.push(e.properties)
+        })
+        try {
+          const def = yield* Effect.flatMap(ExecCommandTool, (info) => info.init())
+          // Empty ruleset → nothing auto-allows → both asks publish.
+          const ctx = permissionWiredCtx({
+            permission,
+            ruleset: [],
+            sessionID: SessionID.make("ses_inv_extdir"),
+          })
+          const target = `/tmp/codemaxxxing-wave2-nonexistent-${Bun.nanoseconds()}`
+          const execFiber = yield* Effect.forkScoped(
+            def.execute({ cmd: `rm ${target}`, yield_time_ms: 5000 }, ctx),
+          )
+          yield* autoReplyOnce({ permission, untilFiber: execFiber, target: 2 })
+          yield* Fiber.join(execFiber)
+
+          const ours = events.filter((e) => e.sessionID === SessionID.make("ses_inv_extdir"))
+          expect(ours.length).toBeGreaterThanOrEqual(2)
+          const extIdx = ours.findIndex((e) => e.permission === "external_directory")
+          const bashIdx = ours.findIndex((e) => e.permission === "bash")
+          expect(extIdx).toBeGreaterThanOrEqual(0)
+          expect(bashIdx).toBeGreaterThanOrEqual(0)
+          expect(extIdx).toBeLessThan(bashIdx)
+          expect(ours[extIdx].patterns.some((p) => p.startsWith("/tmp"))).toBe(true)
+          expect(ours[bashIdx].always).toContain("rm *")
+          // pid:<N> always-rule rides on the bash ask via extraAlways.
+          expect(ours[bashIdx].always.some((p) => /^pid:\d+$/.test(p))).toBe(true)
+        } finally {
+          off()
+        }
+      }),
+    30_000,
   )
 
   // TODO(wave_2): unskip when write_stdin auto-allows after a pid:<N> rule registers under permission key bash.
-  it.instance.skip("write-stdin-auto-allows-after-pid-rule-registered-under-bash", () =>
-    Effect.gen(function* () {
-      yield* Effect.void
-    }),
+  it.instance(
+    "write-stdin-auto-allows-after-pid-rule-registered-under-bash",
+    () =>
+      Effect.gen(function* () {
+        if (process.platform === "win32") return
+        // Wave 2 invariant: exec_command's first-spawn ask carries the
+        // `pid:<N>` always-rule under permission key `bash` (via
+        // ShellScan.askForScan's extraAlways slot). User picks "always" →
+        // rule registers in the approved-ruleset under bash. write_stdin
+        // for the same session asks with `pid:<N>` as a pattern under
+        // bash → Permission.evaluate finds the always-rule → no event
+        // re-publishes → no second prompt.
+        const permission = yield* Permission.Service
+        const bus = yield* Bus.Service
+        const events: Permission.Request[] = []
+        const off = yield* bus.subscribeCallback(Permission.Event.Asked, (e) => {
+          events.push(e.properties)
+        })
+        try {
+          const execDef = yield* Effect.flatMap(ExecCommandTool, (info) => info.init())
+          const writeDef = yield* Effect.flatMap(WriteStdinTool, (info) => info.init())
+          const sessionID = SessionID.make("ses_inv_pid")
+          const ctx = permissionWiredCtx({ permission, ruleset: [], sessionID })
+
+          // Spawn: long-lived echo process, tty=true so write_stdin works.
+          const echoCmd = `${process.execPath} -e "process.stdin.setEncoding('utf8'); process.stdin.on('data', () => {}); setInterval(()=>{},5000)"`
+          const execFiber = yield* Effect.forkScoped(
+            execDef.execute({ cmd: echoCmd, tty: true, yield_time_ms: 250 }, ctx),
+          )
+          yield* autoReplyAlways({ permission, untilFiber: execFiber, target: 1 })
+          const spawn = yield* Fiber.join(execFiber)
+          const sid = spawn.metadata.session_id as number
+          expect(typeof sid).toBe("number")
+
+          // Now write_stdin: the pid:<N> always-rule registered under bash
+          // must auto-allow this — assert no NEW Event.Asked fires.
+          const eventsBefore = events.length
+          yield* writeDef.execute({ session_id: sid, chars: "", yield_time_ms: 250 }, ctx)
+          yield* Effect.sleep("100 millis")
+          const newEvents = events.slice(eventsBefore)
+          expect(newEvents).toHaveLength(0)
+
+          const pty = yield* Pty.Service
+          yield* pty.terminateAll()
+        } finally {
+          off()
+        }
+      }),
+    30_000,
   )
 
   // TODO(wave_2): unskip when permission.bash deny hides exec_command and write_stdin from the model tool list.
-  it.instance.skip("permission-bash-deny-hides-exec-and-stdin-from-tool-list", () =>
+  it.instance("permission-bash-deny-hides-exec-and-stdin-from-tool-list", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      // Wave 2 invariant: three saved-config flavors all hide the entire
+      // SHELL_TOOLS group from the model's visible tool list.
+      // 1) `permission.bash: { "*": "deny" }` (user-level wildcard deny)
+      // 2) `tools: { bash: false }` (user-level group disable)
+      // 3) `agent.<name>.permission.bash: { "*": "deny" }` (agent override)
+      // The visible-list check mirrors session/llm.ts:resolveTools — first
+      // Permission.disabled (covers cases 1 + 3 because case-3 overrides
+      // are appended LAST in agent.ts so findLast picks the deny), then
+      // the `tools.bash === false` SHELL_TOOLS group filter (covers 2).
+      const allTools = ["bash", "exec_command", "write_stdin", "read", "edit"]
+
+      // Case 1: user-level wildcard deny.
+      {
+        const cfg = yield* Effect.promise(() => loadPermissionConfig("deny-all-bash"))
+        const ruleset = yield* Effect.promise(() => fixtureRulesetSync(cfg, "build"))
+        const visible = visibleTools(allTools, { ruleset, userTools: cfg.tools ?? {} })
+        for (const id of SHELL_TOOLS) expect(visible.includes(id)).toBe(false)
+        expect(visible.includes("read")).toBe(true)
+      }
+
+      // Case 2: tools.bash === false.
+      {
+        const cfg = yield* Effect.promise(() => loadPermissionConfig("tools-bash-false"))
+        const ruleset = yield* Effect.promise(() => fixtureRulesetSync(cfg, "build"))
+        const visible = visibleTools(allTools, { ruleset, userTools: cfg.tools ?? {} })
+        for (const id of SHELL_TOOLS) expect(visible.includes(id)).toBe(false)
+        expect(visible.includes("read")).toBe(true)
+      }
+
+      // Case 3: agent-level deny override (agent overrides appended last).
+      {
+        const cfg = yield* Effect.promise(() => loadPermissionConfig("agent-overrides-deny-bash"))
+        const ruleset = yield* Effect.promise(() => fixtureRulesetSync(cfg, "build"))
+        const visible = visibleTools(allTools, { ruleset, userTools: cfg.tools ?? {} })
+        for (const id of SHELL_TOOLS) expect(visible.includes(id)).toBe(false)
+        // Caveman / other agents NOT named in cfg.agent stay unaffected.
+        const cavemanRuleset = yield* Effect.promise(() => fixtureRulesetSync(cfg, "caveman"))
+        const cavemanVisible = visibleTools(allTools, { ruleset: cavemanRuleset, userTools: cfg.tools ?? {} })
+        for (const id of SHELL_TOOLS) expect(cavemanVisible.includes(id)).toBe(true)
+      }
     }),
   )
 
   // TODO(wave_2): unskip when 32 concurrent exec_command flows do not cross-contaminate permission state.
-  it.instance.skip("exec-command-concurrent-permission-flows-do-not-cross-contaminate", () =>
-    Effect.gen(function* () {
-      yield* Effect.void
-    }),
+  it.instance(
+    "exec-command-concurrent-permission-flows-do-not-cross-contaminate",
+    () =>
+      Effect.gen(function* () {
+        if (process.platform === "win32") return
+        // Wave 2 invariant: 32 concurrent exec_command calls — each with a
+        // distinct command — must produce 32 distinct bash asks where each
+        // ask carries ONLY its own command's patterns. No call receives
+        // another call's `pid:<N>` always-rule. Cross-contamination here
+        // would mean the shared scanner state or per-call payload
+        // construction leaked across fibers.
+        const permission = yield* Permission.Service
+        const bus = yield* Bus.Service
+        const events: Permission.Request[] = []
+        const off = yield* bus.subscribeCallback(Permission.Event.Asked, (e) => {
+          events.push(e.properties)
+        })
+        try {
+          const def = yield* Effect.flatMap(ExecCommandTool, (info) => info.init())
+          // Per-fiber: distinct sessionID so we can attribute events; each
+          // command embeds its index so each AST scan produces a unique
+          // patterns axis we can assert against.
+          const N = 32
+          const calls = Array.from({ length: N }, (_, i) => ({
+            sessionID: SessionID.make(`ses_inv_conc_${i}`),
+            // Distinct content per i — substring-collision-free (no
+            // `console.log(1)` overlap with `console.log(10)` because we
+            // tag each with a fixed-width unique marker).
+            cmd: `${process.execPath} -e "process.exit(0)/*tag-${i.toString().padStart(3, "0")}*/"`,
+          }))
+
+          const fibers = yield* Effect.forEach(
+            calls,
+            (call) =>
+              Effect.forkScoped(
+                def.execute(
+                  { cmd: call.cmd, yield_time_ms: 1000 },
+                  permissionWiredCtx({ permission, ruleset: [], sessionID: call.sessionID }),
+                ),
+              ),
+            { concurrency: N },
+          )
+
+          // Reply once to every pending ask until all fibers complete.
+          yield* autoReplyOnce({ permission, untilFibers: fibers, target: N })
+          for (const fiber of fibers) yield* Fiber.join(fiber)
+
+          // Per-session attribution: every call's bash ask must contain the
+          // call's own command in patterns AND a single pid:<N> always rule.
+          // No call's payload may contain another call's command (cross-
+          // contamination from shared scanner state would surface here).
+          for (const call of calls) {
+            const bashEvent = events.find(
+              (e) => e.sessionID === call.sessionID && e.permission === "bash",
+            )
+            expect(bashEvent).toBeDefined()
+            expect([...bashEvent!.patterns]).toEqual([call.cmd])
+            const pidRules = bashEvent!.always.filter((p) => /^pid:\d+$/.test(p))
+            expect(pidRules).toHaveLength(1)
+            for (const other of calls) {
+              if (other === call) continue
+              expect([...bashEvent!.patterns]).not.toContain(other.cmd)
+            }
+          }
+
+          const pty = yield* Pty.Service
+          yield* pty.terminateAll()
+        } finally {
+          off()
+        }
+      }),
+    60_000,
   )
 
   // TODO(wave_3): unskip when spawn_agent honors saved permission.task allow patterns.

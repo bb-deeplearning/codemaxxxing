@@ -188,8 +188,12 @@ describe("tool ID + permission constants", () => {
   test("WriteStdinID.ToolID matches codex string", () => {
     expect(WriteStdinID.ToolID).toBe("write_stdin")
   })
-  test("PermissionKey is the shared 'exec_command' string", () => {
-    expect(PermissionKey).toBe("exec_command")
+  test("PermissionKey collapsed onto the legacy `bash` key (Wave 2 of replace-bash-task)", () => {
+    // Wave 2 (replace-bash-task-2026-05-15): exec_command + write_stdin
+    // both consult permission key `bash` so saved `permission.bash` rules
+    // — built up over months on the legacy bash tool — transparently gate
+    // the new tools. PermissionKey is `ShellID.ToolID === "bash"`.
+    expect(PermissionKey).toBe("bash")
   })
   test("pidPattern formats as pid:<id>", () => {
     expect(pidPattern(1234)).toBe("pid:1234")

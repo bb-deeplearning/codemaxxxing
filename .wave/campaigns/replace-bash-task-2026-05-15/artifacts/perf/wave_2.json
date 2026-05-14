@@ -1,0 +1,27 @@
+{
+  "captured_at": "2026-05-14T21:13:12.101Z",
+  "git_sha": "828db31c3",
+  "bun_version": "1.3.13",
+  "metrics": {
+    "exec_command.exec": {
+      "label": "exec_command.exec",
+      "samples": 20,
+      "p50": 70861500,
+      "p95": 76190417,
+      "p99": 83885375,
+      "min": 62212125,
+      "max": 83885375,
+      "mean": 71323091.8
+    },
+    "permission.disabled": {
+      "label": "permission.disabled",
+      "samples": 500,
+      "p50": 69166,
+      "p95": 75750,
+      "p99": 89667,
+      "min": 65833,
+      "max": 339458,
+      "mean": 70550.818
+    }
+  }
+}

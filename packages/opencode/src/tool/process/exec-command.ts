@@ -4,16 +4,27 @@
 // Operating order matches the WAVE.md gotcha #1: allocate the PTY first
 // (cheap), then `ctx.ask` with `pid:<id>` registered as the always-pattern,
 // then on rejection tear the PTY down. On approval, subsequent write_stdin
-// calls evaluate `exec_command` permission with pattern `pid:<id>` and find
-// the always-allow rule from this approval — no re-prompt per process.
+// calls evaluate `bash` permission with pattern `pid:<id>` and find the
+// always-allow rule from this approval — no re-prompt per process.
+//
+// Wave 2 (replace-bash-task-2026-05-15): the permission ask now goes
+// through `ShellScan.askForScan` so saved `permission.bash` rules — built
+// up over months on the legacy bash tool — gate `exec_command` the same
+// way they always have for `bash`. The `pid:<id>` always-rule is appended
+// to the AST-derived `always` set via `extraAlways`.
 
 import { Plugin } from "@/plugin"
 import { Pty } from "@/pty"
 import { Effect, Exit, Schema } from "effect"
+import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
+import { AppFileSystem } from "@opencode-ai/core/filesystem"
+import { Config } from "@/config/config"
 import { InstanceState } from "@/effect/instance-state"
+import { Shell } from "@/shell/shell"
+import { ShellScan } from "../shell/scan"
 import * as Tool from "../tool"
 import { ProcessSessions } from "./sessions"
-import { ExecCommandID, PermissionKey, pidPattern } from "./id"
+import { ExecCommandID, pidPattern } from "./id"
 import { EXEC_COMMAND_PROMPT } from "./prompt"
 import { DEFAULT_EXEC_YIELD_TIME_MS, DEFAULT_TTY, UNIFIED_EXEC_ENV, approxTokenCount, formatExecResponse } from "./constants"
 import { PositiveInt } from "@/util/schema"
@@ -50,9 +61,9 @@ export const Parameters = Schema.Struct({
 
 export type Parameters = Schema.Schema.Type<typeof Parameters>
 
-// Executable head extracted for the permission patterns array. Mirrors
-// codex's intent: take the first token as the executable so the permission
-// prompt's labels show "git" or "node" rather than a long string.
+// Executable head extracted for the spawn title. Mirrors codex's intent:
+// take the first token as the executable so the title shows "git" or
+// "node" rather than a long string.
 function commandHead(cmd: string): string {
   const trimmed = cmd.trim()
   const firstSpace = trimmed.indexOf(" ")
@@ -79,9 +90,28 @@ export const ExecCommandTool = Tool.define(
     const pty = yield* Pty.Service
     const plugin = yield* Plugin.Service
     const sessions = yield* ProcessSessions.Service
+    const config = yield* Config.Service
+    // ShellScan transitively yields ChildProcessSpawner (cygpath) and
+    // AppFileSystem.Service (isDir + normalizePath). Capture them in the
+    // outer closure so execute()'s R stays `never` per the GOTCHA
+    // `tool-define-execute-r-must-be-never-capture-services-in-closure`.
+    const spawner = yield* ChildProcessSpawner
+    const fs = yield* AppFileSystem.Service
+    const scanProvide = <A, E>(eff: Effect.Effect<A, E, ChildProcessSpawner | AppFileSystem.Service>) =>
+      eff.pipe(Effect.provideService(ChildProcessSpawner, spawner), Effect.provideService(AppFileSystem.Service, fs))
 
     return () =>
       Effect.gen(function* () {
+        // Resolve the configured shell ONCE at init (not per call). Wave 2
+        // optimization: `Config.get()` is an InstanceState lookup; calling
+        // it on the per-call hot path adds Effect-yield overhead that p99
+        // amplified well beyond the bench budget. The configured shell is
+        // immutable for the lifetime of the tool definition; per-call
+        // override via `params.shell` still wins. Stays inside the inner
+        // gen (NOT the outer Tool.define closure) because Config.get reads
+        // InstanceState — only the inner runs with `Instance.current` bound.
+        const cfg = yield* config.get()
+        const defaultShell = Shell.acceptable(cfg.shell)
         return {
           description: EXEC_COMMAND_PROMPT,
           parameters: Parameters,
@@ -103,6 +133,20 @@ export const ExecCommandTool = Tool.define(
               )
               const env = buildEnv(process.env, pluginShell.env)
               const head = commandHead(params.cmd)
+
+              // Scan happens BEFORE acquireUseRelease so the AST parse and
+              // walk run in parallel with the tool's own setup overhead.
+              // The scan needs the `instanceCtx` for cwd-vs-instance checks
+              // and `shellBinary` for bash/powershell sniffing.
+              const shellBinary = params.shell ?? defaultShell
+              const scan = yield* scanProvide(
+                ShellScan.scanCommand({
+                  command: params.cmd,
+                  shell: shellBinary,
+                  cwd,
+                  instance: instanceCtx,
+                }),
+              )
 
               // Acquire the PTY + ProcessSession together so the release
               // hook fires on any non-success exit (defect from
@@ -126,10 +170,8 @@ export const ExecCommandTool = Tool.define(
                 }),
                 ({ info, session }) =>
                   Effect.gen(function* () {
-                    yield* ctx.ask({
-                      permission: PermissionKey,
-                      patterns: [params.cmd],
-                      always: [pidPattern(session.processId)],
+                    yield* ShellScan.askForScan(ctx, scan, {
+                      extraAlways: [pidPattern(session.processId)],
                       metadata: {
                         cmd: params.cmd,
                         workdir: cwd,

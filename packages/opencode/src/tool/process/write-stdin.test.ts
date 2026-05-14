@@ -1,9 +1,12 @@
 import { afterEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
+import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { Bus } from "@/bus"
 import { Pty } from "@/pty"
 import { PtyID } from "@/pty/schema"
 import { Plugin } from "@/plugin"
+import { Config } from "@/config/config"
 import { Truncate } from "@/tool/truncate"
 import { Agent } from "@/agent/agent"
 import * as Tool from "../tool"
@@ -27,6 +30,9 @@ const it = testEffect(
     Truncate.defaultLayer,
     Agent.defaultLayer,
     Bus.defaultLayer,
+    Config.defaultLayer,
+    AppFileSystem.defaultLayer,
+    CrossSpawnSpawner.defaultLayer,
   ),
 )
 
@@ -183,23 +189,24 @@ describe("tool.write_stdin", () => {
     }),
   )
 
-  it.instance("second invocation against the same already-spawned process_id does NOT request permission again (per-PID always)", () =>
+  it.instance("second invocation against the same already-spawned process_id does NOT request permission again (per-PID always under bash key)", () =>
     Effect.gen(function* () {
       if (process.platform === "win32") return
       const exec = yield* initExec()
       const { ctx, record } = makeCtx()
-      // Spawn — first ask, registers always-pattern pid:<sid>. The fake
-      // ctx.ask records but always succeeds, so the always-pattern would
-      // be registered if this were a real Permission service. Our test
-      // can't replay that, but it CAN verify that write_stdin asks with
-      // the same per-PID pattern shape — a real Permission would silently
-      // approve.
+      // Wave 2 wires both exec_command AND write_stdin onto permission key
+      // `bash`. The spawn registers `pid:<sid>` under bash via the
+      // `extraAlways` slot of `ShellScan.askForScan`. When write_stdin
+      // re-asks with `pid:<sid>` as a pattern, a real Permission service
+      // would auto-allow because the always-rule lives under the same key.
+      // The fake ctx here can only inspect the SHAPE — both asks must use
+      // permission key `bash`, both must carry `pid:<sid>`.
       yield* exec.execute({ cmd: makeEchoCmd(), tty: true, yield_time_ms: 250 }, ctx)
       const writeDef = yield* initWrite()
-      const sid = record.asks[0].always[0]
+      const sid = record.asks[0].always.find((p) => /^pid:\d+$/.test(p))
+      if (!sid) throw new Error("expected pid:<N> in always set")
       expect(sid).toMatch(/^pid:\d+$/)
-      // Verify the write_stdin's ask uses the same `pid:<id>` pattern shape
-      // so the always-allow rule from the spawn applies cleanly.
+      expect(record.asks[0].permission).toBe("bash")
       const beforeWrite = record.asks.length
       yield* writeDef.execute({
         session_id: parseInt(sid.slice("pid:".length), 10),
@@ -208,7 +215,7 @@ describe("tool.write_stdin", () => {
       }, ctx)
       const writeAsks = record.asks.slice(beforeWrite)
       expect(writeAsks).toHaveLength(1)
-      expect(writeAsks[0].permission).toBe("exec_command")
+      expect(writeAsks[0].permission).toBe("bash")
       expect(writeAsks[0].patterns[0]).toBe(sid) // pid:<num>
       expect(writeAsks[0].always[0]).toBe(sid)
       const pty = yield* Pty.Service

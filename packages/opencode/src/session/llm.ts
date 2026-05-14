@@ -13,7 +13,7 @@ import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
 import { Flag } from "@opencode-ai/core/flag/flag"
-import { Permission } from "@/permission"
+import { Permission, SHELL_TOOLS } from "@/permission"
 import { PermissionID } from "@/permission/schema"
 import { Bus } from "@/bus"
 import { Wildcard } from "@/util/wildcard"
@@ -452,7 +452,17 @@ function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" 
     Object.keys(input.tools),
     Permission.merge(input.agent.permission, input.permission ?? []),
   )
-  return Record.filter(input.tools, (_, k) => input.user.tools?.[k] !== false && !disabled.has(k))
+  // Wave 2: `tools.bash === false` disables the entire SHELL_TOOLS group
+  // (bash + exec_command + write_stdin) — same intent as the legacy
+  // single-tool toggle, expanded across the new IDs that share permission
+  // key `bash`. Mirrors EDIT_TOOLS' implicit grouping in Permission.disabled.
+  const userTools = input.user.tools ?? {}
+  const shellGroupDisabled = userTools.bash === false
+  return Record.filter(input.tools, (_, k) => {
+    if (userTools[k] === false) return false
+    if (shellGroupDisabled && SHELL_TOOLS.includes(k)) return false
+    return !disabled.has(k)
+  })
 }
 
 // Check if messages contain any tool-call content

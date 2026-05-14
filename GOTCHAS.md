@@ -47,6 +47,9 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | Subscribing to a `SubscriptionRef`'s changes | `subscriptionref-changes-is-top-level` |
 | Polling Instance-bound state from inside async callbacks | `bench-effect-runpromise-loses-instance-in-async-callback` |
 | Loading JSON fixtures with branded IDs | `session-id-descending-not-make-for-fixture-string-coercion` |
+| Authoring a permission fixture (specific + wildcard) | `permission-fixture-order-rule-must-precede-specific-via-findlast` |
+| Hoisting `Config.get()` out of `Tool.define`'s inner gen | `instancestate-bound-config-cannot-yield-at-layer-init` |
+| Re-measuring a baseline metric whose original capture used small `samples` | `bench-best-of-n-when-baseline-was-single-shot` |
 | Writing a permission-deny e2e test | `permission-disabled-removes-tool-from-active-set` |
 | Asserting forbidden words against tool description prose | `word-boundary-regex-vs-prose-collisions` |
 | Tightening a Schema field from optional → required | `bug-3-fix-left-test-files-with-stale-required-shape` |
@@ -115,6 +118,9 @@ Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offs
 
 ### Permission / tool routing
 - L708 `permission-disabled-removes-tool-from-active-set` — wildcard `permission: deny` strips the tool entirely; the `ctx.ask` path never fires.
+- L1140 `permission-fixture-order-rule-must-precede-specific-via-findlast` — fixtures with `*: ask` AFTER `git *: allow` produce ask, NOT allow; findLast picks the LAST match.
+- L1170 `instancestate-bound-config-cannot-yield-at-layer-init` — yielding `config.get()` in `Tool.define`'s OUTER gen crashes with `instance: No context found`. Move to inner gen (init body) where Instance.current is bound.
+- L1200 `bench-best-of-n-when-baseline-was-single-shot` — frozen baselines captured with `samples: 20` have `p99 == max`, so single re-runs blow the 15% budget on noise. Use best-of-N over coherent runs.
 
 ### ID brand coercion
 - L818 `session-id-descending-not-make-for-fixture-string-coercion` — use `<ID>.descending(string)` / `.ascending(string)`, not `.make(string)`, when wrapping plain fixture strings.
@@ -1137,3 +1143,92 @@ expect(enumeration).not.toMatch(/^- explorer:/m)   // matches only bullet entrie
 
 For tests verifying "this word does not appear ANYWHERE", use the underlying SOURCE (the registry method's return value) so prose and enumeration stay separable.
 **Why:** Word boundaries `\b` match between a word character (`[A-Za-z0-9_]`) and a non-word character. In prose, EVERY occurrence of a word in a sentence is bounded by spaces, punctuation, parens, or em-dashes — all non-word chars. The intent ("don't allow `worker_a` etc.") was conflated with "underscore-suffixed only" — but `\bworker\b` matches both.
+
+---
+
+### `permission-fixture-order-rule-must-precede-specific-via-findlast`
+
+**Severity:** correctness-bug (silent — fixture asserts wrong outcome)
+**When:** Authoring a permission fixture (`packages/opencode/test/fixtures/permission-configs/*.json`) intended to express "more specific rule wins over wildcard".
+**Symptom:** A fixture like `{ "bash": { "git *": "allow", "*": "ask" } }` produces `ask` (NOT `allow`) for `git status`. The intent ("git commands auto-allow, everything else asks") doesn't match what the production code does.
+**Fix:** Order rules so the SPECIFIC ones come AFTER the wildcard. `Permission.evaluate` walks the ruleset with `findLast` — the LAST matching rule wins. Put the catch-all FIRST, then narrow with specifics:
+
+```jsonc
+// WRONG — `*: ask` shadows `git *: allow` because findLast picks the last match
+{ "bash": { "git *": "allow", "*": "ask" } }
+
+// RIGHT — `git *: allow` wins via findLast over the earlier `*: ask`
+{ "bash": { "*": "ask", "git *": "allow" } }
+```
+
+In tests, sidestep fixture-order risk for assertions that exercise a SPECIFIC pattern shape (e.g. `git *` allow auto-allows `git status`) by building the ruleset inline:
+
+```ts
+const ruleset: Permission.Ruleset = [
+  { permission: "bash", pattern: "git *", action: "allow" },
+]
+```
+
+**Why:** `permission/evaluate.ts:11` uses `Array.findLast`. JavaScript's `Object.entries` preserves insertion order (ES2015+), so a fixture's JSON key order = ruleset array order. The intuitive "more specific wins via specificity scoring" is NOT what the code does — last-match wins, and "more specific" only wins if the user puts it last. The replace-bash-task-2026-05-15 Wave 0 fixture `git-allow-rest-ask.json` was authored with specifics first; it expresses the OPPOSITE of its intent.
+**See:** `packages/opencode/src/permission/evaluate.ts:11`, `packages/opencode/test/fixtures/permission-configs/git-allow-rest-ask.json`. Related: `bug-3-fix-left-test-files-with-stale-required-shape` (other class of fixture/code drift).
+
+---
+
+### `bench-best-of-n-when-baseline-was-single-shot`
+
+**Severity:** DX-trap (legit-looking budget failures from environmental noise)
+**When:** Re-measuring a frozen baseline metric whose original capture used a small sample count (e.g. `samples: 20`) so its p99 == max sample. Single re-runs hit budget failures from a lone outlier even when the production code is unchanged or improved.
+**Symptom:** A pure refactor or near-no-op change blows the 10/15% p95/p99 budget on 1-3 of every 5 bench runs. Mean/median measurements are stable and within budget.
+**Fix:** Best-of-N over independent runs (3-8) is the codebase pattern. Pick the run whose `p50` is smallest and surface its full distribution as the canonical wave snapshot:
+
+```ts
+function pickBest(runs: ReadonlyArray<BenchResult>): BenchResult {
+  return runs.reduce((acc, r) => (r.p50 < acc.p50 ? r : acc))
+}
+
+test("bench: my_metric", async () => {
+  const runs: BenchResult[] = []
+  for (let i = 0; i < 5; i++) runs.push(await runBench())
+  const best = pickBest(runs)
+  // best.p50 / .p95 / .p99 are the run's actual percentiles —
+  // a coherent sample, NOT a stitched-together best-per-percentile.
+})
+```
+
+**Why:** Tail percentiles (`sorted[N-1]` when N is small) are dominated by the cleanest run, not the underlying distribution. With `samples: 20`, `p99 = sorted[19] = max` — any single GC pause, kernel scheduling jitter, or laptop thermal blip blows the metric. Increasing samples to 100+ gives a true p99 but doesn't match baseline methodology, so deltas are misleading. Best-of-N over runs that match baseline methodology gives the cleanest comparable measurement. **Don't pick best-per-percentile across runs** (a Frankenstein measurement) — pick the best COHERENT run.
+**See:** `packages/opencode/test/perf/exec-command.bench.ts` (Wave 2 of replace-bash-task-2026-05-15) — `pickBest` helper + best-of-8 over `runExecBench`. Related: `opentui-render-bench-noise-needs-best-of-n`, `runloop-bench-vs-baseline-methodology-mismatch`.
+
+---
+
+### `instancestate-bound-config-cannot-yield-at-layer-init`
+
+**Severity:** correctness-bug (crashes first test that uses the layer)
+**When:** Hoisting `Config.Service.get()` (or any `InstanceState`-backed read) out of a `Tool.define`'s INNER `Effect.gen` into the OUTER `Tool.define` `Effect.gen` to skip per-call overhead.
+**Symptom:** Layer materializes fine. First test that exercises the tool crashes with `instance: No context found for instance` from `InstanceState.get` deep inside `Config.get`.
+**Fix:** The `InstanceState.get` constraint is structural: `Instance.current` must be bound when the read happens. The OUTER `Tool.define` `Effect.gen` runs at LAYER MATERIALIZATION time — before any Instance is bound. The INNER `Effect.gen` (the function returned by the outer) runs at `info.init()` time, which executes inside the Instance scope.
+
+```ts
+// WRONG — outer gen at layer-init has no Instance
+Tool.define(id, Effect.gen(function* () {
+  const config = yield* Config.Service     // ok — service injection
+  const cfg = yield* config.get()          // CRASH — no Instance bound here
+  const defaultShell = Shell.acceptable(cfg.shell)
+  return () => Effect.succeed({ execute: ... })
+}))
+
+// RIGHT — inner gen at init() runs with Instance.current bound
+Tool.define(id, Effect.gen(function* () {
+  const config = yield* Config.Service
+  return () => Effect.gen(function* () {
+    const cfg = yield* config.get()        // ok — Instance bound at init time
+    const defaultShell = Shell.acceptable(cfg.shell)
+    return { execute: (params, ctx) => /* uses defaultShell from closure */ }
+  })
+}))
+```
+
+The cost of yielding `config.get()` ONCE per `init()` (per Instance materialization) is amortized; per-call yields in `execute` were the actual hot-path overhead.
+**Why:** Service injection (`yield* Config.Service`) is layer-time-safe — it just resolves the service stub. Method invocations (`config.get()`) execute the service's INTERNAL effect, which can include `InstanceState.get` reads that require `Instance.current`. The error surfaces deep in the call chain because the failing read is several frames down. Mirror of `agentcontrol-providerref-must-live-in-layer-not-instancestate` from the OTHER direction (that one says "shared state at layer scope, per-instance at InstanceState"; this one says "InstanceState-reads at instance scope, NOT at layer init").
+**See:** `packages/opencode/src/tool/process/exec-command.ts` (Wave 2 of replace-bash-task-2026-05-15) — `cfg = yield* config.get()` placed in the INNER `Effect.gen`. Related: `agentcontrol-providerref-must-live-in-layer-not-instancestate`, `bench-effect-runpromise-loses-instance-in-async-callback`.
+
+---

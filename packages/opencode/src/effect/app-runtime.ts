@@ -54,11 +54,18 @@ import { SyncEvent } from "@/sync"
 import { Wave } from "@/wave/wave"
 import { WaveLoop } from "@/wave/loop"
 import { Npm } from "@opencode-ai/core/npm"
+import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { memoMap } from "@opencode-ai/core/effect/memo-map"
 
 export const AppLayer = Layer.mergeAll(
   Npm.defaultLayer,
   AppFileSystem.defaultLayer,
+  // Wave 2 (replace-bash-task-2026-05-15): expose the spawner at the
+  // AppRuntime level so tools that use ShellScan (now: exec_command in
+  // addition to bash) can be yielded directly outside of ToolRegistry's
+  // layer composition. ToolRegistry.defaultLayer already provides this
+  // internally; surfacing it makes bench/test helpers self-sufficient.
+  CrossSpawnSpawner.defaultLayer,
   Bus.defaultLayer,
   Auth.defaultLayer,
   Account.defaultLayer,

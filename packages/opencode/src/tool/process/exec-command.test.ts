@@ -1,8 +1,11 @@
 import { afterEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
+import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { Bus } from "@/bus"
 import { Pty } from "@/pty"
 import { Plugin } from "@/plugin"
+import { Config } from "@/config/config"
 import { Truncate } from "@/tool/truncate"
 import { Agent } from "@/agent/agent"
 import * as Tool from "../tool"
@@ -26,6 +29,9 @@ const it = testEffect(
     Truncate.defaultLayer,
     Agent.defaultLayer,
     Bus.defaultLayer,
+    Config.defaultLayer,
+    AppFileSystem.defaultLayer,
+    CrossSpawnSpawner.defaultLayer,
   ),
 )
 
@@ -76,7 +82,7 @@ describe("tool.exec_command", () => {
         ctx,
       )
       expect(record.asks.length).toBe(1)
-      expect(record.asks[0].permission).toBe("exec_command")
+      expect(record.asks[0].permission).toBe("bash")
       expect(result.metadata.exit_code).toBe(0)
       expect(result.metadata.session_id).toBeUndefined()
     }),
@@ -240,18 +246,72 @@ describe("tool.exec_command", () => {
     }),
   )
 
-  it.instance("first-time spawn requests permission with key 'exec_command' and pattern with the cmd", () =>
+  it.instance("first-time spawn requests permission with key 'bash' and AST-derived patterns + per-PID always", () =>
     Effect.gen(function* () {
       if (process.platform === "win32") return
       const def = yield* initTool()
       const { ctx, record } = makeCtx()
       yield* def.execute({ cmd: `${process.execPath} -e "process.exit(0)"`, yield_time_ms: 1000 }, ctx)
+      // Wave 2: exec_command consults the SAME permission key as the legacy
+      // bash tool (`bash`) so saved `permission.bash` rules transparently
+      // gate it. Patterns are now AST-derived (full source) and the always
+      // set carries BOTH the BashArity prefix and the per-PID rule.
       expect(record.asks).toHaveLength(1)
       const ask = record.asks[0]
-      expect(ask.permission).toBe("exec_command")
+      expect(ask.permission).toBe("bash")
       expect(ask.patterns[0]).toContain(process.execPath)
-      // Always-pattern is the per-PID one, format pid:<num>
-      expect(ask.always[0]).toMatch(/^pid:\d+$/)
+      // AST-derived prefix-glob always carries the executable-head pattern.
+      expect(ask.always.some((p) => p === `${process.execPath} *`)).toBe(true)
+      // The per-PID always-rule still appears so write_stdin against the
+      // same session auto-allows under the bash key.
+      expect(ask.always.some((p) => /^pid:\d+$/.test(p))).toBe(true)
+    }),
+  )
+
+  it.instance("exec_command(cmd: 'git status') uses bash permission key with AST-derived 'git status *' always", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return
+      const def = yield* initTool()
+      const { ctx, record } = makeCtx()
+      // Run in tmpdir (it.instance) — git outputs "fatal: not a git repo"
+      // but the command finishes and the ask payload is fully populated
+      // before exit. Cornerstone wave-2 BC test: the saved
+      // `permission.bash: { "git *": "allow" }` rule matches `git status`
+      // via Wildcard on the PATTERNS axis (rule.pattern wildcards over
+      // each ask pattern). The `always` axis carries the AST-derived
+      // `BashArity.prefix(["git","status"]).join(" ") + " *"` which —
+      // because git's arity is 2 — resolves to `git status *`, not `git *`.
+      // Saved-rule auto-allow is verified end-to-end in the
+      // `exec-command-honors-saved-bash-allow-pattern` integration invariant.
+      yield* def.execute({ cmd: "git status", yield_time_ms: 5000 }, ctx)
+      const bashAsk = record.asks.find((a) => a.permission === "bash")
+      expect(bashAsk).toBeDefined()
+      expect(bashAsk!.permission).toBe("bash")
+      expect(bashAsk!.patterns).toContain("git status")
+      expect(bashAsk!.always).toContain("git status *")
+      expect(bashAsk!.always.some((p) => /^pid:\d+$/.test(p))).toBe(true)
+    }),
+  )
+
+  it.instance("exec_command(cmd: 'rm <outside-cwd>') triggers external_directory then bash asks in order", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return
+      const def = yield* initTool()
+      const { ctx, record } = makeCtx()
+      // Use a uniquely-named non-existent file under /tmp — `rm` errors
+      // (file not found) but the AST scan still fires the external_directory
+      // ask for `/tmp/*` (path outside the instance tmpdir) and then the
+      // bash ask for `rm *`. Wave 0 snapshot pinned this exact order; if
+      // we reorder accidentally, snapshot diff fails in Wave 6.
+      const target = `/tmp/codemaxxxing-wave2-nonexistent-${Bun.nanoseconds()}`
+      yield* def.execute({ cmd: `rm ${target}`, yield_time_ms: 5000 }, ctx)
+      const extIdx = record.asks.findIndex((a) => a.permission === "external_directory")
+      const bashIdx = record.asks.findIndex((a) => a.permission === "bash")
+      expect(extIdx).toBeGreaterThanOrEqual(0)
+      expect(bashIdx).toBeGreaterThanOrEqual(0)
+      expect(extIdx).toBeLessThan(bashIdx)
+      expect(record.asks[extIdx].patterns.some((p) => p.startsWith("/tmp"))).toBe(true)
+      expect(record.asks[bashIdx].always).toContain("rm *")
     }),
   )
 

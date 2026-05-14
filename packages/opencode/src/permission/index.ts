@@ -308,10 +308,23 @@ export function merge(...rulesets: Ruleset[]): Ruleset {
 
 const EDIT_TOOLS = ["edit", "write", "apply_patch"]
 
+// Wave 2 (replace-bash-task-2026-05-15): three tool IDs share permission
+// key `bash`. Saved `permission.bash: { "*": "deny" }` rules transparently
+// strip ALL THREE from the model's visible tool list — same shape as
+// EDIT_TOOLS for the edit family. `session/llm.ts:resolveTools` also
+// consults this set to honour `tools.bash === false` as a group disable.
+//
+// Reference: PERMISSION_MAPPING.md § "Post-Wave-2 mapping (bash group)".
+export const SHELL_TOOLS = ["bash", "exec_command", "write_stdin"]
+
 export function disabled(tools: string[], ruleset: Ruleset): Set<string> {
   const result = new Set<string>()
   for (const tool of tools) {
-    const permission = EDIT_TOOLS.includes(tool) ? "edit" : tool
+    const permission = EDIT_TOOLS.includes(tool)
+      ? "edit"
+      : SHELL_TOOLS.includes(tool)
+        ? "bash"
+        : tool
     const rule = ruleset.findLast((rule) => Wildcard.match(permission, rule.permission))
     if (!rule) continue
     if (rule.pattern === "*" && rule.action === "deny") result.add(tool)
