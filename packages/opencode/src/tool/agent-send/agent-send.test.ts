@@ -366,15 +366,17 @@ describe("tool.send_message", () => {
     ),
   )
 
-  it.live("send to /root succeeds resolution but fails routing (no root mailbox)", () =>
+  it.live("send to /root from a child queues into the root's mailbox", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         yield* installNeverLoop
         const root = yield* seedRoot()
         const control = yield* AgentControl.Service
         // Spawn a child so the sender path resolves through registry; the
-        // child sends back to /root, which has no mailbox (root is the
-        // user's session, not an agent that drains a queue).
+        // child sends back to /root, which now has its own mailbox so the
+        // wait_agent watcher can wake on completion notifications (Wave 2).
+        // Pre-Wave 2 root had no mailbox and this send failed with
+        // AgentNotFoundError; post-fix the send queues normally.
         const child = yield* control.spawnAgent({
           parentID: root.id,
           parentPath: AgentPath.root(),
@@ -387,11 +389,11 @@ describe("tool.send_message", () => {
           { target: "/root", message: "phoning home" },
           ctx,
         )
-        // Resolution succeeded (rootRef exists), but the mailbox map has
-        // no entry for root → AgentNotFoundError surfaces in output.
-        expect(typeof result.output).toBe("string")
-        expect(result.output.toLowerCase()).toContain("not found")
-        expect(result.metadata.error).toBe("send_failed")
+        expect(result.metadata.queued).toBe(true)
+        expect(result.metadata.target_session_id).toBe(root.id)
+        const drained = yield* control.drainMailbox(root.id)
+        expect(drained).toHaveLength(1)
+        expect(drained[0]?.content).toBe("phoning home")
       }),
     ),
   )

@@ -439,6 +439,11 @@ export const layer = Layer.effect(
 
     // Helper — get or create the per-root slot for `id`. Idempotent:
     // returns the existing slot if already registered.
+    //
+    // Wave 2: the root also gets its OWN Mailbox so wait_agent invoked from
+    // root can wake on completion-watcher notifications. Pre-Wave 2 the root
+    // had no mailbox and wait_agent fell back to a plain timeout sleep —
+    // that's exactly the path Bug 2 left in place forever.
     const ensureRootSlot = (data: InternalState, id: SessionID) =>
       Effect.gen(function* () {
         const existing = data.perRoot.get(id)
@@ -446,10 +451,11 @@ export const layer = Layer.effect(
         const registry = yield* AgentRegistry.make()
         yield* registry.registerRootThread(id)
         const status = yield* SubscriptionRef.make<AgentStatus>("running")
+        const mailbox = yield* Mailbox.make()
         const slot: PerRootData = {
           rootID: id,
           registry,
-          mailboxes: new Map(),
+          mailboxes: new Map([[id, mailbox]]),
           statuses: new Map([[id, status]]),
           fibers: new Map(),
         }
@@ -618,6 +624,45 @@ export const layer = Layer.effect(
               Effect.forkIn(data.scope),
             )
             slot.fibers.set(child.id, fiber)
+
+            // Sibling completion watcher. Mirrors codex
+            // maybe_start_completion_watcher (codex-rs/core/src/agent/control.rs:943-1015):
+            // when this child reaches a final status, send a notification to
+            // the parent's mailbox so wait_agent's seq watch wakes. Forked
+            // into data.scope so the watcher dies with the per-root slot
+            // (and never outlives the parent root).
+            //
+            // Skip on shutdown: closeAgent is the only path that sets status
+            // to "shutdown"; the parent invoked the close itself, so a
+            // notification here would be confusing. See MESSAGE_SHAPES.md
+            // § "Skip rule: closeAgent-triggered shutdown".
+            yield* Stream.runForEach(
+              SubscriptionRef.changes(status).pipe(Stream.drop(1)),
+              (next) =>
+                Effect.gen(function* () {
+                  if (!AgentStatus.isFinal(next)) return
+                  if (next === "shutdown") return yield* Effect.interrupt
+                  const label =
+                    typeof next === "object" && "completed" in next
+                      ? "completed"
+                      : "errored"
+                  // The watcher's send may race with parent deletion. If the
+                  // parent root is gone, sendInterAgentCommunication fails
+                  // with AgentNotFoundError — absorb it; nothing to wake.
+                  yield* sendInterAgentCommunication(
+                    input.parentID,
+                    new InterAgentCommunication({
+                      author: childPath,
+                      recipient: input.parentPath,
+                      content: `Agent ${String(childPath)} reached status: ${label}`,
+                      trigger_turn: false,
+                      sent_at: Date.now(),
+                    }),
+                    child.id,
+                  ).pipe(Effect.catch(() => Effect.void))
+                  yield* Effect.interrupt
+                }),
+            ).pipe(Effect.forkIn(data.scope))
 
             const current = yield* SubscriptionRef.get(status)
             if (current === "pending_init") {

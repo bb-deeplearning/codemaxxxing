@@ -21,8 +21,9 @@ import { Config } from "@/config/config"
 import { Session } from "@/session/session"
 import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
+import { AgentWaitTool } from "@/tool/agent-wait/agent-wait"
 import { ProviderID, ModelID } from "@/provider/schema"
-import { MessageID } from "@/session/schema"
+import { MessageID, SessionID } from "@/session/schema"
 import type * as Tool from "@/tool/tool"
 import { disposeAllInstances } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -53,6 +54,26 @@ const it = testEffect(
 const installNeverLoop = Effect.gen(function* () {
   const control = yield* AgentControl.Service
   yield* control.registerRunLoop(() => Effect.never)
+})
+
+// Resolve AgentWaitTool to its Def so tests can call `.execute(args, ctx)`.
+// Tool.Info.init() returns the Def; the outer Effect resolves the Info.
+const initWaitTool = Effect.gen(function* () {
+  const info = yield* AgentWaitTool
+  return yield* info.init()
+})
+
+// Build a minimal Tool.Context for invoking AgentWaitTool from a parent
+// session. The same shape the bug-3 audit tests + multi-agent-tools tests use.
+const makeCtx = (sessionID: SessionID): Tool.Context => ({
+  sessionID,
+  messageID: MessageID.make(""),
+  callID: "",
+  agent: "build",
+  abort: new AbortController().signal,
+  messages: [],
+  metadata: () => Effect.void,
+  ask: () => Effect.void,
 })
 
 describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
@@ -132,16 +153,83 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
   )
 
   // TODO(wave_2): unskip when completion watcher lands.
-  it.instance.skip("child-completion-wakes-parent", () =>
+  it.instance("child-completion-wakes-parent", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      // Run-loop sleeps 50ms then returns Effect.void. fiber.onExit on
+      // success sets status to { completed: null }. The completion watcher
+      // (Wave 2) observes that final status and notifies the parent's
+      // mailbox so wait_agent's seq watch wakes promptly.
+      yield* control.registerRunLoop(() => Effect.sleep("50 millis"))
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "task_a",
+        initial_message: "go",
+      })
+
+      // Drain anything that might have landed on the parent's mailbox during
+      // spawn — only the watcher's notification should remain after waiting.
+      yield* control.drainMailbox(root.id)
+
+      const def = yield* initWaitTool
+      const t0 = Date.now()
+      const result = yield* def.execute({ timeout_ms: 30_000 }, makeCtx(root.id))
+      const elapsed = Date.now() - t0
+
+      // Pre-fix: wait_agent on root falls back to a sleep-then-timeout (root
+      // has no mailbox) and elapsed ≈ 30_000 with timed_out=true. Post-fix:
+      // root has a mailbox, the watcher fires the completion notification,
+      // wait_agent races the seq change and returns timed_out=false.
+      //
+      // Budget: child sleep 50ms + watcher fire (~µs) + wait_agent wakeup
+      // (~ms). 1000ms allows comfortable headroom for cold session.create
+      // (Drizzle write) + permission ask plumbing on a noisy machine. Per
+      // GOTCHAS.md gotcha 7: bump to 1000ms when 500ms flakes; ≤ 1000ms is
+      // still ~30× under the 30s timeout so the test isn't trivially passing
+      // on the timeout branch.
+      expect(result.metadata.timed_out).toBe(false)
+      expect(elapsed).toBeLessThan(1000)
     }),
   )
 
   // TODO(wave_2): unskip when completion watcher lands.
-  it.instance.skip("child-completion-notification-body-shape", () =>
+  it.instance("child-completion-notification-body-shape", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      yield* control.registerRunLoop(() => Effect.sleep("50 millis"))
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "task_b",
+        initial_message: "go",
+      })
+      yield* control.drainMailbox(root.id)
+
+      const def = yield* initWaitTool
+      const result = yield* def.execute({ timeout_ms: 30_000 }, makeCtx(root.id))
+      expect(result.metadata.timed_out).toBe(false)
+
+      // The watcher's notification carries a fixed body shape per
+      // MESSAGE_SHAPES.md § "completion notification body shape (Wave 2)".
+      const drained = yield* control.drainMailbox(root.id)
+      expect(drained).toHaveLength(1)
+      const note = drained[0]!
+      expect(note.content).toBe("Agent /root/task_b reached status: completed")
+      expect(String(note.author)).toBe("/root/task_b")
+      // The parent here IS root → recipient is "/root".
+      expect(String(note.recipient)).toBe("/root")
+      expect(note.trigger_turn).toBe(false)
     }),
   )
 
@@ -254,9 +342,49 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
   )
 
   // TODO(wave_2): unskip when completion watcher lands.
-  it.instance.skip("child-fiber-interrupt-during-wait", () =>
+  it.instance("child-fiber-interrupt-during-wait", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "longrun",
+        initial_message: "go",
+      })
+      yield* control.drainMailbox(root.id)
+
+      // Schedule the close 100ms in. Effect.forkScoped binds the helper
+      // fiber to the test's scope so it never leaks past this test.
+      yield* Effect.forkScoped(
+        Effect.gen(function* () {
+          yield* Effect.sleep("100 millis")
+          yield* control.closeAgent(child.thread_id)
+        }),
+      )
+
+      // wait_agent timeout floors to MIN_WAIT_TIMEOUT_MS=1000 (the smallest
+      // possible wall-clock the timeout branch can return on). The watcher
+      // MUST skip the notification when status reaches "shutdown" (per the
+      // MESSAGE_SHAPES.md § "Skip rule"). With no notification fired, the
+      // wait runs out the timeout → timed_out=true.
+      const def = yield* initWaitTool
+      const t0 = Date.now()
+      const result = yield* def.execute({ timeout_ms: 1000 }, makeCtx(root.id))
+      const elapsed = Date.now() - t0
+
+      expect(result.metadata.timed_out).toBe(true)
+      // The wait actually waited; it didn't return early on a notification.
+      expect(elapsed).toBeGreaterThan(900)
+
+      // No notification was sent — the parent's mailbox is empty.
+      const drained = yield* control.drainMailbox(root.id)
+      expect(drained).toHaveLength(0)
     }),
   )
 
