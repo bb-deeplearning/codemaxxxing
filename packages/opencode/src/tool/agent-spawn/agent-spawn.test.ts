@@ -261,7 +261,7 @@ describe("tool.spawn_agent", () => {
     ),
   )
 
-  it.live("agent_type='explorer' lands as agent_role on the spawned LiveAgent", () =>
+  it.live("agent_type='explore' lands as agent_role on the spawned LiveAgent", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         yield* installNeverLoop
@@ -272,12 +272,12 @@ describe("tool.spawn_agent", () => {
         const { ctx } = makeCtx(root.id)
 
         const result = yield* def.execute(
-          { message: "do x", task_name: "scout", agent_type: "explorer" },
+          { message: "do x", task_name: "scout", agent_type: "explore" },
           ctx,
         )
         const sid = result.metadata.child_session_id as SessionID
         const meta = yield* control.getAgentMetadata(sid)
-        expect(meta?.agent_role).toBe("explorer")
+        expect(meta?.agent_role).toBe("explore")
       }),
     ),
   )

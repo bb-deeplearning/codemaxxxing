@@ -63,16 +63,9 @@ Use `wait_agent` only when you are genuinely blocked on a sibling's result for y
 
 Use `close_agent` after `wait_agent` finishes and you've integrated what you need. Closing a parent cascades to descendants — close the whole subtree when an entire branch of work is done. Don't close an agent you're about to message again; `followup_task` reuses its warm context for free.
 
-## Roles
+## Subagents
 
-`agent_type` selects the spawned child's role and default tool set:
-
-- `default` — general work, inherits parent tool set.
-- `explorer` — codebase research, read-leaning, fast turnarounds. Use for "find X", "summarize Y", "trace dependency chain Z". Do not assign destructive edits to explorers.
-- `worker` — code changes. Assign disjoint write ownership when fanning out multiple workers; overlapping write sets cause merge conflicts and duplicated effort.
-- Any user-defined agent type from project config is also valid.
-
-Pick the role that matches the work. Don't spawn an explorer to write code; don't spawn a worker to grep.
+`agent_type` names which subagent to spawn — pick from the agent types listed below the spawn_agent description (the registry templates the live list per turn so it always reflects what's actually available). Match the description to the work; don't force a poor fit.
 
 ## Cost
 

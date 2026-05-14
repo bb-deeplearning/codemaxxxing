@@ -35,12 +35,12 @@ describe("spawn_agent parameters", () => {
     const parsed = parse(Parameters, {
       message: "do x",
       task_name: "worker",
-      agent_type: "explorer",
+      agent_type: "explore",
       fork_turns: "3",
       model: "claude-x",
       reasoning_effort: "high",
     })
-    expect(parsed.agent_type).toBe("explorer")
+    expect(parsed.agent_type).toBe("explore")
     expect(parsed.fork_turns).toBe("3")
     expect(parsed.model).toBe("claude-x")
     expect(parsed.reasoning_effort).toBe("high")

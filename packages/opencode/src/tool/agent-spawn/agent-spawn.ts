@@ -9,6 +9,7 @@
 // path-already-exists, no-nickname) are mapped to model-recoverable
 // strings — mirrors codex's FunctionCallError::RespondToModel pattern.
 
+import { Agent } from "@/agent/agent"
 import { AgentControl } from "@/agent/control"
 import { Effect, Schema } from "effect"
 import * as Tool from "../tool"
@@ -27,9 +28,8 @@ export const Parameters = Schema.Struct({
     description:
       "Lowercase letters, digits, and underscores only. Becomes the leaf component of the canonical path: if your path is /root/explorers, task_name=worker_a yields /root/explorers/worker_a. Pick names that mean something — they show up in list_agents and you'll reference them later.",
   }),
-  agent_type: Schema.optional(Schema.String).annotate({
-    description:
-      "Role for the spawned agent. Pick `default` for general work, `explorer` for read-leaning codebase research, `worker` for code edits with a defined write scope, or any user-defined agent type. Roles set defaults appropriate to the task; leave unset to inherit the parent's defaults.",
+  agent_type: Schema.String.annotate({
+    description: "Which subagent to spawn. Must be one of the agent types listed below.",
   }),
   fork_turns: Schema.optional(Schema.String).annotate({
     description:
@@ -118,6 +118,7 @@ export const AgentSpawnTool = Tool.define(
   ID,
   Effect.gen(function* () {
     const control = yield* AgentControl.Service
+    const agents = yield* Agent.Service
 
     return {
       description: DESCRIPTION,
@@ -127,6 +128,25 @@ export const AgentSpawnTool = Tool.define(
               const fork = decodeForkTurns(params.fork_turns)
               if (!fork.ok) {
                 return errorOutput(params.task_name, "fork_turns_invalid", fork.reason)
+              }
+
+              // Validate agent_type against the actual subagent-eligible set.
+              // Eligible = mode in {"subagent", "all"} AND not hidden. Built-ins
+              // yield `explore` + `general` only. Primary agents (build, plan)
+              // and hidden internals (compaction, title, summary) are rejected.
+              if (params.agent_type !== undefined) {
+                const eligible = (yield* agents.list()).filter(
+                  (a) => (a.mode === "subagent" || a.mode === "all") && a.hidden !== true,
+                )
+                const match = eligible.find((a) => a.name === params.agent_type)
+                if (!match) {
+                  const available = eligible.map((a) => a.name).join(", ")
+                  return errorOutput(
+                    params.task_name,
+                    "agent_type_invalid",
+                    `agent_type "${params.agent_type}" is not a spawnable subagent. Available: ${available}.`,
+                  )
+                }
               }
 
               const parentPath = yield* AgentToolContext.currentAgentPath(control, ctx.sessionID)

@@ -14,9 +14,9 @@ failure_kind: ""
 retry_count: 0
 verify_count: 0
 user_question: ""
-loop_state: armed
-active_session_id: ses_1dbc6f958ffekOK6SXqlmBjywQ
-active_session_kind: executor
+loop_state: idle
+active_session_id: null
+active_session_kind: ""
 total_waves: 16
 session_count: 16
 created: 2026-05-13

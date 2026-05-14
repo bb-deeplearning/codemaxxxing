@@ -319,6 +319,25 @@ export const layer: Layer.Layer<
       return ["Available agent types and the tools they have access to:", description].join("\n")
     })
 
+    // Mirror of describeTask for spawn_agent. Filter to subagent-eligible
+    // (mode !== "primary"), not hidden, and not deny-permissioned for
+    // spawn_agent. Built-ins yield `explore` + `general` only. User-defined
+    // subagent / all -mode agents flow through naturally.
+    const describeSpawnAgent = Effect.fn("ToolRegistry.describeSpawnAgent")(function* (agent: Agent.Info) {
+      const items = (yield* agents.list()).filter((item) => item.mode !== "primary" && item.hidden !== true)
+      const filtered = items.filter(
+        (item) => Permission.evaluate("spawn_agent", item.name, agent.permission).action !== "deny",
+      )
+      const list = filtered.toSorted((a, b) => a.name.localeCompare(b.name))
+      const description = list
+        .map(
+          (item) =>
+            `- ${item.name}: ${item.description ?? "This subagent should only be called manually by the user."}`,
+        )
+        .join("\n")
+      return ["Available agent types and the tools they have access to:", description].join("\n")
+    })
+
     const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
       const filtered = (yield* all()).filter((tool) => {
         if (tool.id === WebSearchTool.id) {
@@ -347,6 +366,7 @@ export const layer: Layer.Layer<
             description: [
               output.description,
               tool.id === TaskTool.id ? yield* describeTask(input.agent) : undefined,
+              tool.id === AgentSpawnTool.id ? yield* describeSpawnAgent(input.agent) : undefined,
               tool.id === SkillTool.id ? yield* describeSkill(input.agent) : undefined,
             ]
               .filter(Boolean)

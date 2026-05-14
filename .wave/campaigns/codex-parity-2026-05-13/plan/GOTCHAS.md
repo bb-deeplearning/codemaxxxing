@@ -1678,3 +1678,50 @@ The mailbox seq-watch wakeup test in the same file uses a different shape (100 s
 - Working example (median-of-5): `packages/opencode/test/e2e/concurrent-perf-invariants.test.ts` "4 sibling sessions running in parallel" test
 - Original failing shape (single iteration each): committed in wave-14 first attempt; flake rate ~30% in the full suite, 0% in isolation
 - Related: wave_4's `[opentui-render-bench-noise-needs-best-of-n]` — same problem class for opentui render benches; the pattern is "small-sample timing on a multi-tenant machine needs robust statistics"
+
+## [codex-role-vocabulary-imported-verbatim] Importing codex's `default/explorer/worker` role names without mapping to opencode's existing subagents
+
+**Discovered in:** post-campaign smoke test
+**Date:** 2026-05-13
+**Surfaces affected:** `tool/agent-spawn/`, `agent/prompt/multi-agent-root.txt`, any prose that mentions agent roles, any test that uses agent_type
+**Severity:** correctness-bug + conceptual-mismatch
+
+### Symptom
+
+Smoke test 4 (single subagent + send_message) failed at the spawn step with `agent_type "explorer" is not a valid agent type`. The model was reading the spawn_agent prompt prose, picking the role names it found there (`explorer`, `worker`), and passing them as `agent_type`. The child session was created with `agent: "explorer"`, the runLoop tried `agents.get("explorer")`, got undefined, errored. The error message also leaked all primary-mode agents (`build`, `plan`) and hidden internal agents (`compaction`, `title`, `summary`) as "available" because nothing filtered the dump.
+
+### Root cause
+
+Codex separates two concepts that opencode merges into one:
+
+- **Codex** has ROLES (`default`, `explorer`, `worker` in `agent/role.rs`) which are config layers applied at spawn time over a base agent. Roles are not standalone agents in any registry.
+- **Opencode** has AGENTS (`build`, `plan`, `general`, `explore`, etc. in `agent/agent.ts`) which are first-class entries in `Agent.Service` with their own prompts, permissions, and `mode` field. There is no separate "role" concept.
+
+The campaign documented codex's role names verbatim in `agent-spawn.txt`, `multi-agent-root.txt`, the schema description, and tests — as if they'd magically resolve to something. They didn't. Opencode already had perfectly tuned subagent prompts (`PROMPT_EXPLORE` for `explore`, `PROMPT_GENERAL_ANTHROPIC`/`PROMPT_GENERAL_GEMINI` for `general`); the campaign should have referenced THOSE, not invented codex-named roles.
+
+100% test coverage didn't catch this because every test verified that the `agent_type` STRING propagated through `params → control.spawnAgent → LiveAgent.metadata.agent_role` (which works regardless of whether the agent exists). No test asserted that the spawned child's runLoop could actually look up the agent and run with it. The integration boundary was uncovered.
+
+### Fix pattern
+
+Two-part rule:
+
+1. **When porting concepts from a reference codebase, map them to the host codebase's existing primitives — never invent new vocabulary that conflicts with what the host already has.** Verify the mapping by grepping the host for the concept under both names. If both exist, the mapping is the bug.
+
+2. **Tests must assert real behavior, not just propagation.** A test that says "field X arrives at place Y" is testing serialization. A test that says "after spawning with X, the child does Z" is testing behavior. The TDD discipline in `TDD.md` § "Verifying behavior, not implementation" already says this — but it requires conscious effort to actually write the integration assertion, especially when stubbed providers/runLoops make it easy to skip.
+
+The mechanical fix for this specific bug:
+
+- `agent_type` is `Schema.String` (required), no default, no inherit. Old `task` tool's discipline.
+- The list of valid agent_types is templated into the tool description per-agent at runtime via `describeSpawnAgent` in `tool/registry.ts` (mirrors existing `describeTask` for the legacy task tool). The model only ever sees agent names that actually resolve.
+- Filter: `mode !== "primary" && hidden !== true && Permission.evaluate("spawn_agent", name, ruleset).action !== "deny"`. Built-ins yield `explore` and `general`; user config flows through naturally.
+- Prompt prose drops all hardcoded role mentions and points at the templated list ("pick from the agent types listed below").
+- Defense-in-depth: spawn_agent's execute body still validates against the eligible set and returns a model-recoverable error if the value somehow doesn't match (config change mid-session, stale name from prior turn).
+- All `"explorer"` test fixtures changed to `"explore"`. Test names updated.
+
+### Reference
+
+- The fix: this conversation, applied to `tool/agent-spawn/`, `tool/registry.ts`, `agent/prompt/multi-agent-root.txt`, `tool/agent-spawn/agent-spawn.txt`, `tool/agent-spawn/schema.test.ts`, `tool/agent-spawn/agent-spawn.test.ts`
+- Existing pattern this mirrors: `tool/task.ts` + `tool/task.txt` + `tool/registry.ts:307-320` (`describeTask`)
+- Codex sources I imported names from (these are codex-internal — do not surface their vocabulary in opencode prompts): `codex-rs/core/src/agent/role.rs:357-414`, `codex-rs/core/src/tools/handlers/multi_agents_spec.rs:64-98`
+
+---

@@ -28,20 +28,20 @@ they show up in `list_agents` and in every cross-agent message.
 The child inherits your model, reasoning effort, workspace, tool set, and
 permission ruleset by default. Leave `model` and `reasoning_effort` unset
 unless the user explicitly asks for an override or the task clearly demands
-one. `agent_type` selects a role (`default`, `explorer`, `worker`, or any
-user-defined agent) — roles set defaults appropriate to the work.
+one. `agent_type` selects which subagent definition to spawn — see the
+Subagents section below.
 
 ## When to delegate
 
 - Bounded sidecar work that can run in parallel with your immediate next
   step. Prefer delegating concrete, well-scoped tasks.
-- Multiple independent research questions — fan out N explorers, integrate
-  results when they return.
-- Code edits with disjoint write sets — split the work, spawn one worker
-  per slice, do not let two workers touch the same files.
+- Multiple independent research questions — fan out N `explore` agents,
+  integrate results when they return.
+- Code edits with disjoint write sets — split the work, spawn one agent
+  per slice, do not let two agents touch the same files.
 - Debate / design review — spawn two agents with different framings and
   let them followup_task each other.
-- Observer/worker — one agent watches outputs of N workers via wait_agent
+- Observer/worker — one agent watches outputs of N siblings via wait_agent
   and integrates the results.
 
 ## When NOT to delegate
@@ -74,17 +74,15 @@ blocked on a result for your next step. Read drained messages in your
 mailbox — siblings push results to you via send_message and they appear at
 the start of your next turn.
 
-## Roles
+## Subagents
 
-- `default`: general-purpose work, inherits parent tool set.
-- `explorer`: codebase research, read-leaning, fast turnarounds. Use for
-  "find X", "summarize Y", "trace dependency chain Z". Do not assign
-  destructive edits to explorers.
-- `worker`: code changes. Assign disjoint write ownership when fanning out
-  multiple workers — overlapping write sets cause merge conflicts and
-  duplicated effort.
+`agent_type` names which subagent to spawn — pick from the agent types
+listed below this description (the registry templates the live list per
+turn so it always reflects what's actually available).
 
-User-defined agent types from the project's agent config are also valid.
+Pick the subagent that matches the work. Match the description to the
+task; if no listed subagent is a clean fit, do the work locally instead
+of forcing one in.
 
 ## Cost
 
