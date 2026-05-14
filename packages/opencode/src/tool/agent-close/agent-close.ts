@@ -26,7 +26,9 @@ import DESCRIPTION from "./agent-close.txt"
 // before close. Codex multi_agents_spec.rs:465-477 spec.
 
 export const ID = "close_agent" as const
-export const PermissionKey = "close_agent" as const
+// Wave 3 (replace-bash-task-2026-05-15): per-call key collapsed onto "task"
+// (mirror of EDIT_TOOLS — see agent-spawn.ts comment).
+export const PermissionKey = "task" as const
 
 export const Parameters = Schema.Struct({
   target: Schema.String.annotate({

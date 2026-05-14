@@ -285,7 +285,7 @@ describe("tool.send_message", () => {
     ),
   )
 
-  it.live("ctx.ask is invoked with permission key 'send_message' and target as pattern", () =>
+  it.live("ctx.ask is invoked with permission key 'task' and target as pattern (Wave 3 collapsed onto task)", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         yield* installNeverLoop
@@ -304,6 +304,12 @@ describe("tool.send_message", () => {
         yield* def.execute({ target: "ask_target", message: "ping" }, ctx)
 
         expect(record.asks.length).toBe(1)
+        // PermissionKey moved from "send_message" → "task" in Wave 3 (mirror
+        // of EDIT_TOOLS where edit/write/apply_patch all consult "edit").
+        // Saved `permission.task: { ... }` rules now gate this surface.
+        // Literal-string assertion guards against accidental revert of the
+        // constant; stays RED if PermissionKey drifts back.
+        expect(record.asks[0].permission).toBe("task")
         expect(record.asks[0].permission).toBe(PermissionKey)
         expect(record.asks[0].patterns).toEqual(["ask_target"])
       }),

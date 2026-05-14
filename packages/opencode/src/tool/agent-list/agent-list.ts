@@ -26,7 +26,9 @@ import { AgentToolContext } from "../agents/current-path"
 import DESCRIPTION from "./agent-list.txt"
 
 export const ID = "list_agents" as const
-export const PermissionKey = "list_agents" as const
+// Wave 3 (replace-bash-task-2026-05-15): per-call key collapsed onto "task"
+// (mirror of EDIT_TOOLS — see agent-spawn.ts comment).
+export const PermissionKey = "task" as const
 
 export const Parameters = Schema.Struct({
   path_prefix: Schema.optional(Schema.String).annotate({

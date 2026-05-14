@@ -320,13 +320,18 @@ export const layer: Layer.Layer<
     })
 
     // Mirror of describeTask for spawn_agent. Filter to subagent-eligible
-    // (mode !== "primary"), not hidden, and not deny-permissioned for
-    // spawn_agent. Built-ins yield `explore` + `general` only. User-defined
-    // subagent / all -mode agents flow through naturally.
+    // (mode !== "primary"), not hidden, and not deny-permissioned. Built-ins
+    // yield `explore` + `general` only. User-defined subagent / all -mode
+    // agents flow through naturally.
+    //
+    // Wave 3 (replace-bash-task-2026-05-15): filter consults the "task"
+    // permission key (was "spawn_agent"). Symmetric with describeTask
+    // immediately above. Saved `permission.task: { explore: deny }` rules
+    // now filter explore from BOTH tools' enumerations consistently.
     const describeSpawnAgent = Effect.fn("ToolRegistry.describeSpawnAgent")(function* (agent: Agent.Info) {
       const items = (yield* agents.list()).filter((item) => item.mode !== "primary" && item.hidden !== true)
       const filtered = items.filter(
-        (item) => Permission.evaluate("spawn_agent", item.name, agent.permission).action !== "deny",
+        (item) => Permission.evaluate("task", item.name, agent.permission).action !== "deny",
       )
       const list = filtered.toSorted((a, b) => a.name.localeCompare(b.name))
       const description = list

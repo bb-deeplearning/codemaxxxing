@@ -117,7 +117,11 @@ describe("tool.spawn_agent", () => {
         expect(typeof parsed.nickname).toBe("string")
         // ctx.ask was called once with the right shape.
         expect(record.asks.length).toBe(1)
-        expect(record.asks[0].permission).toBe("spawn_agent")
+        // Wave 3 collapse: PermissionKey moved from "spawn_agent" → "task"
+        // (mirror of EDIT_TOOLS where edit/write/apply_patch all consult
+        // "edit"). Saved `permission.task: { ... }` rules now gate this
+        // surface. Literal-string assertion guards revert.
+        expect(record.asks[0].permission).toBe("task")
         expect(Array.from(record.asks[0].patterns)).toEqual(["worker"])
         expect(Array.from(record.asks[0].always)).toEqual(["*"])
 

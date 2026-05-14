@@ -174,17 +174,35 @@ export const layer = Layer.effect(
                 // Wave 12 (codex parity): plan is read-only thinking mode. It
                 // already denies edit tools wildcard-wise; deny unified_exec
                 // (no persistent processes during planning) and every
-                // multi-agent v2 key. Plan continues to use the legacy `task`
-                // tool to spawn explorers in phase 1; switching plan to v2
-                // spawn is intentionally deferred to a future campaign per
-                // WAVE.md note 3.
+                // multi-agent v2 key.
                 exec_command: "deny",
+                // Per-friend deny rules retained for `Permission.evaluate`
+                // call sites (capabilityHints / per-call asks fired through
+                // the literal-key lookup). They became inert for
+                // `Permission.disabled`'s tool-list filter post-Wave-3 (which
+                // collapses onto "task"), but evaluate's literal-key match
+                // still consults them so e.g. system-prompt capability hints
+                // see "spawn_agent: deny" and suppress the MULTI_AGENT_ROOT
+                // fragment for plan.
                 spawn_agent: "deny",
                 send_message: "deny",
                 followup_task: "deny",
                 wait_agent: "deny",
                 list_agents: "deny",
                 close_agent: "deny",
+                // Wave 3 (replace-bash-task-2026-05-15): the v2 multi-agent
+                // tools' visibility is gated by `Permission.disabled` under
+                // the unified `task` key (mirror of EDIT_TOOLS' `edit` key).
+                // The per-friend `*_agent: deny` rules above no longer hit
+                // the disabled() filter (lookup uses "task" via
+                // MULTI_AGENT_TOOLS), so the only way to keep plan's "no
+                // spawning, no inter-agent messaging" semantics is the
+                // wildcard `task: deny` rule. This also denies the legacy
+                // `task` tool, but Wave 4 drops it from the model-visible
+                // builtin array anyway, and plan's codex-parity comment
+                // about "phase 1 uses task" was aspirational — no internal
+                // code path consumes the legacy task tool from plan today.
+                task: { "*": "deny" },
               }),
               user,
             ),
@@ -240,10 +258,32 @@ export const layer = Layer.effect(
                 // hand off follow-up work back to its spawner
                 // (`followup_task`), wait on a peer's result (`wait_agent`),
                 // and inspect the agent tree (`list_agents`).
+                //
+                // Per-friend rules retained for `Permission.evaluate` call
+                // sites — capabilityHints sees `send_message: allow` /
+                // `wait_agent: allow` and injects the multi-agent SUBAGENT
+                // fragment for explore. They became inert for
+                // `Permission.disabled`'s tool-list filter post-Wave-3
+                // (collapsed onto "task"), so the wildcard `task: ask` below
+                // re-enables visibility of the four coordination tools (and,
+                // as a knock-on, spawn_agent + close_agent — slight
+                // visibility regression vs pre-Wave-3 with the per-call ask
+                // remaining as the safety surface).
                 send_message: "allow",
                 followup_task: "allow",
                 wait_agent: "allow",
                 list_agents: "allow",
+                // Wave 3 (replace-bash-task-2026-05-15): the v2 multi-agent
+                // tools' visibility is gated by `Permission.disabled` under
+                // the unified `task` key. Explore's wildcard `*: deny`
+                // would otherwise wipe the entire group; `task: ask` overrides
+                // the wildcard for the task-key lookup so the four
+                // coordination tools (send_message / followup_task /
+                // wait_agent / list_agents) stay visible. Spawn_agent and
+                // close_agent also become visible — see comment block above.
+                // The per-call ask remains user-gated, mirroring the
+                // pre-campaign safety posture for first invocation.
+                task: "ask",
               }),
               user,
             ),

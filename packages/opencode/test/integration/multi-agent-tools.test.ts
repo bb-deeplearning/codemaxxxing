@@ -124,7 +124,9 @@ describe("integration: multi-agent v2 tools (spawn/send/list/wait/followup/close
           { message: "do work", task_name: "worker_a", agent_type: "explore" },
           rootCtx,
         )
-        expect(rootRecord.asks.at(-1)?.permission).toBe("spawn_agent")
+        // Wave 3 collapse: per-call permission key is "task" (was "spawn_agent")
+        // — mirror of EDIT_TOOLS where edit/write/apply_patch all consult "edit".
+        expect(rootRecord.asks.at(-1)?.permission).toBe("task")
         const spawnPayload = JSON.parse(spawnRes.output)
         expect(spawnPayload.task_name).toBe("/root/worker_a")
         const childID = spawnRes.metadata.child_session_id as SessionID
@@ -140,7 +142,7 @@ describe("integration: multi-agent v2 tools (spawn/send/list/wait/followup/close
           { target: "worker_a", message: "fyi: data file landed" },
           rootCtx,
         )
-        expect(rootRecord.asks.at(-1)?.permission).toBe("send_message")
+        expect(rootRecord.asks.at(-1)?.permission).toBe("task") // Wave 3: was "send_message"
         expect(sendRes.metadata.queued).toBe(true)
         const afterSendDrain = yield* control.drainMailbox(childID)
         expect(afterSendDrain).toHaveLength(1)
@@ -150,7 +152,7 @@ describe("integration: multi-agent v2 tools (spawn/send/list/wait/followup/close
 
         // 3. list_agents: root sees itself + worker_a
         const listRes = yield* list.execute({}, rootCtx)
-        expect(rootRecord.asks.at(-1)?.permission).toBe("list_agents")
+        expect(rootRecord.asks.at(-1)?.permission).toBe("task") // Wave 3: was "list_agents"
         const listPayload = JSON.parse(listRes.output)
         const names = listPayload.agents.map((a: { agent_name: string }) => a.agent_name)
         expect(names).toContain("/root")
@@ -172,7 +174,7 @@ describe("integration: multi-agent v2 tools (spawn/send/list/wait/followup/close
           { target: "worker_a", message: "next: summarise the file" },
           rootCtx,
         )
-        expect(rootRecord.asks.at(-1)?.permission).toBe("followup_task")
+        expect(rootRecord.asks.at(-1)?.permission).toBe("task") // Wave 3: was "followup_task"
         expect(followupRes.metadata.trigger_turn).toBe(true)
         const afterFollowupDrain = yield* control.drainMailbox(childID)
         expect(afterFollowupDrain).toHaveLength(1)
@@ -181,7 +183,7 @@ describe("integration: multi-agent v2 tools (spawn/send/list/wait/followup/close
 
         // 6. close_agent: root shuts worker_a down
         const closeRes = yield* close.execute({ target: "worker_a" }, rootCtx)
-        expect(rootRecord.asks.at(-1)?.permission).toBe("close_agent")
+        expect(rootRecord.asks.at(-1)?.permission).toBe("task") // Wave 3: was "close_agent"
         const closePayload = JSON.parse(closeRes.output)
         expect(closePayload.previous_status).toBeDefined()
         // After close, listAgents no longer reports the child.

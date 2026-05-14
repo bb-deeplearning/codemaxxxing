@@ -60,7 +60,7 @@ describe("close_agent constants", () => {
     expect(ID).toBe("close_agent")
   })
 
-  test("PermissionKey equals 'close_agent'", () => {
-    expect(PermissionKey).toBe("close_agent")
+  test("PermissionKey equals 'task' (Wave 3 collapsed)", () => {
+    expect(PermissionKey).toBe("task")
   })
 })

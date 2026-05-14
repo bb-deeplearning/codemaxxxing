@@ -317,6 +317,32 @@ const EDIT_TOOLS = ["edit", "write", "apply_patch"]
 // Reference: PERMISSION_MAPPING.md § "Post-Wave-2 mapping (bash group)".
 export const SHELL_TOOLS = ["bash", "exec_command", "write_stdin"]
 
+// Wave 3 (replace-bash-task-2026-05-15): seven tool IDs share permission
+// key `task` — the legacy `task` tool plus the six v2 multi-agent tools
+// (`spawn_agent`, `send_message`, `followup_task`, `wait_agent`,
+// `list_agents`, `close_agent`). Saved `permission.task: { "*": "deny" }`
+// rules transparently strip ALL SEVEN from the model's visible tool list —
+// same shape as EDIT_TOOLS for the edit family. `session/llm.ts:resolveTools`
+// also consults this set to honour `tools.task === false` as a group disable.
+//
+// The legacy `task` ID stays in this group even after Wave 4 drops it from
+// the registry's builtin array, so any user-config or agent-config rule that
+// says `tools.task = false` continues to disable EVERY tool in the group
+// (including the still-listed v2 tools). Without `task` in the group, a
+// user-config saying `tools.task = false` would only hide the (already-
+// hidden) legacy `task`, defeating the BC promise. See WAVE.md gotcha 5.
+//
+// Reference: PERMISSION_MAPPING.md § "Post-Wave-3 mapping (task group)".
+export const MULTI_AGENT_TOOLS = [
+  "task",
+  "spawn_agent",
+  "send_message",
+  "followup_task",
+  "wait_agent",
+  "list_agents",
+  "close_agent",
+]
+
 export function disabled(tools: string[], ruleset: Ruleset): Set<string> {
   const result = new Set<string>()
   for (const tool of tools) {
@@ -324,7 +350,9 @@ export function disabled(tools: string[], ruleset: Ruleset): Set<string> {
       ? "edit"
       : SHELL_TOOLS.includes(tool)
         ? "bash"
-        : tool
+        : MULTI_AGENT_TOOLS.includes(tool)
+          ? "task"
+          : tool
     const rule = ruleset.findLast((rule) => Wildcard.match(permission, rule.permission))
     if (!rule) continue
     if (rule.pattern === "*" && rule.action === "deny") result.add(tool)

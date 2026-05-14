@@ -17,7 +17,13 @@ import { AgentToolContext } from "../agents/current-path"
 import DESCRIPTION from "./agent-spawn.txt"
 
 export const ID = "spawn_agent" as const
-export const PermissionKey = "spawn_agent" as const
+// Wave 3 (replace-bash-task-2026-05-15): per-call permission key collapsed
+// onto "task" — mirror of EDIT_TOOLS where edit/write/apply_patch all
+// consult "edit". Saved `permission.task: { ... }` rules transparently
+// gate spawn_agent (and the 5 v2 friend tools). Saved per-friend rules
+// (`permission.spawn_agent: ...`) silently stop matching; documented in
+// BACKWARD_COMPAT.md § "Out of scope" + Wave 6 spec doc.
+export const PermissionKey = "task" as const
 
 export const Parameters = Schema.Struct({
   message: Schema.String.annotate({

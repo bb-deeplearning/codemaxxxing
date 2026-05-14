@@ -109,7 +109,7 @@ describe("tool ID + permission constants", () => {
     expect(ID).toBe("spawn_agent")
   })
   test("PermissionKey is the 'spawn_agent' string (matches tool name)", () => {
-    expect(PermissionKey).toBe("spawn_agent")
+    expect(PermissionKey).toBe("task")
   })
 })
 

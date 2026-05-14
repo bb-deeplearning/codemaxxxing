@@ -309,7 +309,7 @@ describe("tool.followup_task", () => {
     ),
   )
 
-  it.live("ctx.ask is called with permission key 'followup_task' and patterns=[target]", () =>
+  it.live("ctx.ask is called with permission key 'task' (Wave 3 collapsed) and patterns=[target]", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         yield* installNeverLoop
@@ -330,6 +330,9 @@ describe("tool.followup_task", () => {
         yield* def.execute({ target: "worker", message: "go" }, ctx)
 
         expect(record.asks).toHaveLength(1)
+        // Wave 3: per-call key collapsed onto "task". Saved `permission.task`
+        // rules gate followup_task. Literal assertion guards revert.
+        expect(record.asks[0].permission).toBe("task")
         expect(record.asks[0].permission).toBe(PermissionKey)
         expect(Array.from(record.asks[0].patterns)).toEqual(["worker"])
         expect(Array.from(record.asks[0].always)).toEqual(["*"])

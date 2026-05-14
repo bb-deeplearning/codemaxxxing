@@ -10,7 +10,7 @@ import { MessageID, SessionID } from "@/session/schema"
 import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
 import type { Permission } from "@/permission"
-import { AgentCloseTool } from "./agent-close"
+import { AgentCloseTool, PermissionKey } from "./agent-close"
 import type * as Tool from "../tool"
 import { disposeAllInstances, provideTmpdirInstance } from "../../../test/fixture/fixture"
 import { testEffect } from "../../../test/lib/effect"
@@ -270,7 +270,7 @@ describe("close_agent tool", () => {
     ),
   )
 
-  it.live("ctx.ask is called with permission key 'close_agent' and patterns [target]", () =>
+  it.live("ctx.ask is called with permission key 'task' (Wave 3 collapsed) and patterns [target]", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         yield* installNeverLoop
@@ -288,7 +288,9 @@ describe("close_agent tool", () => {
         yield* def.execute({ target: "asked" }, ctx)
 
         expect(record.asks).toHaveLength(1)
-        expect(record.asks[0]?.permission).toBe("close_agent")
+        // Wave 3 collapse: was "close_agent", now "task".
+        expect(record.asks[0]?.permission).toBe("task")
+        expect(record.asks[0]?.permission).toBe(PermissionKey)
         expect(record.asks[0]?.patterns).toEqual(["asked"])
       }),
     ),

@@ -16,7 +16,9 @@ import { InterAgentCommunication } from "@/agent/inter-agent-communication"
 // not a worker, so it cannot be assigned tasks.
 
 export const ID = "followup_task" as const
-export const PermissionKey = "followup_task" as const
+// Wave 3 (replace-bash-task-2026-05-15): per-call key collapsed onto "task"
+// (mirror of EDIT_TOOLS — see agent-spawn.ts comment).
+export const PermissionKey = "task" as const
 
 export const Parameters = Schema.Struct({
   target: Schema.String.annotate({

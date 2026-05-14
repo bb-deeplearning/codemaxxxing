@@ -25,7 +25,10 @@ import { InterAgentCommunication } from "@/agent/inter-agent-communication"
 //      output channel — the model can read the failure and adjust.
 
 export const ID = "send_message" as const
-export const PermissionKey = "send_message" as const
+// Wave 3 (replace-bash-task-2026-05-15): per-call key collapsed onto "task"
+// (mirror of EDIT_TOOLS — see agent-spawn.ts comment). The pattern axis
+// (target) is unchanged.
+export const PermissionKey = "task" as const
 
 export const Parameters = Schema.Struct({
   target: Schema.String.annotate({

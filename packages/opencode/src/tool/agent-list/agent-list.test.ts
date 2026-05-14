@@ -292,7 +292,7 @@ describe("tool.list_agents", () => {
     ),
   )
 
-  it.live("ctx.ask is invoked with permission key 'list_agents'", () =>
+  it.live("ctx.ask is invoked with permission key 'task' (Wave 3 collapsed onto task)", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         yield* installNeverLoop
@@ -301,6 +301,8 @@ describe("tool.list_agents", () => {
         const { ctx, record } = makeCtx(root.id)
         yield* def.execute({}, ctx)
         expect(record.asks.length).toBe(1)
+        // Wave 3 collapse: was "list_agents", now "task".
+        expect(record.asks[0].permission).toBe("task")
         expect(record.asks[0].permission).toBe(PermissionKey)
       }),
     ),

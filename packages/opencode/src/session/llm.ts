@@ -13,7 +13,7 @@ import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
 import { Flag } from "@opencode-ai/core/flag/flag"
-import { Permission, SHELL_TOOLS } from "@/permission"
+import { Permission, MULTI_AGENT_TOOLS, SHELL_TOOLS } from "@/permission"
 import { PermissionID } from "@/permission/schema"
 import { Bus } from "@/bus"
 import { Wildcard } from "@/util/wildcard"
@@ -456,11 +456,19 @@ function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" 
   // (bash + exec_command + write_stdin) — same intent as the legacy
   // single-tool toggle, expanded across the new IDs that share permission
   // key `bash`. Mirrors EDIT_TOOLS' implicit grouping in Permission.disabled.
+  //
+  // Wave 3: same pattern for `tools.task === false` over MULTI_AGENT_TOOLS
+  // (legacy task + 6 v2 multi-agent tools that all share permission key
+  // `task` post-collapse). The legacy task ID stays in the group even after
+  // Wave 4 drops it from the registry, so user toggles continue to act on
+  // the whole group rather than the (already-hidden) singleton.
   const userTools = input.user.tools ?? {}
   const shellGroupDisabled = userTools.bash === false
+  const taskGroupDisabled = userTools.task === false
   return Record.filter(input.tools, (_, k) => {
     if (userTools[k] === false) return false
     if (shellGroupDisabled && SHELL_TOOLS.includes(k)) return false
+    if (taskGroupDisabled && MULTI_AGENT_TOOLS.includes(k)) return false
     return !disabled.has(k)
   })
 }

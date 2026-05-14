@@ -86,6 +86,6 @@ describe("list_agents tool ID + permission constants", () => {
   })
 
   test("PermissionKey matches the tool name (per MESSAGE_SHAPES.md convention)", () => {
-    expect(PermissionKey).toBe("list_agents")
+    expect(PermissionKey).toBe("task")
   })
 })

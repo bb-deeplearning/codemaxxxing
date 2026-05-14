@@ -94,7 +94,7 @@ describe("send_message tool ID + permission constants", () => {
   })
 
   test("PermissionKey matches the tool name (per MESSAGE_SHAPES.md convention)", () => {
-    expect(PermissionKey).toBe("send_message")
+    expect(PermissionKey).toBe("task")
   })
 
   test("AgentSendTool exposes the same id under .id for the tool registry", () => {

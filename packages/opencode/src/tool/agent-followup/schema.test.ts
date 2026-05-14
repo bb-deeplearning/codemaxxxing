@@ -93,7 +93,7 @@ describe("followup_task tool ID + permission constants", () => {
   })
 
   test("PermissionKey matches the tool name (per MESSAGE_SHAPES.md convention)", () => {
-    expect(PermissionKey).toBe("followup_task")
+    expect(PermissionKey).toBe("task")
   })
 
   test("AgentFollowupTool exposes the same id under .id for the tool registry", () => {

@@ -1,0 +1,27 @@
+{
+  "captured_at": "2026-05-14T22:06:04.603Z",
+  "git_sha": "c22bd1147",
+  "bun_version": "1.3.13",
+  "metrics": {
+    "spawn_agent.spawn": {
+      "label": "spawn_agent.spawn",
+      "samples": 20,
+      "p50": 668458,
+      "p95": 1064708,
+      "p99": 1092042,
+      "min": 587959,
+      "max": 1092042,
+      "mean": 713847.85
+    },
+    "permission.disabled": {
+      "label": "permission.disabled",
+      "samples": 500,
+      "p50": 63458,
+      "p95": 70083,
+      "p99": 89417,
+      "min": 59125,
+      "max": 129542,
+      "mean": 64588.49
+    }
+  }
+}

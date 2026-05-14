@@ -84,7 +84,7 @@ describe("wait_agent tool ID + permission constants", () => {
   })
 
   test("PermissionKey matches the tool name (per MESSAGE_SHAPES.md convention)", () => {
-    expect(PermissionKey).toBe("wait_agent")
+    expect(PermissionKey).toBe("task")
   })
 
   test("AgentWaitTool exposes the same id under .id", () => {

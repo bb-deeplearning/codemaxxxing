@@ -319,7 +319,7 @@ describe("tool.wait_agent — validation", () => {
     ),
   )
 
-  it.live("ctx.ask is invoked with permission key 'wait_agent'", () =>
+  it.live("ctx.ask is invoked with permission key 'task' (Wave 3 collapsed onto task)", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         yield* installNeverLoop
@@ -335,6 +335,8 @@ describe("tool.wait_agent — validation", () => {
         const { ctx, record } = makeCtx(child.thread_id)
         yield* def.execute({ timeout_ms: 1_000 }, ctx)
         expect(record.asks.length).toBe(1)
+        // Wave 3 collapse: was "wait_agent", now "task".
+        expect(record.asks[0].permission).toBe("task")
         expect(record.asks[0].permission).toBe(PermissionKey)
       }),
     ),

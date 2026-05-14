@@ -30,7 +30,9 @@ import DESCRIPTION from "./agent-wait.txt"
 import { DEFAULT_WAIT_TIMEOUT_MS, clampWaitTimeout } from "./constants"
 
 export const ID = "wait_agent" as const
-export const PermissionKey = "wait_agent" as const
+// Wave 3 (replace-bash-task-2026-05-15): per-call key collapsed onto "task"
+// (mirror of EDIT_TOOLS — see agent-spawn.ts comment).
+export const PermissionKey = "task" as const
 
 export const Parameters = Schema.Struct({
   // Codex's WaitArgs uses i64 — the >0 check happens in the handler body so

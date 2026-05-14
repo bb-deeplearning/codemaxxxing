@@ -51,6 +51,7 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | Hoisting `Config.get()` out of `Tool.define`'s inner gen | `instancestate-bound-config-cannot-yield-at-layer-init` |
 | Re-measuring a baseline metric whose original capture used small `samples` | `bench-best-of-n-when-baseline-was-single-shot` |
 | Writing a permission-deny e2e test | `permission-disabled-removes-tool-from-active-set` |
+| Adding a tool to an existing permission group (SHELL_TOOLS / MULTI_AGENT_TOOLS / EDIT_TOOLS) | `permission-key-collapse-needs-dual-write-evaluate-vs-disabled` |
 | Asserting forbidden words against tool description prose | `word-boundary-regex-vs-prose-collisions` |
 | Tightening a Schema field from optional → required | `bug-3-fix-left-test-files-with-stale-required-shape` |
 | Porting concepts from another codebase (Codex/etc.) | `codex-role-vocabulary-imported-verbatim` |
@@ -121,6 +122,7 @@ Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offs
 - L1140 `permission-fixture-order-rule-must-precede-specific-via-findlast` — fixtures with `*: ask` AFTER `git *: allow` produce ask, NOT allow; findLast picks the LAST match.
 - L1170 `instancestate-bound-config-cannot-yield-at-layer-init` — yielding `config.get()` in `Tool.define`'s OUTER gen crashes with `instance: No context found`. Move to inner gen (init body) where Instance.current is bound.
 - L1200 `bench-best-of-n-when-baseline-was-single-shot` — frozen baselines captured with `samples: 20` have `p99 == max`, so single re-runs blow the 15% budget on noise. Use best-of-N over coherent runs.
+- L1234 `permission-key-collapse-needs-dual-write-evaluate-vs-disabled` — collapsing N tool IDs onto a group key (EDIT_TOOLS / SHELL_TOOLS / MULTI_AGENT_TOOLS) means `Permission.disabled` and `Permission.evaluate` use different lookup keys; built-in agent rules in `agent.ts` need DUAL-WRITE (per-friend rules + group-key rule) to keep both paths working.
 
 ### ID brand coercion
 - L818 `session-id-descending-not-make-for-fixture-string-coercion` — use `<ID>.descending(string)` / `.ascending(string)`, not `.make(string)`, when wrapping plain fixture strings.
@@ -1230,5 +1232,74 @@ Tool.define(id, Effect.gen(function* () {
 The cost of yielding `config.get()` ONCE per `init()` (per Instance materialization) is amortized; per-call yields in `execute` were the actual hot-path overhead.
 **Why:** Service injection (`yield* Config.Service`) is layer-time-safe — it just resolves the service stub. Method invocations (`config.get()`) execute the service's INTERNAL effect, which can include `InstanceState.get` reads that require `Instance.current`. The error surfaces deep in the call chain because the failing read is several frames down. Mirror of `agentcontrol-providerref-must-live-in-layer-not-instancestate` from the OTHER direction (that one says "shared state at layer scope, per-instance at InstanceState"; this one says "InstanceState-reads at instance scope, NOT at layer init").
 **See:** `packages/opencode/src/tool/process/exec-command.ts` (Wave 2 of replace-bash-task-2026-05-15) — `cfg = yield* config.get()` placed in the INNER `Effect.gen`. Related: `agentcontrol-providerref-must-live-in-layer-not-instancestate`, `bench-effect-runpromise-loses-instance-in-async-callback`.
+
+---
+
+### `permission-key-collapse-needs-dual-write-evaluate-vs-disabled`
+
+**Severity:** correctness-bug (silent built-in agent rules become inert)
+**When:** Collapsing N tool IDs onto a single permission key via the SHELL_TOOLS / MULTI_AGENT_TOOLS / EDIT_TOOLS group pattern in `permission/index.ts:disabled`. `Permission.disabled` consults the GROUPED key; `Permission.evaluate` (used by `permitted` in `session/system.ts:capabilityHints` and by per-call `ctx.ask` flows) consults the LITERAL key. Built-in agent rules in `src/agent/agent.ts` that target individual tool IDs need DUAL-WRITE to keep both call sites working.
+
+**Symptom:**
+- Plan agent's `spawn_agent: "deny"` rule no longer hides spawn_agent from the model's tool list (Permission.disabled lookup uses "task" via MULTI_AGENT_TOOLS, sees no `task: deny`, leaves spawn_agent visible).
+- Explore agent's per-friend `send_message: "allow"` etc. rules no longer keep those tools visible (Permission.disabled uses "task" lookup, sees explore's wildcard `*: deny`, removes the entire group from explore).
+- BUT the `permitted` check in `system.ts:capabilityHints` still uses the literal key — so removing the per-friend rules silently breaks `system-prompt-regression.test.ts`'s explore-agent fragment-injection assertion.
+
+**Fix:** Keep BOTH the per-friend rules (for evaluate / capabilityHints / per-call asks) AND add the group-key rule (for Permission.disabled). They're not redundant — they target different lookup paths.
+
+```ts
+// src/agent/agent.ts — plan
+permission: Permission.merge(
+  defaults,
+  Permission.fromConfig({
+    // Per-friend deny rules: evaluate("spawn_agent", "*", ruleset) returns
+    // deny → permitted("spawn_agent") false → no MULTI_AGENT_ROOT fragment
+    // injected. Per-call ctx.ask payloads (where they happen) hit the
+    // literal-key match too.
+    spawn_agent: "deny",
+    send_message: "deny",
+    followup_task: "deny",
+    wait_agent: "deny",
+    list_agents: "deny",
+    close_agent: "deny",
+    // Group-key deny: Permission.disabled looks up under "task" (via
+    // MULTI_AGENT_TOOLS group); finds task: deny → removes ALL 6 v2
+    // tools (and legacy task) from the model's visible tool list.
+    task: { "*": "deny" },
+  }),
+)
+
+// src/agent/agent.ts — explore (the inverse: re-enable visibility)
+permission: Permission.merge(
+  defaults,
+  Permission.fromConfig({
+    "*": "deny",
+    // Per-friend allows: evaluate sees them → permitted("send_message")
+    // true → SUBAGENT fragment injected. Pre-Wave-3 these rules ALSO
+    // unblocked Permission.disabled; post-Wave-3 they no longer do
+    // (lookup uses "task" key).
+    send_message: "allow",
+    followup_task: "allow",
+    wait_agent: "allow",
+    list_agents: "allow",
+    // Group-key override: Permission.disabled looks up under "task";
+    // without this rule the wildcard `*: deny` above would propagate
+    // to the entire MULTI_AGENT_TOOLS group, hiding all 6 v2 tools
+    // from explore. `task: ask` overrides the wildcard for the
+    // task-key lookup so the 4 coordination tools stay visible (with
+    // per-call prompts as the safety surface).
+    task: "ask",
+  }),
+)
+```
+
+**Why:** `Permission.disabled(toolIDs, ruleset)` walks each tool ID through the EDIT_TOOLS / SHELL_TOOLS / MULTI_AGENT_TOOLS group mapping to derive a `permission` key, then `findLast`s on that key. The result is "is this tool wildcard-denied for the GROUP?" `Permission.evaluate(perm, pattern, ruleset)` matches the literal `perm` against `rule.permission` via `Wildcard.match` — which means a literal `"spawn_agent"` query does NOT match a `"task"` rule (and vice versa). The two functions have different semantics by design (the disabled() group rule makes user toggles act on the group; the evaluate() literal-key match preserves fine-grained per-tool decisions for callers who want them). The interaction surfaces when built-in agent rules use literal-key denies — they only block one of the two paths post-collapse.
+
+**Rule of thumb:** When collapsing tool keys onto a group:
+- **User-saved configs** (BC matrix): documented as "out of scope" — users restate intent under the group key.
+- **Built-in agent rules in `src/agent/agent.ts`**: dual-write the group key rule alongside the per-tool rules. The per-tool rules become decorative for `Permission.disabled` but still drive `Permission.evaluate` callers.
+- **Per-call `ctx.ask` payloads**: change the literal `permission:` field once (in the tool's `PermissionKey` constant); `Permission.disabled` already routes through the group key; `Permission.ask` evaluates with the same key the ctx.ask carries, so the per-call ask resolves consistently.
+
+**See:** `packages/opencode/src/agent/agent.ts` (Wave 3 of replace-bash-task-2026-05-15) — plan and explore agents both dual-write per-friend + group-key rules. Related: `permission-fixture-order-rule-must-precede-specific-via-findlast` (the `findLast` semantics that shape both disabled() and evaluate()).
 
 ---

@@ -1,17 +1,27 @@
 // Wave 14 e2e — permission denial.
 //
-// Scenario: a session whose permission ruleset denies `spawn_agent` runs
-// the model loop. Because the deny rule has a wildcard pattern, the
-// resolveTools step in `LLM.stream` removes `spawn_agent` from the active
-// tool set entirely — the model never sees it as an option. When the
-// (stubbed) model nonetheless tries to call it, the AI SDK routes the
-// call through the `invalid` tool wrapper which surfaces "tool not
-// available" back to the model. The model emits a follow-up text and the
-// loop exits cleanly. No AgentControl child is ever created.
+// Scenario: a session whose permission ruleset denies the entire `task`
+// group runs the model loop. Because the deny rule has a wildcard pattern,
+// the resolveTools step in `LLM.stream` removes every MULTI_AGENT_TOOLS
+// entry (legacy `task` + the six v2 tools) from the active set — the model
+// never sees them as options. When the (stubbed) model nonetheless tries
+// to call `spawn_agent`, the AI SDK routes the call through the `invalid`
+// tool wrapper which surfaces "tool not available" back to the model. The
+// model emits a follow-up text and the loop exits cleanly. No
+// AgentControl child is ever created.
+//
+// Wave 3 (replace-bash-task-2026-05-15): the old test denied
+// `permission.spawn_agent: { "*": "deny" }` directly. After the v2
+// permission key collapse, that per-friend key no longer gates
+// Permission.disabled — the deny must target the unified `task` key
+// (mirror of how denying `permission.edit: { "*": "deny" }` strips the
+// whole EDIT_TOOLS group). Documented in BACKWARD_COMPAT.md
+// "Out of scope" + Wave 6 spec doc.
 //
 // What this exercises end-to-end:
 //   - Permission.disabled removes wildcard-deny tools from the model's
-//     active set (`session/llm.ts:451`)
+//     active set (`session/llm.ts:451`); MULTI_AGENT_TOOLS group routing
+//     in `permission/index.ts:disabled`
 //   - InvalidTool wraps unknown tool calls without crashing the loop
 //     (`tool/invalid.ts`)
 //   - Permission.merge(agent.permission, session.permission) honors
@@ -41,15 +51,16 @@ describe("e2e: permission denial (spawn_agent denied via ruleset; loop continues
           const sessions = yield* Session.Service
           const control = yield* AgentControl.Service
 
-          // Session permission rule denies spawn_agent specifically. The
-          // build agent's defaults allow it, but session permission is
-          // merged on top of agent permission and wins for the matching
-          // permission key. The wildcard pattern triggers the
-          // resolveTools-side filter that removes the tool entirely.
+          // Session permission rule denies the entire MULTI_AGENT_TOOLS
+          // group via the unified `task` key (Wave 3 collapse). Build's
+          // defaults allow it; session permission merges on top and wins
+          // for the matching permission key. The wildcard pattern triggers
+          // the resolveTools-side filter that removes spawn_agent (and the
+          // 5 friend tools + legacy task) entirely.
           const chat = yield* sessions.create({
             title: "deny-spawn",
             permission: [
-              { permission: "spawn_agent", pattern: "*", action: "deny" },
+              { permission: "task", pattern: "*", action: "deny" },
             ],
           })
 
@@ -88,12 +99,15 @@ describe("e2e: permission denial (spawn_agent denied via ruleset; loop continues
             const input = invalidTool.state.input as { tool?: string; error?: string }
             expect(input.tool).toBe("spawn_agent")
             expect(input.error).toContain("spawn_agent")
-            // The error message lists what tools ARE available — confirm
-            // the v2 surface is intact apart from spawn_agent.
-            expect(input.error).toContain("send_message")
-            expect(input.error).toContain("list_agents")
-            // And spawn_agent is not in the available list.
+            // Wave 3 collapse: the entire MULTI_AGENT_TOOLS group (legacy
+            // task + 6 v2 tools) is filtered when `task: deny` wildcards.
+            // Confirm none of the friends appear in the available list
+            // (they all share the same permission key now).
             expect(input.error).not.toMatch(/Available tools:.*?\bspawn_agent\b/)
+            expect(input.error).not.toMatch(/Available tools:.*?\bsend_message\b/)
+            expect(input.error).not.toMatch(/Available tools:.*?\blist_agents\b/)
+            // Tools outside the group remain available.
+            expect(input.error).toContain("read")
           }
 
           // The model's followup text persists in the transcript.
