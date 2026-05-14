@@ -3,7 +3,7 @@
 ## Attempt 1 — success
 
 **Session:** ses_1d7f5dad8ffelIuY1LFHsX2V9E
-**Commit:** (TBD — recorded post-commit)
+**Commit:** 7b4d4960d
 **Date:** 2026-05-15
 **Decision on entry:** first attempt
 

@@ -28,7 +28,7 @@ last_updated: 2026-05-15
 | Wave | Status   | Session | Commit | Notes |
 |------|----------|---------|--------|-------|
 | 0 | complete | ses_1d816765cffetHaX40einkd5VR | d27484e73 | Survey + invariant seed + behavioral baseline + integration test scaffold + 4 GOTCHAS appended |
-| 1 | complete | ses_1d7f5dad8ffelIuY1LFHsX2V9E | — | Scanner extracted to `tool/shell/scan.ts`; corpus diff + 64-concurrent + 1000-fuzz green; 1 GOTCHA added |
+| 1 | complete | ses_1d7f5dad8ffelIuY1LFHsX2V9E | 7b4d4960d | Scanner extracted to `tool/shell/scan.ts`; corpus diff + 64-concurrent + 1000-fuzz green; 1 GOTCHA added |
 | 2 | pending  | — | — | Wire scanner into `exec_command`, align permission key to `bash`, add SHELL_TOOLS category |
 | 3 | pending  | — | — | Align spawn_agent + 5 friends permission gating to `task`, add MULTI_AGENT_TOOLS category |
 | 4 | pending  | — | — | Drop `tool.shell` and `tool.task` from registry builtin array; plugin hook bridge |
