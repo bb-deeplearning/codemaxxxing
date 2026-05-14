@@ -1577,3 +1577,104 @@ The validation rule lives at `src/id/id.ts:41`: `if (!given.startsWith(prefixes[
 - Working example: `packages/opencode/test/backward-compat/legacy-session.test.ts` and `pty-existing-consumers.test.ts` both use `<ID>.descending(...)` / `<ID>.ascending(...)` for fixture-string-to-brand coercion.
 - Identifier validation: `packages/opencode/src/id/id.ts:36-45` (`generateID` accepts a `given` string and returns it after prefix validation).
 - Counter-example: `test/storage/json-migration.test.ts:222` uses `SessionID.make("ses_test456def")` — works only because that test predates the brand change; new code should follow the `.descending` / `.ascending` pattern.
+
+---
+
+## [permission-disabled-removes-tool-from-active-set] wildcard `permission: deny` strips the tool entirely from the model's active toolset; the tool's own `ctx.ask` denial flow never fires
+
+**Discovered in:** wave_14
+**Date:** 2026-05-14
+**Surfaces affected:** any wave or test that wants to verify a tool's *runtime denial flow* — wave 14 e2e permission-denial test; future tests of any single-tool deny rule against the model loop
+**Severity:** DX-trap (the test you wrote to verify "tool returns DeniedError" never reaches the tool — instead the AI SDK gets back "tool not available" because resolveTools removed it before the model could see it)
+
+### Symptom
+
+A test creates a session with `permission: [{ permission: "spawn_agent", pattern: "*", action: "deny" }]`, then queues a stubbed model response that calls `spawn_agent`. Expectation: the tool's execute body raises `Permission.DeniedError`, the loop maps it to a tool-result error part. Reality: the assistant message contains `tool: "invalid"` with `input.error: "Model tried to call unavailable tool 'spawn_agent'. Available tools: invalid, question, bash, ..."`. The model's call never reached spawn_agent's `execute`.
+
+### Root cause
+
+`packages/opencode/src/session/llm.ts:451` `resolveTools` calls `Permission.disabled(toolNames, mergedRuleset)` before handing tools to the AI SDK. `Permission.disabled` (`permission/index.ts:311-320`) walks every tool name; for any tool whose ruleset matches a `pattern: "*", action: "deny"` rule on its permission key, the tool is added to the disabled set and **removed from the active tool list passed to the model**. The model only sees tools that survived the filter.
+
+When the model still tries to call a removed tool (because the test stub scripted a tool_call for it), the AI SDK's `experimental_repairToolCall` (`llm.ts:343-363`) routes the call through the synthetic `invalid` tool with `input.error` listing what tools ARE available.
+
+### Fix pattern
+
+For an e2e test that needs to verify "the model sees the denial as a tool error and the loop continues":
+
+```ts
+// Assert the tool resolves to the `invalid` wrapper, not the original tool.
+const invalidTool = msgs
+  .filter((m) => m.info.role === "assistant")
+  .flatMap((m) => m.parts)
+  .find((p): p is MessageV2.ToolPart => p.type === "tool" && p.tool === "invalid")
+expect(invalidTool).toBeDefined()
+if (invalidTool && invalidTool.state.status === "completed") {
+  const input = invalidTool.state.input as { tool?: string; error?: string }
+  expect(input.tool).toBe("spawn_agent")
+  expect(input.error).toContain("spawn_agent")
+}
+```
+
+For a test that needs the tool's *own* denial path to fire (e.g. testing `acquireUseRelease` cleanup on Permission.DeniedError), use a non-wildcard pattern that doesn't match the wildcard-deny check inside `Permission.disabled`. Patterns like `pattern: "specific_value", action: "deny"` survive the filter; the tool stays available to the model; calling it triggers the real `ctx.ask` → `Permission.ask` → `DeniedError` path.
+
+### Reference
+
+- `packages/opencode/src/permission/index.ts:311-320` — `Permission.disabled` body
+- `packages/opencode/src/session/llm.ts:450-456` — `resolveTools` filter using `disabled`
+- `packages/opencode/src/session/llm.ts:343-363` — `experimental_repairToolCall` routing unknown tools through `invalid`
+- Working e2e test using the assertion shape above: `packages/opencode/test/e2e/permission-denial.test.ts`
+
+---
+
+## [e2e-perf-sibling-fanout-needs-median-of-n] e2e perf invariants that compare a single-session sample to a 4-sibling sample need median-of-N or they flake under a noisy test suite
+
+**Discovered in:** wave_14
+**Date:** 2026-05-14
+**Surfaces affected:** every wave-14-style e2e perf test that asserts a ratio between two timed samples (single-session vs N-sibling, baseline vs concurrent, etc.) — wave 14 `concurrent-perf-invariants.test.ts`; future waves adding any "sibling-fanout vs single-session" assertion
+**Severity:** DX-trap (test passes in isolation, fails when run as part of the full e2e suite — looks like a real regression but is just measurement variance)
+
+### Symptom
+
+A perf test that times a single `spawnAgent + llm.wait(1)` and a `spawnAgent x4 + llm.wait(5)` then asserts `fan / single < 1.6`. Run alone: ratio 0.6-1.0\u00d7, passes. Run as part of the full e2e suite (or after another perf test): ratio swings 1.5-2.5\u00d7, fails ~30% of the time. The implementation didn't change between runs — only the surrounding test pollution did.
+
+### Root cause
+
+A single-iteration timing measurement has no defense against background noise from preceding tests (in-flight test fixtures, Bun GC pressure, NodeJS HTTP server warmup, lingering test PTYs). The single-session baseline can land on a fast iteration (e.g. 10ms) and the fan-out on a slow iteration (e.g. 25ms) purely from scheduler variance, blowing the ratio. A single sample has no statistical power.
+
+The wave 4 GOTCHA `[opentui-render-bench-noise-needs-best-of-n]` documents the same issue for opentui benches; this generalization extends it to *any* e2e perf measurement built from a small number of timed samples.
+
+### Fix pattern
+
+Run N iterations of each phase, take the median, compare medians:
+
+```ts
+const ITERS = 5
+const singleSamples: number[] = []
+const fanSamples: number[] = []
+for (let it = 0; it < ITERS; it++) {
+  const t0 = Bun.nanoseconds()
+  yield* control.spawnAgent({ ..., task_name: `single_${it}` })
+  yield* llm.wait(/* cumulative */)
+  singleSamples.push(Bun.nanoseconds() - t0)
+
+  const tf = Bun.nanoseconds()
+  for (let i = 0; i < 4; i++) {
+    yield* control.spawnAgent({ ..., task_name: `fan_${it}_${i}` })
+  }
+  yield* llm.wait(/* cumulative */)
+  fanSamples.push(Bun.nanoseconds() - tf)
+}
+const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!
+const ratio = median(fanSamples) / median(singleSamples)
+expect(ratio).toBeLessThan(1.6)
+```
+
+Median-of-5 has been stable across 5+ consecutive runs of the full e2e suite where single-iteration ratios were flaky. For very noisy machines bump to median-of-10. Don't reach for "best-of-N" here — the FAN side is what we care about; picking the BEST fan iteration would understate the actual cost the model would experience under realistic conditions. Median is the right central tendency.
+
+The mailbox seq-watch wakeup test in the same file uses a different shape (100 samples, percentile-based assertion on p99) which is naturally noise-resistant — the percentile already throws out outliers. That pattern is preferred when you can afford 100+ samples; median-of-5 is the cheaper option for slow operations like spawn that you can't run hundreds of times.
+
+### Reference
+
+- Working example (median-of-5): `packages/opencode/test/e2e/concurrent-perf-invariants.test.ts` "4 sibling sessions running in parallel" test
+- Original failing shape (single iteration each): committed in wave-14 first attempt; flake rate ~30% in the full suite, 0% in isolation
+- Related: wave_4's `[opentui-render-bench-noise-needs-best-of-n]` — same problem class for opentui render benches; the pattern is "small-sample timing on a multi-tenant machine needs robust statistics"

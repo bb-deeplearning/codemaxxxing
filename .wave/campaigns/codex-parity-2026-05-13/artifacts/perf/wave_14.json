@@ -1,0 +1,27 @@
+{
+  "captured_at": "2026-05-14T01:55:46.996Z",
+  "git_sha": "3699a87e1",
+  "bun_version": "1.3.13",
+  "metrics": {
+    "e2e.concurrent.4sibling_vs_single": {
+      "label": "e2e.concurrent.4sibling_vs_single",
+      "samples": 10,
+      "p50": 192811542,
+      "p95": 522166834,
+      "p99": 522166834,
+      "min": 148705042,
+      "max": 522166834,
+      "mean": 252200116.8
+    },
+    "e2e.mailbox.wakeup_latency": {
+      "label": "e2e.mailbox.wakeup_latency",
+      "samples": 100,
+      "p50": 124083,
+      "p95": 291041,
+      "p99": 1362958,
+      "min": 94625,
+      "max": 4807542,
+      "mean": 197397.42
+    }
+  }
+}

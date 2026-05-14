@@ -8,17 +8,17 @@ plan_source: specs/codex-parity-handoff.html
 executor_agent: caveman
 executor_model: ""
 executor_variant: ""
-current_wave: 14
+current_wave: 15
 wave_status: pending
 failure_kind: ""
 retry_count: 0
 verify_count: 0
 user_question: ""
 loop_state: armed
-active_session_id: ses_1dc1ad967fferifotQdujyeJ3p
+active_session_id: ses_1dbf253f8ffeQcPCzBZticVzXP
 active_session_kind: executor
 total_waves: 16
-session_count: 14
+session_count: 15
 created: 2026-05-13
 last_updated: 2026-05-14
 ```
@@ -41,5 +41,5 @@ Six multi-agent v2 tools (spawn/send/followup/wait/list/close) + shared currentA
 | 11 | complete | ses_1dc4f7beeffeQVk1kqm9V8DUPf | 79b832071 | TUI subagent enhancements: subagent-status helper, SubagentFooterView (with status display), MailboxMessage component, dialog-subagent close action, all four touched files at 100% line coverage; multi-agent-render bench p50 4-sibling 1.30× single (cap 1.5×); helper+view / wrapper file split documented in GOTCHAS |
 | 12 | complete | ses_1dc2c9350ffe0wFF7JqqvODXfB | 95f150e7c | Permission integration + agent system prompt fragments: per-built-in overrides for all 7 new keys (build/general allow, plan/compaction/title/summary deny, explore allows coordination subset and denies destructive); SystemPrompt.capabilityHints helper gated on agent mode + permission, three new fragments (persistent-processes, multi-agent-root, multi-agent-subagent) injected post-skills; 100% line coverage on wave-touched code in agent.ts + system.ts; backward-compat test asserts compaction/title/summary receive zero hints |
 | 13 | complete | ses_1dc1ad967fferifotQdujyeJ3p | 68401b382 | Backward compat verification: 62 tests across 6 files (legacy-session schema+round-trip, legacy task tool envelope, pty consumer schemas, system prompt regression, plugin hooks, event replay), synthetic legacy-session.json fixture exercises every MessageV2.Part variant, 4 pre-existing test failures on codemaxxxing branch are not regressions, manual smoke procedure documented in test/backward-compat/manual-smoke.md, 2 new GOTCHAS appended (syncevent-publish runtime mismatch, ID-brand string coercion) |
-| 14 | pending  | — | — | E2E integration tests + final perf audit |
+| 14 | complete | ses_1dbf253f8ffeQcPCzBZticVzXP | — | E2E suite (10 scenario files + final perf audit): parallel-explorers, worker-pipeline, debate, observer, persistent-repl, long-running-server, cancellation-cascade, permission-denial, concurrent-perf-invariants (4-sibling ≤1.6× + mailbox p99 ≤5ms), memory-load (16 agents × 4 turns, RSS delta ≤160 MiB); 12 tests pass; perf-final-report.md aggregates baseline + 10 wave files, all baseline metrics within budget; 2 new GOTCHAS appended (permission wildcard-deny removes tools, e2e perf median-of-N) |
 | 15 | pending  | — | — | Spec doc at specs/codex-parity.md |
