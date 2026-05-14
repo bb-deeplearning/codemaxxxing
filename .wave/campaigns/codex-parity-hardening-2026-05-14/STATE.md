@@ -27,7 +27,7 @@ last_updated: 2026-05-14
 
 | Wave | Status   | Session | Commit | Notes |
 |------|----------|---------|--------|-------|
-| 0 | complete | ses_1dab5d497ffeqTcXWqL9ALEVZV | TBD | scaffold + bug-3 audit (B+X applied: enum-scoped regex + agent_type fixes); 2 new GOTCHAS |
+| 0 | complete | ses_1dab5d497ffeqTcXWqL9ALEVZV | 18932fbcd | scaffold + bug-3 audit (B+X applied: enum-scoped regex + agent_type fixes); 2 new GOTCHAS |
 | 1 | pending  | — | — | bug 1 — per-root scoping in AgentControl (TDD-first, 3 multi-root invariants) |
 | 2 | pending  | — | — | bug 2 — completion watcher (TDD-first, 3 completion invariants) |
 | 3 | pending  | — | — | audit pass — apply remaining invariants (cascade, drain-under-concurrent-sends, pty-cleanup) |

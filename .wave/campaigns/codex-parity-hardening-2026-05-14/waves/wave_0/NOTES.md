@@ -165,7 +165,7 @@ wording) — that IS a production change but a tiny cosmetic one.
 ## Attempt 2 — complete
 
 **Session:** ses_1dab5d497ffeqTcXWqL9ALEVZV (resumed via user reply)
-**Commit:** TBD
+**Commit:** 18932fbcd
 **Date:** 2026-05-14
 **Decision on entry:** continue (resumed after USER QUESTION; user picked B + X)
 
