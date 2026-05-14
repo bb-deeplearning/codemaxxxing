@@ -182,6 +182,7 @@ describe("tool.wait_agent — mailbox receives a message during the wait", () =>
                 trigger_turn: true,
                 sent_at: Date.now(),
               }),
+              root.id,
             )
           }),
         )

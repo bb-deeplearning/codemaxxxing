@@ -105,7 +105,7 @@ describe("e2e: permission denial (spawn_agent denied via ruleset; loop continues
           expect(followup).toBeDefined()
 
           // No AgentControl child got created — the registry is empty.
-          const live = (yield* control.listAgents(AgentPath.root()))
+          const live = (yield* control.listAgents(AgentPath.root(), chat.id))
             .map((entry) => entry.agent_name)
             .filter((n) => n !== String(AgentPath.root()))
           expect(live).toEqual([])

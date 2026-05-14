@@ -114,7 +114,7 @@ describe("e2e: parallel explorer fan-out", () => {
           yield* Effect.gen(function* () {
             const deadline = Date.now() + 5_000
             while (Date.now() < deadline) {
-              const list = yield* control.listAgents(AgentPath.root())
+              const list = yield* control.listAgents(AgentPath.root(), root.id)
               const children = list.filter(
                 (entry) => entry.agent_name !== String(AgentPath.root()),
               )

@@ -775,6 +775,7 @@ it.live("trigger_turn pending defers loop exit even when assistant has finished"
           trigger_turn: true,
           sent_at: 1,
         }),
+        chat.id,
       )
 
       // After the second model call, the child loop exits cleanly.
@@ -2157,9 +2158,10 @@ const ROOT_PATH = AgentPath.root()
 
 const liveAgentNamesUnder = Effect.fn("test.liveAgentNamesUnder")(function* (
   control: AgentControl.Interface,
+  senderID: SessionID,
   prefix = ROOT_PATH,
 ) {
-  const list = yield* control.listAgents(prefix)
+  const list = yield* control.listAgents(prefix, senderID)
   // strip the root entry; we only care about spawned children
   return list.map((entry) => entry.agent_name).filter((name) => name !== String(ROOT_PATH))
 })
@@ -2193,7 +2195,7 @@ it.live("legacy SubtaskPart (no protocol marker) routes through handleSubtask", 
       expect(subAgentMsg).toBeDefined()
 
       // No v2 child should exist in AgentControl — the legacy path bypasses it.
-      const live = yield* liveAgentNamesUnder(control)
+      const live = yield* liveAgentNamesUnder(control, chat.id)
       expect(live).toEqual([])
     }),
     { git: true, config: providerCfg },
@@ -2224,7 +2226,7 @@ it.live(
         expect(result.info.role).toBe("assistant")
 
         // A v2 child was spawned via AgentControl.
-        const live = yield* liveAgentNamesUnder(control)
+        const live = yield* liveAgentNamesUnder(control, chat.id)
         expect(live.length).toBe(1)
         expect(live[0]?.startsWith("/root/")).toBe(true)
 
@@ -2338,6 +2340,7 @@ it.live("mailbox drain inserts pending sibling messages as synthetic user parts"
           trigger_turn: true,
           sent_at: 1234,
         }),
+        chat.id,
       )
 
       // Stub the LLM with a single text response; the child's runLoop will
@@ -2451,7 +2454,7 @@ it.live(
         })
 
         // All three children are alive and reachable through listAgents.
-        const beforeNames = yield* liveAgentNamesUnder(control)
+        const beforeNames = yield* liveAgentNamesUnder(control, chat.id)
         expect(beforeNames.sort()).toEqual(["/root/a", "/root/b", "/root/c"])
 
         // Wait for all three children to actually start their model calls so
@@ -2469,7 +2472,7 @@ it.live(
         yield* Effect.gen(function* () {
           const deadline = Date.now() + 3_000
           while (Date.now() < deadline) {
-            const list = yield* control.listAgents(ROOT_PATH)
+            const list = yield* control.listAgents(ROOT_PATH, chat.id)
             const stillLive = list
               .filter((entry) => entry.agent_name !== String(ROOT_PATH))
               .filter(

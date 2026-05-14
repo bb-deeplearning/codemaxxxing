@@ -1,0 +1,37 @@
+{
+  "captured_at": "2026-05-14T08:18:07.829Z",
+  "git_sha": "afc21056b",
+  "bun_version": "1.3.13",
+  "metrics": {
+    "agentControl.spawnAgent": {
+      "label": "agentControl.spawnAgent",
+      "samples": 200,
+      "p50": 567166,
+      "p95": 1148959,
+      "p99": 4737459,
+      "min": 435417,
+      "max": 5726250,
+      "mean": 757671.665
+    },
+    "agentControl.sendInterAgentCommunication": {
+      "label": "agentControl.sendInterAgentCommunication",
+      "samples": 1000,
+      "p50": 102667,
+      "p95": 151875,
+      "p99": 589250,
+      "min": 77125,
+      "max": 8950583,
+      "mean": 144655.654
+    },
+    "agentControl.listAgents.populated": {
+      "label": "agentControl.listAgents.populated",
+      "samples": 1000,
+      "p50": 12042,
+      "p95": 20750,
+      "p99": 31334,
+      "min": 8166,
+      "max": 3889250,
+      "mean": 17278.381
+    }
+  }
+}

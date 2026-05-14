@@ -93,7 +93,7 @@ describe("close_agent tool", () => {
         const payload = JSON.parse(result.output)
         expect(payload.previous_status).toBeDefined()
 
-        const list = yield* control.listAgents(AgentPath.root())
+        const list = yield* control.listAgents(AgentPath.root(), root.id)
         expect(list.find((a) => a.agent_name === "/root/worker")).toBeUndefined()
       }),
     ),
@@ -118,7 +118,7 @@ describe("close_agent tool", () => {
         const payload = JSON.parse(result.output)
         expect(payload.previous_status).toBeDefined()
 
-        const list = yield* control.listAgents(AgentPath.root())
+        const list = yield* control.listAgents(AgentPath.root(), root.id)
         expect(list.find((a) => a.agent_name === "/root/abs")).toBeUndefined()
       }),
     ),
@@ -150,7 +150,7 @@ describe("close_agent tool", () => {
         const payload = JSON.parse(result.output)
         expect(payload.previous_status).toBeDefined()
 
-        const list = yield* control.listAgents(AgentPath.root())
+        const list = yield* control.listAgents(AgentPath.root(), root.id)
         expect(list.find((a2) => a2.agent_name === "/root/a/b")).toBeUndefined()
         // Sibling "a" still alive.
         expect(list.find((a2) => a2.agent_name === "/root/a")).toBeDefined()
@@ -187,7 +187,7 @@ describe("close_agent tool", () => {
         const { ctx } = makeCtx(root.id)
         yield* def.execute({ target: "a" }, ctx)
 
-        const list = yield* control.listAgents(AgentPath.root())
+        const list = yield* control.listAgents(AgentPath.root(), root.id)
         const names = list.map((l) => l.agent_name)
         expect(names.includes("/root/a")).toBe(false)
         expect(names.includes("/root/a/b")).toBe(false)

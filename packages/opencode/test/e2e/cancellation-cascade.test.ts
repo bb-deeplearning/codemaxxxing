@@ -67,7 +67,7 @@ describe("e2e: cancellation cascade (parent + 2 children + grandchild \u2192 can
           })
 
           // Confirm the tree is alive.
-          const beforeNames = (yield* control.listAgents(AgentPath.root()))
+          const beforeNames = (yield* control.listAgents(AgentPath.root(), chat.id))
             .map((entry) => entry.agent_name)
             .filter((n) => n !== String(AgentPath.root()))
             .sort()
@@ -88,7 +88,7 @@ describe("e2e: cancellation cascade (parent + 2 children + grandchild \u2192 can
           yield* Effect.gen(function* () {
             const deadline = Date.now() + 5_000
             while (Date.now() < deadline) {
-              const list = yield* control.listAgents(AgentPath.root())
+              const list = yield* control.listAgents(AgentPath.root(), chat.id)
               const stillLive = list
                 .filter((entry) => entry.agent_name !== String(AgentPath.root()))
                 .filter(

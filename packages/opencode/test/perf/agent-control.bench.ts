@@ -31,10 +31,10 @@ const wavePerfFile = path.resolve(
   "..",
   ".wave",
   "campaigns",
-  "codex-parity-2026-05-13",
+  "codex-parity-hardening-2026-05-14",
   "artifacts",
   "perf",
-  "wave_7.json",
+  "wave_1.json",
 )
 
 function gitSha(): string {
@@ -149,13 +149,13 @@ test("bench: agentControl.sendInterAgentCommunication", async () => {
         })
 
       // Warmup
-      for (let i = 0; i < 50; i++) yield* control.sendInterAgentCommunication(target.thread_id, comm(i))
+      for (let i = 0; i < 50; i++) yield* control.sendInterAgentCommunication(target.thread_id, comm(i), root.id)
       // Drain to keep the mailbox bounded.
       yield* control.drainMailbox(target.thread_id)
 
       for (let i = 0; i < 1000; i++) {
         const t0 = Bun.nanoseconds()
-        yield* control.sendInterAgentCommunication(target.thread_id, comm(i))
+        yield* control.sendInterAgentCommunication(target.thread_id, comm(i), root.id)
         samples.push(Bun.nanoseconds() - t0)
         if (i % 100 === 99) yield* control.drainMailbox(target.thread_id)
       }
@@ -186,11 +186,11 @@ test("bench: agentControl.listAgents.populated", async () => {
       }
 
       // Warmup
-      for (let i = 0; i < 50; i++) yield* control.listAgents(ROOT)
+      for (let i = 0; i < 50; i++) yield* control.listAgents(ROOT, root.id)
       // Measured
       for (let i = 0; i < 1000; i++) {
         const t0 = Bun.nanoseconds()
-        const out = yield* control.listAgents(ROOT)
+        const out = yield* control.listAgents(ROOT, root.id)
         samples.push(Bun.nanoseconds() - t0)
         // Sanity check on the first few iterations to ensure the populated
         // tree wasn't truncated.

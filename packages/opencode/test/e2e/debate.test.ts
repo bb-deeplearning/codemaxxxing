@@ -86,6 +86,8 @@ describe("e2e: debate (two siblings exchange via mailbox)", () => {
           ]
           for (let i = 0; i < messages.length; i++) {
             const m = messages[i]!
+            // Sender is the opposite agent of the target.
+            const senderID = m.to === pro.thread_id ? con.thread_id : pro.thread_id
             yield* control.sendInterAgentCommunication(
               m.to,
               new InterAgentCommunication({
@@ -95,6 +97,7 @@ describe("e2e: debate (two siblings exchange via mailbox)", () => {
                 trigger_turn: false, // false: pure delivery, no resume attempt
                 sent_at: i + 1,
               }),
+              senderID,
             )
           }
 

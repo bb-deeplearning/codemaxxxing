@@ -52,7 +52,7 @@ describe("currentAgentPath", () => {
 
         // Post-condition: root is now registered — resolveAgentReference
         // can resolve the root path back to this session id.
-        const resolved = yield* control.resolveAgentReference(AgentPath.root(), "/root")
+        const resolved = yield* control.resolveAgentReference(AgentPath.root(), "/root", root.id)
         expect(resolved).toBe(root.id)
       }),
     ),
@@ -96,7 +96,7 @@ describe("currentAgentPath", () => {
         expect(String(p1)).toBe("/root")
         expect(String(p2)).toBe("/root")
 
-        const resolved = yield* control.resolveAgentReference(AgentPath.root(), "/root")
+        const resolved = yield* control.resolveAgentReference(AgentPath.root(), "/root", root.id)
         expect(resolved).toBe(root.id)
       }),
     ),
@@ -113,7 +113,7 @@ describe("currentAgentPath", () => {
         expect(String(path)).toBe("/root")
 
         // The fake id is now bound to the root reference.
-        const resolved = yield* control.resolveAgentReference(AgentPath.root(), "/root")
+        const resolved = yield* control.resolveAgentReference(AgentPath.root(), "/root", fakeId)
         expect(resolved).toBe(fakeId)
       }),
     ),

@@ -420,6 +420,7 @@ describe("AgentControl.sendInterAgentCommunication", () => {
             trigger_turn: false,
             sent_at: 1,
           }),
+          root.id,
         )
         const drained = yield* control.drainMailbox(child.thread_id)
         expect(drained).toHaveLength(1)
@@ -453,6 +454,7 @@ describe("AgentControl.sendInterAgentCommunication", () => {
             trigger_turn: true,
             sent_at: 2,
           }),
+          root.id,
         )
 
         const after = yield* SubscriptionRef.get(seqRef)
@@ -465,7 +467,7 @@ describe("AgentControl.sendInterAgentCommunication", () => {
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         yield* installNeverLoop([])
-        yield* seedRoot()
+        const root = yield* seedRoot()
         const control = yield* AgentControl.Service
         const phantom = SessionID.descending()
 
@@ -479,6 +481,7 @@ describe("AgentControl.sendInterAgentCommunication", () => {
               trigger_turn: true,
               sent_at: 3,
             }),
+            root.id,
           ),
         )
         expect(Result.isFailure(result)).toBe(true)
@@ -511,6 +514,7 @@ describe("AgentControl.sendInterAgentCommunication", () => {
             trigger_turn: true,
             sent_at: 4,
           }),
+          root.id,
         )
         const meta = yield* control.getAgentMetadata(child.thread_id)
         expect(meta?.last_task_message).toBe("second task: do X")
@@ -539,7 +543,7 @@ describe("AgentControl.resolveAgentReference", () => {
           initial_message: ".",
         })
 
-        const resolved = yield* control.resolveAgentReference(path("/root/a"), "b")
+        const resolved = yield* control.resolveAgentReference(path("/root/a"), "b", root.id)
         expect(resolved).toBe(b.thread_id)
       }),
     ),
@@ -558,7 +562,7 @@ describe("AgentControl.resolveAgentReference", () => {
           initial_message: ".",
         })
 
-        const resolved = yield* control.resolveAgentReference(ROOT, "/root/abs")
+        const resolved = yield* control.resolveAgentReference(ROOT, "/root/abs", root.id)
         expect(resolved).toBe(child.thread_id)
       }),
     ),
@@ -571,7 +575,7 @@ describe("AgentControl.resolveAgentReference", () => {
         const root = yield* seedRoot()
         const control = yield* AgentControl.Service
 
-        const resolved = yield* control.resolveAgentReference(ROOT, "/root")
+        const resolved = yield* control.resolveAgentReference(ROOT, "/root", root.id)
         expect(resolved).toBe(root.id)
       }),
     ),
@@ -581,11 +585,11 @@ describe("AgentControl.resolveAgentReference", () => {
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         yield* installNeverLoop([])
-        yield* seedRoot()
+        const root = yield* seedRoot()
         const control = yield* AgentControl.Service
 
         const result = yield* Effect.result(
-          control.resolveAgentReference(ROOT, "missing"),
+          control.resolveAgentReference(ROOT, "missing", root.id),
         )
         expect(Result.isFailure(result)).toBe(true)
       }),
@@ -622,7 +626,7 @@ describe("AgentControl.closeAgent", () => {
 
         yield* control.closeAgent(a.thread_id)
 
-        const live = yield* control.listAgents(ROOT)
+        const live = yield* control.listAgents(ROOT, root.id)
         const remaining = live.map((l) => l.agent_name)
         expect(remaining.includes("/root/a")).toBe(false)
         expect(remaining.includes("/root/a/b")).toBe(false)
@@ -742,7 +746,7 @@ describe("AgentControl.listAgents", () => {
           initial_message: ".",
         })
 
-        const all = yield* control.listAgents(ROOT)
+        const all = yield* control.listAgents(ROOT, root.id)
         const names = all.map((l) => l.agent_name).sort()
         // Includes root + the two spawned children.
         expect(names).toEqual(["/root", "/root/x", "/root/y"])
@@ -781,7 +785,7 @@ describe("AgentControl.listAgents", () => {
           initial_message: ".",
         })
 
-        const filtered = yield* control.listAgents(ROOT, "/root/a")
+        const filtered = yield* control.listAgents(ROOT, root.id, "/root/a")
         const names = filtered.map((l) => l.agent_name).sort()
         expect(names).toEqual(["/root/a", "/root/a/x", "/root/a/y"])
       }),
@@ -801,7 +805,7 @@ describe("AgentControl.listAgents", () => {
           initial_message: ".",
         })
 
-        const all = yield* control.listAgents(ROOT, "/root")
+        const all = yield* control.listAgents(ROOT, root.id, "/root")
         const rootEntry = all.find((l) => l.agent_name === "/root")
         expect(rootEntry).toBeDefined()
         expect(rootEntry?.last_task_message).toBe("Main thread")
@@ -822,7 +826,7 @@ describe("AgentControl.listAgents", () => {
           initial_message: "do thing X",
         })
 
-        const list = yield* control.listAgents(ROOT)
+        const list = yield* control.listAgents(ROOT, root.id)
         const tracked = list.find((l) => l.agent_name === "/root/tracked")
         expect(tracked).toBeDefined()
         expect(tracked?.last_task_message).toBe("do thing X")
@@ -960,6 +964,7 @@ describe("AgentControl concurrency", () => {
                 trigger_turn: i % 2 === 0,
                 sent_at: i,
               }),
+              root.id,
             ),
           ),
           { concurrency: "unbounded" },
@@ -1151,6 +1156,7 @@ describe("AgentControl bus event emission", () => {
               trigger_turn: false,
               sent_at: 1,
             }),
+            root.id,
           )
           yield* Effect.sleep(20)
 
@@ -1392,8 +1398,11 @@ describe("AgentControl.resolveAgentReference edge cases", () => {
       Effect.gen(function* () {
         yield* installNeverLoop([])
         const control = yield* AgentControl.Service
-        // No seedRoot() — root is unregistered.
-        const result = yield* Effect.result(control.resolveAgentReference(ROOT, "/root"))
+        // No seedRoot() — root is unregistered. Pass a phantom sender id;
+        // slot lookup fails, surfacing the "root not registered" error.
+        const result = yield* Effect.result(
+          control.resolveAgentReference(ROOT, "/root", SessionID.descending()),
+        )
         expect(Result.isFailure(result)).toBe(true)
         if (Result.isFailure(result)) {
           expect(result.failure).toBeInstanceOf(AgentReferenceInvalidError)
@@ -1406,9 +1415,11 @@ describe("AgentControl.resolveAgentReference edge cases", () => {
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         yield* installNeverLoop([])
-        yield* seedRoot()
+        const root = yield* seedRoot()
         const control = yield* AgentControl.Service
-        const result = yield* Effect.result(control.resolveAgentReference(ROOT, "bad-name"))
+        const result = yield* Effect.result(
+          control.resolveAgentReference(ROOT, "bad-name", root.id),
+        )
         expect(Result.isFailure(result)).toBe(true)
         if (Result.isFailure(result)) {
           expect(result.failure).toBeInstanceOf(AgentReferenceInvalidError)
@@ -1464,6 +1475,7 @@ describe("AgentControl.hasPendingTriggerTurn", () => {
             trigger_turn: false,
             sent_at: 1,
           }),
+          root.id,
         )
         expect(yield* control.hasPendingTriggerTurn(child.thread_id)).toBe(false)
       }),
@@ -1570,6 +1582,287 @@ describe("AgentControl.cancelChildrenOf", () => {
         // Should not throw and should not affect any other agent.
         const exit = yield* Effect.exit(control.cancelChildrenOf(stranger.id))
         expect(exit._tag).toBe("Success")
+      }),
+    ),
+  )
+})
+
+// Wave 1 — per-root primitive tests covering the new error paths and
+// per-root scoping. The integration test in test/integration/multi-agent-
+// invariants.test.ts asserts the multi-root scenarios end-to-end; these
+// tests exercise the same code from the primitive surface so coverage
+// stays at 100% on src/agent/control.ts even when the integration test
+// file is run separately.
+describe("AgentControl per-root scoping", () => {
+  it.live("sendInterAgentCommunication rejects when sender and target belong to different roots", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const rootA = yield* sessions.create({ title: "A" })
+        const rootB = yield* sessions.create({ title: "B" })
+        yield* control.registerSessionRoot(rootA.id)
+        yield* control.registerSessionRoot(rootB.id)
+        const childB = yield* control.spawnAgent({
+          parentID: rootB.id,
+          parentPath: ROOT,
+          task_name: "wb",
+          initial_message: ".",
+        })
+
+        // From rootA, attempt to send to childB → AgentNotFoundError.
+        // Exercises the cross-root branch (slot lookup mismatch).
+        const result = yield* Effect.result(
+          control.sendInterAgentCommunication(
+            childB.thread_id,
+            new InterAgentCommunication({
+              author: ROOT,
+              recipient: childB.metadata.agent_path ?? ROOT,
+              content: "x",
+              trigger_turn: false,
+              sent_at: 1,
+            }),
+            rootA.id,
+          ),
+        )
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) {
+          expect(result.failure).toBeInstanceOf(AgentNotFoundError)
+        }
+      }),
+    ),
+  )
+
+  it.live("listAgents returns empty when senderID is unknown", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        yield* seedRoot()
+        const control = yield* AgentControl.Service
+        // Phantom session id resolves to no slot → empty list.
+        const out = yield* control.listAgents(ROOT, SessionID.descending())
+        expect(out).toEqual([])
+      }),
+    ),
+  )
+
+  it.live("getAgentMetadata returns undefined for an unknown SessionID", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const meta = yield* control.getAgentMetadata(SessionID.descending())
+        expect(meta).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("subscribeMailboxSeq rejects with AgentNotFoundError for unknown SessionID (no slot)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const result = yield* Effect.result(
+          control.subscribeMailboxSeq(SessionID.descending()),
+        )
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) {
+          expect(result.failure).toBeInstanceOf(AgentNotFoundError)
+        }
+      }),
+    ),
+  )
+
+  it.live("registerSessionRoot is idempotent — second call returns the existing slot", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const root = yield* sessions.create({ title: "root" })
+        yield* control.registerSessionRoot(root.id)
+        // Spawn under the slot.
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "stays",
+          initial_message: ".",
+        })
+        // Registering again must NOT recreate the slot — the child stays.
+        yield* control.registerSessionRoot(root.id)
+        const meta = yield* control.getAgentMetadata(child.thread_id)
+        expect(meta).toBeDefined()
+      }),
+    ),
+  )
+
+  it.live("emitWaitStarted publishes Agent.Wait.Started on the bus", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const bus = yield* Bus.Service
+        const seen: Array<{ call_id: string; timeout_ms: number }> = []
+        const off = yield* bus.subscribeCallback(AgentControl.Event.WaitStarted, (evt) =>
+          seen.push({ call_id: evt.properties.call_id, timeout_ms: evt.properties.timeout_ms }),
+        )
+        try {
+          yield* control.emitWaitStarted(root.id, "call_x", 100)
+          yield* Effect.sleep(20)
+          expect(seen.length).toBe(1)
+          expect(seen[0]?.call_id).toBe("call_x")
+          expect(seen[0]?.timeout_ms).toBe(100)
+        } finally {
+          off()
+        }
+      }),
+    ),
+  )
+
+  it.live("emitWaitEnded publishes Agent.Wait.Ended on the bus", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const bus = yield* Bus.Service
+        const seen: Array<{ call_id: string; timed_out: boolean }> = []
+        const off = yield* bus.subscribeCallback(AgentControl.Event.WaitEnded, (evt) =>
+          seen.push({ call_id: evt.properties.call_id, timed_out: evt.properties.timed_out }),
+        )
+        try {
+          yield* control.emitWaitEnded(root.id, "call_y", true)
+          yield* Effect.sleep(20)
+          expect(seen.length).toBe(1)
+          expect(seen[0]?.call_id).toBe("call_y")
+          expect(seen[0]?.timed_out).toBe(true)
+        } finally {
+          off()
+        }
+      }),
+    ),
+  )
+
+  it.live("session-deletion cleans up the deleted root's slot via top-level Bus subscriber", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const rootA = yield* sessions.create({ title: "A" })
+        yield* control.registerSessionRoot(rootA.id)
+        yield* control.spawnAgent({
+          parentID: rootA.id,
+          parentPath: ROOT,
+          task_name: "doomed",
+          initial_message: ".",
+        })
+
+        yield* sessions.remove(rootA.id)
+        // Sleep gives the top-level Bus subscriber + microtask queue time
+        // to drain the session.deleted event.
+        yield* Effect.sleep(80)
+
+        // After deletion: the slot is gone, so listAgents returns empty
+        // for rootA (slotFor → undefined → []).
+        const out = yield* control.listAgents(ROOT, rootA.id)
+        expect(out).toEqual([])
+      }),
+    ),
+  )
+
+  it.live("closeAgent on an idempotent already-shutdown id returns shutdown", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "twice2",
+          initial_message: ".",
+        })
+        yield* control.closeAgent(child.thread_id)
+        // Second close lands in the meta-not-found branch with status=shutdown.
+        const second = yield* control.closeAgent(child.thread_id)
+        expect(second.previous_status).toBe("shutdown")
+      }),
+    ),
+  )
+
+  it.live("spawnAgent lazy-registers the root when the parent isn't pre-registered", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        // No seedRoot() — parent is fresh and unknown to AgentControl.
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const root = yield* sessions.create({ title: "fresh" })
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "lazyroot",
+          initial_message: ".",
+        })
+        expect(String(child.metadata.agent_path)).toBe("/root/lazyroot")
+      }),
+    ),
+  )
+
+  it.live("spawnAgent fails when parent is unknown and parent path is not /root", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        yield* seedRoot()
+        const control = yield* AgentControl.Service
+        // Phantom parent with non-root path → no slot → AgentDepthExceeded.
+        const result = yield* Effect.result(
+          control.spawnAgent({
+            parentID: SessionID.descending(),
+            parentPath: path("/root/somewhere"),
+            task_name: "orphan",
+            initial_message: ".",
+          }),
+        )
+        expect(Result.isFailure(result)).toBe(true)
+      }),
+    ),
+  )
+
+  it.live("sendInterAgentCommunication: target slot exists but mailbox is gone", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "drained",
+          initial_message: ".",
+        })
+        // Close the child — its mailbox is removed but the sessionToRoot
+        // entry persists. A send still hits the mailbox-not-found branch.
+        yield* control.closeAgent(child.thread_id)
+        const result = yield* Effect.result(
+          control.sendInterAgentCommunication(
+            child.thread_id,
+            new InterAgentCommunication({
+              author: ROOT,
+              recipient: path("/root/drained"),
+              content: "after-close",
+              trigger_turn: false,
+              sent_at: 1,
+            }),
+            root.id,
+          ),
+        )
+        expect(Result.isFailure(result)).toBe(true)
       }),
     ),
   )

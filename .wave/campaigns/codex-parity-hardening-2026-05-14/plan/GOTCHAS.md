@@ -231,3 +231,37 @@ Entry format reminder:
 
 ---
 -->
+---
+
+## syncevent-publish-uses-helper-bus-not-test-layer-bus
+
+**Discovered:** 2026-05-14 in wave_1 (sub-agent B / per-root scoping)
+**Severity:** correctness-bug + test-flake
+
+### Symptom
+
+Subscribed to `Session.Event.Deleted` via the in-effect `bus.subscribe(...)` from a layer-built Bus.Service inside InstanceState.make. The subscriber forks fine, the type string matches (`session.deleted`), `SyncEvent.process` runs and calls `ProjectBus.publish` — yet the in-effect subscriber NEVER receives the event. Even a wildcard `bus.subscribeAll()` on the same Bus.Service misses it.
+
+### Root cause
+
+The test runtime (`testEffect`'s `Effect.provide(layer)` in test/lib/effect.ts) builds its OWN Bus.Service when each test runs. The cross-runtime helper (`Bus.publish` from bus/index.ts:187) uses `makeRuntime` (run-service.ts:43) backed by a process-wide `memoMap`. These produce TWO different Bus.Service instances. `SyncEvent.run → Database.effect → ProjectBus.publish` lands on the memoMap helper's Bus; the in-effect subscriber sits on the test layer's Bus. Their `s.typed` and `s.wildcard` PubSubs are entirely disjoint.
+
+In production (single AppRuntime + memoMap) both paths share one Bus.Service, so this never surfaces — but every test that wants to observe a `SyncEvent`-published event from inside an `InstanceState` subscriber sees zero events.
+
+### Fix pattern
+
+Subscribe via the top-level `Bus.subscribe(def, callback)` helper (bus/index.ts:195) inside the InstanceState.make builder, NOT `bus.subscribe` on the layer-local service. The helper uses `runSync` against the same memoMap'd Bus.Service that `ProjectBus.publish` writes to. Capture the returned `off` callback and register it via `Effect.addFinalizer` so the subscription drops on instance disposal.
+
+```ts
+const off = Bus.subscribe(Inbound.SessionDeleted, (evt) => { ... })
+yield* Effect.addFinalizer(() => Effect.sync(() => off()))
+```
+
+The callback runs OUTSIDE Effect; if it needs to interrupt fibers or drive Effect work, use `Effect.runPromise(...).catch(() => {})` for fire-and-forget. Pure synchronous map mutations are fine inline.
+
+### Reference
+
+- packages/opencode/src/agent/control.ts (Wave 1 SessionDeleted subscriber, ~line 392)
+- packages/opencode/src/bus/index.ts:187 (top-level publish), :195 (top-level subscribe)
+- packages/opencode/src/effect/run-service.ts:45 (memoMap)
+

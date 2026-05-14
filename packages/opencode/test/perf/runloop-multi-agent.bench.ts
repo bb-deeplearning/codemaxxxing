@@ -180,6 +180,7 @@ test("bench: runloop.step.4_pending_mailbox", async () => {
                 trigger_turn: i === 0,
                 sent_at: i,
               }),
+              root.id,
             )
           }
         })

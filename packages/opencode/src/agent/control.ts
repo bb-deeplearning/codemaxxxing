@@ -38,27 +38,16 @@ import {
 } from "./registry"
 
 // AgentControl is the orchestration layer for codex's multi-agents-v2
-// subsystem ported to opencode. It owns the per-tree AgentRegistry, every
-// child agent's Mailbox, every child agent's status SubscriptionRef, and the
-// fiber running each child's run loop.
+// subsystem ported to opencode. It owns one PerRootData slot per registered
+// root session: each root has its OWN AgentRegistry, mailboxes, statuses,
+// and run-loop fibers. Wave 1 generalised the per-INSTANCE state of Wave 7
+// to per-ROOT state so two chats opened against the same project no longer
+// share a registry / mailbox map.
 //
-// Codex source: codex-rs/core/src/agent/control.rs (1258 lines). We mirror
-// the public surface — spawn / send / close / list / resolve / subscribe —
-// minus codex-only concerns (rollout fork mode, exec policy inheritance,
-// shell-snapshot inheritance) which either don't apply to opencode's runtime
-// or land in later waves.
-//
-// Circular dependency resolution: the run loop that drives each child
-// session lives inside SessionPrompt — but SessionPrompt depends on
-// AgentControl (Wave 9) for v2 dispatch. To break the cycle, AgentControl
-// exposes `registerRunLoop(fn)` that SessionPrompt's layer init calls.
-// AgentControl stores the function in InstanceState and uses it during
-// `spawnAgent`. See ADR.md in this wave's plan dir for the full rationale.
+// Codex source: codex-rs/core/src/agent/control.rs lines 130-136 (per-root
+// invariant). Codex creates one registry per root tree; sharing one across
+// roots was the Wave 0 bug.
 
-// Default nickname pool used when no role-specific candidates are configured.
-// Wave 12 will lift role-aware candidate selection from
-// `agent_nickname_candidates` (control.rs:82-97) once roles land; Wave 7
-// keeps a single shared pool to exercise the registry's reservation path.
 const DEFAULT_NICKNAME_CANDIDATES = [
   "plato",
   "newton",
@@ -85,12 +74,7 @@ const ROOT_LAST_TASK_MESSAGE = "Main thread"
 //     "session.next.agent.*". Persisted to the event log; auto-published on
 //     the project bus by the sync runtime.
 //   - Bus.publish(Event.*) — in-process pub/sub under "agent.*". TUI / plugin
-//     consumers subscribe here. Type-safe payload shapes documented below.
-//
-// Two type prefixes ("session.next.agent.*" vs "agent.*") avoid collision
-// with the auto-registration that SyncEvent.init performs on EventV2 defs
-// (sync/index.ts:210). Both definitions stay live in the BusEvent registry
-// and surface in the SDK.
+//     consumers subscribe here.
 export const Event = {
   SpawnStarted: BusEvent.define(
     "agent.spawn.started",
@@ -161,16 +145,13 @@ export const Event = {
 }
 
 // Inbound subscription adapters — BusEvent.Definition shapes that match the
-// auto-registered types from `SessionEvent.Step.*` so we can subscribe
-// directly via Bus.subscribe with a precise payload type. The `type` strings
-// match what SyncEvent.init registers on the bus (sync/index.ts:210). We
-// don't call BusEvent.define here (the auto-registration already did) so we
-// don't collide; we just construct the Definition shape locally.
+// auto-registered types from `SessionEvent.Step.*` and `Session.Event.*` so
+// we can subscribe via Bus.subscribe with a precise payload type.
 //
-// These are public so tests can publish onto the same PubSub the
-// AgentControl subscriber listens to without going through EventV2.run
-// (which uses a separate, shared runtime that test layers don't share —
-// see GOTCHAS.md `bus-subscribe-helper-vs-service-method-cross-runtime-mismatch`).
+// SessionEvent.* uses EventV2.define (has `.Sync.type` / `.Sync.properties`).
+// Session.Event.* uses SyncEvent.define directly (has `.type` / `.properties`
+// with no `.Sync` indirection). The two shapes look identical at the
+// Inbound layer — the Definition object only needs `type` + `properties`.
 export const Inbound = {
   StepStarted: {
     type: SessionEvent.Step.Started.Sync.type,
@@ -180,17 +161,14 @@ export const Inbound = {
     type: SessionEvent.Step.Ended.Sync.type,
     properties: SessionEvent.Step.Ended.Sync.properties,
   } as const,
+  SessionDeleted: {
+    type: Session.Event.Deleted.type,
+    properties: Session.Event.Deleted.properties,
+  } as const,
 }
 
 const newCallID = () => Identifier.create("call", "ascending")
 
-// Stable model-facing error tag derived from a SpawnError class. Surfaces
-// on Agent.Spawn.Ended bus events as `error: <tag>` so subscribers branch
-// without parsing prose. Exported for direct unit testing of the
-// classification — the `no_nickname` arm is structurally defensive (the
-// registry's nickname pool recycles via reset suffixes, so spawn never
-// surfaces NoNicknameAvailableError under current configuration), and
-// only direct invocation can exercise it.
 export const spawnErrorTag = (cause: unknown): string => {
   if (cause instanceof AgentDepthExceededError) return "depth_exceeded"
   if (cause instanceof AgentLimitReachedError) return "limit_reached"
@@ -238,9 +216,6 @@ export interface ListedAgent {
 
 export interface SpawnAgentOptions {
   readonly fork_turns?: "none" | "all" | number
-  // Future: model override, reasoning_effort override, environments. Wave 7
-  // ships the option struct so callers can already pass it without breaking
-  // the signature when later waves wire the fields.
 }
 
 export interface SpawnAgentInput {
@@ -250,9 +225,6 @@ export interface SpawnAgentInput {
   readonly agent_type?: string
   readonly initial_message: string
   readonly options?: SpawnAgentOptions
-  // Override the default thread cap (AGENT_MAX_THREADS, currently undefined =
-  // no cap). Wave 9 will plumb this from Config; for Wave 7 the caller
-  // supplies it directly so tests can exercise the cap path.
   readonly max_threads?: number
 }
 
@@ -272,17 +244,20 @@ export interface Interface {
   readonly sendInterAgentCommunication: (
     targetID: SessionID,
     comm: InterAgentCommunication,
+    senderID: SessionID,
   ) => Effect.Effect<void, AgentNotFoundError>
   readonly closeAgent: (
     id: SessionID,
   ) => Effect.Effect<{ readonly previous_status: AgentStatus }, AgentNotFoundError>
   readonly listAgents: (
     currentPath: AgentPath,
+    senderID: SessionID,
     pathPrefix?: string,
   ) => Effect.Effect<readonly ListedAgent[], AgentPathInvalidError>
   readonly resolveAgentReference: (
     currentPath: AgentPath,
     reference: string,
+    senderID: SessionID,
   ) => Effect.Effect<SessionID, AgentReferenceInvalidError>
   readonly getAgentMetadata: (id: SessionID) => Effect.Effect<AgentMetadata | undefined>
   readonly subscribeStatus: (
@@ -294,16 +269,7 @@ export interface Interface {
   readonly hasPendingMailboxItems: (id: SessionID) => Effect.Effect<boolean>
   readonly hasPendingTriggerTurn: (id: SessionID) => Effect.Effect<boolean>
   readonly drainMailbox: (id: SessionID) => Effect.Effect<readonly InterAgentCommunication[]>
-  // Wave 9: cascade cancel — interrupt every live agent whose canonical path
-  // sits beneath `parentID`'s subtree. Used by SessionPrompt.cancel to bring
-  // down v2-spawned children when the user aborts the parent session.
-  // Idempotent: closing an agent whose mailbox or fiber is already gone is a
-  // no-op, mirroring `closeAgent`.
   readonly cancelChildrenOf: (parentID: SessionID) => Effect.Effect<void>
-  // Wave 10: emit a paired Wait.Started/Wait.Ended around an outer wait
-  // operation. The wait_agent tool calls this so the bus events are produced
-  // by the AgentControl service (centralized lifecycle bookkeeping) rather
-  // than by every consumer that wants to time a wait.
   readonly emitWaitStarted: (
     sessionID: SessionID,
     callID: string,
@@ -318,33 +284,29 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/AgentControl") {}
 
-// Depth = number of segments after `/root`. `/root` is depth 0; `/root/a/b/c/d`
-// is depth 4. Mirrors codex's `thread_spawn_depth` indirectly — codex tracks
-// depth on `SubAgentSource::ThreadSpawn { depth }`, but the value derived from
-// the path is the same and avoids carrying parallel state.
 const pathDepth = (p: AgentPath): number => {
   const s = p as string
   if (s === "/root") return 0
   return s.split("/").length - 2
 }
 
-// Internal mutable state held in InstanceState. One instance per project
-// directory; wired up exactly once and torn down with the directory's
-// disposal.
-//
-// `providerRef` lives at LAYER scope (not InstanceState), because
-// SessionPrompt's layer init registers the run-loop provider once at layer
-// build time when no Instance is yet bound. The function itself is
-// instance-agnostic (it returns an Effect that resolves InstanceState.context
-// internally at execution time), so sharing one provider across every
-// instance the layer serves is safe and matches how SessionPrompt's `loop`
-// closure already behaves.
-interface InternalState {
+// Per-root data — one slot per registered root session. Each root gets its
+// own registry, mailboxes, statuses, fibers map. Multi-level subagent trees
+// (root spawns A, A spawns B, ...) all live in the SAME root's slot; the
+// `sessionToRoot` index in InternalState resolves any session id to its root.
+interface PerRootData {
+  readonly rootID: SessionID
   readonly registry: AgentRegistry.Interface
   readonly mailboxes: Map<SessionID, Mailbox.Interface>
   readonly statuses: Map<SessionID, SubscriptionRef.SubscriptionRef<AgentStatus>>
   readonly fibers: Map<SessionID, Fiber.Fiber<unknown, unknown>>
-  readonly rootRef: Ref.Ref<SessionID | undefined>
+}
+
+interface InternalState {
+  readonly perRoot: Map<SessionID, PerRootData>
+  // Index from any session (root or subagent) back to its root id.
+  // Populated on registerSessionRoot and on each spawnAgent (child id → root id).
+  readonly sessionToRoot: Map<SessionID, SessionID>
   readonly scope: Scope.Scope
 }
 
@@ -353,6 +315,10 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const sessions = yield* Session.Service
     const bus = yield* Bus.Service
+    // providerRef MUST live at LAYER scope (NOT InstanceState) — see GOTCHA
+    // `agentcontrol-providerref-must-live-in-layer-not-instancestate`. The
+    // closure is instance-agnostic; SessionPrompt's layer init registers it
+    // before any Instance is bound.
     const providerRef = yield* Ref.make<
       ((sessionID: SessionID) => Effect.Effect<unknown>) | undefined
     >(undefined)
@@ -361,30 +327,20 @@ export const layer = Layer.effect(
       Effect.fn("AgentControl.state")(function* () {
         const scope = yield* Scope.Scope
         const ctx = yield* InstanceState.context
-        const registry = yield* AgentRegistry.make()
-        const mailboxes = new Map<SessionID, Mailbox.Interface>()
-        const statuses = new Map<SessionID, SubscriptionRef.SubscriptionRef<AgentStatus>>()
-        const fibers = new Map<SessionID, Fiber.Fiber<unknown, unknown>>()
-        const rootRef = yield* Ref.make<SessionID | undefined>(undefined)
+        const perRoot = new Map<SessionID, PerRootData>()
+        const sessionToRoot = new Map<SessionID, SessionID>()
 
-        // Wave 10 status derivation. Forking the bus subscriber INSIDE
-        // InstanceState.make binds it to the per-instance scope (so the
-        // fiber dies on instance disposal). The captured InstanceContext is
-        // re-injected via `Effect.provideService(InstanceRef, ctx)` so any
-        // sub-effect that reads InstanceState (Bus.subscribe internally
-        // reads its own InstanceState) sees the right Instance binding —
-        // ALS context isn't reliably preserved across Effect.forkScoped on
-        // every scheduler implementation.
-        //
-        // Status mapping mirrors codex `agent_status_from_event`
-        // (codex-rs/core/src/agent/status.rs:6-21): turn_started → running,
-        // turn_complete → completed. Final statuses (shutdown / completed /
-        // errored) are sticky — a late Step.* must not flip a closed agent
-        // back to running.
+        // Status mapping mirrors codex `agent_status_from_event`. Status
+        // resolution walks every per-root slot — Step.* arrives keyed only
+        // on the agent's session id, so we look up its root, then its slot.
         const applyToStatus = (sessionID: SessionID, next: AgentStatus | null) =>
           Effect.gen(function* () {
             if (next === null) return
-            const ref = statuses.get(sessionID)
+            const rootID = sessionToRoot.get(sessionID)
+            if (!rootID) return
+            const data = perRoot.get(rootID)
+            if (!data) return
+            const ref = data.statuses.get(sessionID)
             if (!ref) return
             const current = yield* SubscriptionRef.get(ref)
             if (AgentStatus.isFinal(current) && current !== "interrupted") return
@@ -418,31 +374,97 @@ export const layer = Layer.effect(
             .pipe(Effect.provideService(InstanceRef, ctx)),
         )
 
-        // On instance disposal, interrupt every live child fiber so siblings
-        // never outlive the project. The forkIn(parentScope) below wires
-        // children into this same scope, so this finalizer is belt-and-braces.
+        // Wave 1 — per-root teardown subscriber. When a root session is
+        // deleted (Session.Service.remove), interrupt every fiber in that
+        // root's slot, drop its maps, and remove sessionToRoot entries
+        // pointing at this root. RootB and other roots are unaffected.
+        //
+        // Subscribe via the top-level `Bus.subscribe` helper so the
+        // subscription lands on the SAME memoMap'd Bus.Service that
+        // `ProjectBus.publish` uses (sync.run → ProjectBus.publish for
+        // Session.Event.Deleted). The in-effect `bus.subscribe(...)` in the
+        // existing Step.Started/Ended subscribers above only sees events
+        // published via the layer-local Bus.Service — fine for those
+        // because production processor.ts publishes through the same
+        // local-bus path. SyncEvent's path is different: it goes through
+        // the cross-runtime helper, which only the top-level subscribe
+        // helper can read.
+        const offSessionDeleted = Bus.subscribe(Inbound.SessionDeleted, (evt) => {
+          const deletedID = evt.properties.sessionID as SessionID
+          const slot = perRoot.get(deletedID)
+          if (!slot) return
+          // Interrupt fibers via runPromise — fire-and-forget. We don't
+          // have an Effect runtime to await here; the map mutations below
+          // are synchronous regardless.
+          for (const fiber of slot.fibers.values()) {
+            void Effect.runPromise(Fiber.interrupt(fiber)).catch(() => {})
+          }
+          slot.fibers.clear()
+          slot.mailboxes.clear()
+          slot.statuses.clear()
+          perRoot.delete(deletedID)
+          for (const [sid, rid] of sessionToRoot.entries()) {
+            if (rid === deletedID) sessionToRoot.delete(sid)
+          }
+        })
+        yield* Effect.addFinalizer(() => Effect.sync(() => offSessionDeleted()))
+
+        // Belt-and-braces finalizer on instance disposal — interrupts every
+        // live fiber across every root. The forkIn(parentScope) below wires
+        // children into this scope, so the per-root sessionDeleted path and
+        // this finalizer compose cleanly.
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
-            yield* Effect.forEach(fibers.values(), (fiber) => Fiber.interrupt(fiber), {
-              concurrency: "unbounded",
-              discard: true,
-            })
-            fibers.clear()
-            mailboxes.clear()
-            statuses.clear()
+            for (const data of perRoot.values()) {
+              yield* Effect.forEach(data.fibers.values(), (fiber) => Fiber.interrupt(fiber), {
+                concurrency: "unbounded",
+                discard: true,
+              })
+              data.fibers.clear()
+              data.mailboxes.clear()
+              data.statuses.clear()
+            }
+            perRoot.clear()
+            sessionToRoot.clear()
           }),
         )
 
         return {
-          registry,
-          mailboxes,
-          statuses,
-          fibers,
-          rootRef,
+          perRoot,
+          sessionToRoot,
           scope,
         } satisfies InternalState
       }),
     )
+
+    // Helper — get or create the per-root slot for `id`. Idempotent:
+    // returns the existing slot if already registered.
+    const ensureRootSlot = (data: InternalState, id: SessionID) =>
+      Effect.gen(function* () {
+        const existing = data.perRoot.get(id)
+        if (existing) return existing
+        const registry = yield* AgentRegistry.make()
+        yield* registry.registerRootThread(id)
+        const status = yield* SubscriptionRef.make<AgentStatus>("running")
+        const slot: PerRootData = {
+          rootID: id,
+          registry,
+          mailboxes: new Map(),
+          statuses: new Map([[id, status]]),
+          fibers: new Map(),
+        }
+        data.perRoot.set(id, slot)
+        data.sessionToRoot.set(id, id)
+        return slot
+      })
+
+    // Resolve a session id → its per-root slot. Returns undefined when the
+    // session has never been registered (or its root was torn down).
+    const slotFor = (data: InternalState, id: SessionID): PerRootData | undefined => {
+      const rootID = data.sessionToRoot.get(id)
+      if (!rootID) return undefined
+      return data.perRoot.get(rootID)
+    }
 
     const registerRunLoop = Effect.fn("AgentControl.registerRunLoop")(function* (
       fn: (sessionID: SessionID) => Effect.Effect<unknown>,
@@ -454,14 +476,7 @@ export const layer = Layer.effect(
       id: SessionID,
     ) {
       const data = yield* InstanceState.get(state)
-      yield* data.registry.registerRootThread(id)
-      yield* Ref.set(data.rootRef, id)
-      // Initialize a status for the root so `subscribeStatus(rootID)` works
-      // and `listAgents` can report a status for root.
-      if (!data.statuses.has(id)) {
-        const status = yield* SubscriptionRef.make<AgentStatus>("running")
-        data.statuses.set(id, status)
-      }
+      yield* ensureRootSlot(data, id)
     })
 
     const spawnAgent = Effect.fn("AgentControl.spawnAgent")(function* (input: SpawnAgentInput) {
@@ -471,17 +486,10 @@ export const layer = Layer.effect(
       //    AgentPath.join (the leaf failed segment validation).
       const childPath = yield* AgentPath.join(input.parentPath, input.task_name).pipe(
         Effect.tapError((cause) =>
-          // Failed before we could even fire Spawn.Started. Emit a single
-          // Spawn.Ended carrying the rejection so subscribers see a paired
-          // lifecycle even on path-validation failure.
           emitSpawnEnded({
             sessionID: input.parentID,
             call_id: callID,
             task_name: input.task_name,
-            // Best-effort path: the parent + task_name as a string. The
-            // AgentPath schema would reject it, so we synthesize a literal
-            // and brand it. Subscribers care about the task_name + error
-            // tag here; the path is informational.
             child_path: AgentPath.from(
               `${input.parentPath as string}/${input.task_name}`,
             ).pipe(
@@ -494,7 +502,7 @@ export const layer = Layer.effect(
         ),
       )
 
-      // 2. Depth check before reserving anything — cheap to fail fast.
+      // 2. Depth check before reserving anything.
       const depth = pathDepth(childPath)
       if (exceedsThreadSpawnDepthLimit(depth, AGENT_MAX_DEPTH)) {
         yield* emitSpawnEnded({
@@ -509,18 +517,27 @@ export const layer = Layer.effect(
         return yield* new AgentDepthExceededError({ depth, max: AGENT_MAX_DEPTH })
       }
 
-      // 3. If parent is root, ensure the root is registered (idempotent).
-      if (AgentPath.isRoot(input.parentPath)) {
-        yield* registerSessionRoot(input.parentID)
+      // 3. Resolve the parent's root slot. If the parent isn't registered
+      //    AND the parent path is /root, lazy-register it (idempotent).
+      //    Subagent → sub-subagent spawns rely on the sessionToRoot index
+      //    populated when the parent was originally spawned.
+      let parentRoot = slotFor(data, input.parentID)
+      if (!parentRoot && AgentPath.isRoot(input.parentPath)) {
+        parentRoot = yield* ensureRootSlot(data, input.parentID)
       }
+      if (!parentRoot) {
+        // Parent unknown and not root — this is a programming error; the
+        // caller must register the root first or pass a known parent id.
+        // Fail with the same error shape as cross-root rejection.
+        return yield* new AgentDepthExceededError({ depth, max: AGENT_MAX_DEPTH })
+      }
+      const slot = parentRoot
 
       const cap = input.max_threads ?? AGENT_MAX_THREADS
 
       // 4. Use acquireUseRelease so the slot is freed on any failure exit.
-      //    `use` does the path/nickname reservation, child session creation,
-      //    mailbox/status/fiber setup, and the registry commit.
       return yield* Effect.acquireUseRelease(
-        data.registry.reserveSpawnSlot(cap),
+        slot.registry.reserveSpawnSlot(cap),
         (reservation) =>
           Effect.gen(function* () {
             yield* reservation.reserveAgentPath(childPath)
@@ -533,15 +550,9 @@ export const layer = Layer.effect(
               parentID: input.parentID,
               title: `${input.task_name} (@${nickname})`,
               agent: input.agent_type,
-              // Inherit parent's permission ruleset. Wave 12 will overlay
-              // role-specific permissions on top.
               permission: parent.permission,
             })
 
-            // Spawn.Started fires AFTER child session creation (so we have
-            // a real conversation_id available for downstream subscribers
-            // that want to subscribe to that session) but BEFORE forking
-            // the run loop (mirrors codex spawn.rs:68-81).
             yield* emitSpawn({
               event: Event.SpawnStarted,
               sync: SessionEvent.Agent.Spawn.Started.Sync,
@@ -559,8 +570,6 @@ export const layer = Layer.effect(
             const mailbox = yield* Mailbox.make()
             const status = yield* SubscriptionRef.make<AgentStatus>("pending_init")
 
-            // Seed the mailbox with the initial message BEFORE forking the
-            // run loop so the first iteration sees it on drain.
             yield* mailbox.send(
               new InterAgentCommunication({
                 author: input.parentPath,
@@ -580,25 +589,25 @@ export const layer = Layer.effect(
             })
             yield* reservation.commit(metadata)
 
-            data.mailboxes.set(child.id, mailbox)
-            data.statuses.set(child.id, status)
+            slot.mailboxes.set(child.id, mailbox)
+            slot.statuses.set(child.id, status)
+            // Index the child back to its root so future operations
+            // (sendInterAgentCommunication, closeAgent, wait_agent) on
+            // the child resolve to the right slot.
+            data.sessionToRoot.set(child.id, slot.rootID)
 
             const provider = yield* Ref.get(providerRef)
             const loopEffect: Effect.Effect<unknown> = provider ? provider(child.id) : Effect.never
 
             const fiber = yield* loopEffect.pipe(
-              // onExit handles natural completion / error. Interrupts (from
-              // closeAgent) are detected via Cause.hasInterrupts so we don't
-              // overwrite the "shutdown" status that closeAgent set first.
               Effect.onExit((exit: Exit.Exit<unknown, unknown>) =>
                 Effect.gen(function* () {
-                  data.fibers.delete(child.id)
+                  slot.fibers.delete(child.id)
                   if (Exit.isSuccess(exit)) {
                     yield* SubscriptionRef.set(status, { completed: null })
                     return
                   }
                   if (Cause.hasInterrupts(exit.cause)) {
-                    // Already shutdown by closeAgent; leave status alone.
                     return
                   }
                   yield* SubscriptionRef.set(status, {
@@ -608,11 +617,8 @@ export const layer = Layer.effect(
               ),
               Effect.forkIn(data.scope),
             )
-            data.fibers.set(child.id, fiber)
+            slot.fibers.set(child.id, fiber)
 
-            // Mark as running once the fiber is in flight. The status may
-            // already have transitioned (rare but possible if the run loop
-            // body executed synchronously). Only overwrite from pending_init.
             const current = yield* SubscriptionRef.get(status)
             if (current === "pending_init") {
               yield* SubscriptionRef.set(status, "running")
@@ -645,8 +651,6 @@ export const layer = Layer.effect(
           Exit.isFailure(exit)
             ? Effect.gen(function* () {
                 yield* reservation.release()
-                // Pluck the first typed failure out of the cause to tag it.
-                // Effect v4 exposes this via `Cause.findErrorOption`.
                 const errOpt = Cause.findErrorOption(exit.cause)
                 yield* emitSpawnEnded({
                   sessionID: input.parentID,
@@ -662,9 +666,6 @@ export const layer = Layer.effect(
       )
     })
 
-    // Internal helper for the dual EventV2 + Bus emission. Both fire under
-    // separate type prefixes so subscribers can choose either channel
-    // (sourced log vs ephemeral pub/sub).
     function emitSpawn<P extends Record<string, unknown>>(input: {
       event:
         | typeof Event.SpawnStarted
@@ -673,13 +674,10 @@ export const layer = Layer.effect(
       data: P
     }): Effect.Effect<void> {
       return Effect.gen(function* () {
-        // EventV2 sourced log. Best-effort: if the SyncEvent runtime isn't
-        // available (test env without preload, or flag off) the call is a
-        // no-op. We don't want logging failures to break the spawn flow.
         try {
           EventV2.run(input.sync, input.data as never)
         } catch {
-          // intentional swallow — projection failure shouldn't kill spawn.
+          // intentional swallow.
         }
         yield* bus.publish(input.event, input.data as never).pipe(Effect.ignore)
       })
@@ -716,22 +714,34 @@ export const layer = Layer.effect(
     }
 
     const sendInterAgentCommunication = Effect.fn("AgentControl.sendInterAgentCommunication")(
-      function* (targetID: SessionID, comm: InterAgentCommunication) {
+      function* (targetID: SessionID, comm: InterAgentCommunication, senderID: SessionID) {
         const data = yield* InstanceState.get(state)
-        const mailbox = data.mailboxes.get(targetID)
+        // Cross-root rejection. Sender and target must belong to the SAME
+        // root's slot — otherwise the target either doesn't exist for this
+        // sender (different chat / root) or has been torn down.
+        const senderRoot = data.sessionToRoot.get(senderID)
+        const targetRoot = data.sessionToRoot.get(targetID)
+        if (!targetRoot || !senderRoot || senderRoot !== targetRoot) {
+          yield* new AgentNotFoundError({ session: targetID })
+          return
+        }
+        // Invariant: perRoot[rootID] and sessionToRoot[*]→rootID are kept
+        // in lockstep — registerSessionRoot/spawnAgent set both atomically,
+        // the deletion handler clears both. The non-null assertion documents
+        // that invariant rather than carrying an unreachable defensive branch
+        // (per STYLE.md: "Don't add validation for scenarios that can't happen").
+        const slot = data.perRoot.get(targetRoot)!
+        const mailbox = slot.mailboxes.get(targetID)
         if (!mailbox) {
           yield* new AgentNotFoundError({ session: targetID })
           return
         }
         yield* mailbox.send(comm)
-        yield* data.registry.updateLastTaskMessage(targetID, comm.content)
-        // Wave 10: surface the inter-agent communication on the bus so the
-        // TUI / plugins can render in-flight traffic. Aggregate is the
-        // sender (sessionID = author session); receiver fields carry the
-        // target IDs.
-        const senderID = (yield* lookupSessionForPath(data, comm.author)) ?? targetID
+        yield* slot.registry.updateLastTaskMessage(targetID, comm.content)
+        // Surface the inter-agent communication on the bus.
+        const sourceID = (yield* lookupSessionForPath(slot, comm.author)) ?? targetID
         const eventData = {
-          sessionID: senderID,
+          sessionID: sourceID,
           timestamp: Date.now(),
           sender_path: comm.author,
           target_session_id: targetID,
@@ -748,31 +758,33 @@ export const layer = Layer.effect(
       },
     )
 
-    // Resolve a SessionID for a canonical AgentPath, including root. Returns
-    // undefined when the path is not registered (e.g. the sender is a path
-    // not currently held in the registry — rare but legal during cascade).
-    const lookupSessionForPath = (data: InternalState, path: AgentPath) =>
+    // Resolve a SessionID for a canonical AgentPath within a single root's
+    // slot. Returns undefined when the path is not registered in this slot.
+    const lookupSessionForPath = (slot: PerRootData, path: AgentPath) =>
       Effect.gen(function* () {
-        if (AgentPath.isRoot(path)) return yield* Ref.get(data.rootRef)
-        return yield* data.registry.agentIdForPath(path)
+        if (AgentPath.isRoot(path)) return slot.rootID
+        return yield* slot.registry.agentIdForPath(path)
       })
 
     const closeAgent = Effect.fn("AgentControl.closeAgent")(function* (id: SessionID) {
       const data = yield* InstanceState.get(state)
-      const meta = yield* data.registry.agentMetadataForThread(id)
-      const status = data.statuses.get(id)
-      // Idempotent: a previously-shutdown agent has been removed from the
-      // registry but kept its status entry. Return shutdown without error.
-      if (!meta) {
-        if (status) {
-          const current = yield* SubscriptionRef.get(status)
-          if (current === "shutdown") return { previous_status: "shutdown" as const }
-        }
-        return yield* new AgentNotFoundError({ session: id })
-      }
-      // Reject root explicitly — closing root would terminate the user's
-      // session. Codex's UI prevents this; we make it a typed error so the
-      // tool layer can map it to a model-recoverable message.
+      const slot = slotFor(data, id)
+      if (!slot) return yield* new AgentNotFoundError({ session: id })
+
+      const meta = yield* slot.registry.agentMetadataForThread(id)
+      const status = slot.statuses.get(id)
+      // Idempotent: a previously-shutdown agent has been released from the
+      // registry but its status SubscriptionRef is retained at "shutdown"
+      // (shutdownOne sets status="shutdown" before releasing meta). The
+      // sessionToRoot entry stays, so slotFor still finds the slot. Return
+      // shutdown without error so a re-close is a no-op for the caller.
+      // Invariant: when meta is undefined here, status exists at "shutdown"
+      // (closeAgent is the only path that sets meta=undefined, and rejects
+      // root before reaching this branch — every non-root close goes through
+      // shutdownOne which writes status first). Per STYLE.md "don't validate
+      // for scenarios that can't happen".
+      if (!meta) return { previous_status: "shutdown" as const }
+      // Reject root explicitly.
       if (meta.agent_path && AgentPath.isRoot(meta.agent_path)) {
         return yield* new AgentNotFoundError({ session: id })
       }
@@ -781,12 +793,8 @@ export const layer = Layer.effect(
         ? yield* SubscriptionRef.get(status)
         : "not_found"
 
-      // Find descendants by path-prefix walk. Ordered descendants-first so
-      // the leaf shutdown happens before its parent — mirrors codex's
-      // `shutdown_agent_tree` (control.rs:751-761) which collects
-      // descendants then shuts them down individually.
       const targetPath = meta.agent_path
-      const allLive = yield* data.registry.liveAgents()
+      const allLive = yield* slot.registry.liveAgents()
       const descendants = targetPath
         ? allLive.filter(
             (m) =>
@@ -798,39 +806,33 @@ export const layer = Layer.effect(
         : []
 
       for (const desc of descendants) {
-        if (desc.agent_id) yield* shutdownOne(data, desc.agent_id, desc.agent_path)
+        if (desc.agent_id) yield* shutdownOne(slot, desc.agent_id, desc.agent_path)
       }
-      yield* shutdownOne(data, id, targetPath)
+      yield* shutdownOne(slot, id, targetPath)
 
       return { previous_status: previousStatus }
     })
 
     const shutdownOne = (
-      data: InternalState,
+      slot: PerRootData,
       sessionId: SessionID,
       agentPath: AgentPath | undefined,
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const status = data.statuses.get(sessionId)
+        const status = slot.statuses.get(sessionId)
         const previousStatus: AgentStatus = status
           ? yield* SubscriptionRef.get(status)
           : "not_found"
-        // Set status to shutdown FIRST. The fiber's onExit checks for
-        // interrupts and leaves status alone in that case — order matters
-        // here to avoid a race where the interrupt's onExit would overwrite.
         if (status) yield* SubscriptionRef.set(status, "shutdown")
 
-        const fiber = data.fibers.get(sessionId)
+        const fiber = slot.fibers.get(sessionId)
         if (fiber) {
           yield* Fiber.interrupt(fiber)
-          data.fibers.delete(sessionId)
+          slot.fibers.delete(sessionId)
         }
-        data.mailboxes.delete(sessionId)
-        yield* data.registry.releaseSpawnedThread(sessionId)
+        slot.mailboxes.delete(sessionId)
+        yield* slot.registry.releaseSpawnedThread(sessionId)
 
-        // Wave 10: emit Agent.Closed on both channels. Aggregate sessionID
-        // is the closed agent itself so the projection lands in the closed
-        // agent's history.
         const eventData = {
           sessionID: sessionId,
           timestamp: Date.now(),
@@ -847,21 +849,22 @@ export const layer = Layer.effect(
 
     const listAgents = Effect.fn("AgentControl.listAgents")(function* (
       currentPath: AgentPath,
+      senderID: SessionID,
       pathPrefix?: string,
     ) {
       const data = yield* InstanceState.get(state)
+      const slot = slotFor(data, senderID)
+      if (!slot) return [] as readonly ListedAgent[]
+
       const resolvedPrefix = pathPrefix
         ? yield* AgentPath.resolve(currentPath, pathPrefix)
         : undefined
 
       const out: ListedAgent[] = []
 
-      // Root entry — included only when the prefix matches root (i.e.
-      // unfiltered or prefix == /root). Mirrors codex `list_agents`
-      // (control.rs:864-907).
-      const rootID = yield* Ref.get(data.rootRef)
-      if (rootID && (!resolvedPrefix || agentMatchesPrefix(AgentPath.root(), resolvedPrefix))) {
-        const rootStatus = data.statuses.get(rootID)
+      // Root entry — included only when the prefix matches root.
+      if (!resolvedPrefix || agentMatchesPrefix(AgentPath.root(), resolvedPrefix)) {
+        const rootStatus = slot.statuses.get(slot.rootID)
         out.push({
           agent_name: String(AgentPath.root()),
           agent_status: rootStatus ? yield* SubscriptionRef.get(rootStatus) : "running",
@@ -869,11 +872,7 @@ export const layer = Layer.effect(
         })
       }
 
-      const live = yield* data.registry.liveAgents()
-      // Codex sorts by agent_path then by agent_id; in our model paths are
-      // always unique (registry rejects duplicates), so a single localeCompare
-      // on path is sufficient for stable ordering. Mirrors the intent of
-      // codex `list_agents` (control.rs:880-892) without the tie-break.
+      const live = yield* slot.registry.liveAgents()
       const sorted = [...live].sort((a, b) =>
         String(a.agent_path ?? "").localeCompare(String(b.agent_path ?? "")),
       )
@@ -881,7 +880,7 @@ export const layer = Layer.effect(
       for (const m of sorted) {
         if (!m.agent_id) continue
         if (resolvedPrefix && !agentMatchesPrefix(m.agent_path, resolvedPrefix)) continue
-        const sub = data.statuses.get(m.agent_id)
+        const sub = slot.statuses.get(m.agent_id)
         const status: AgentStatus = sub ? yield* SubscriptionRef.get(sub) : "not_found"
         const name = m.agent_path ? String(m.agent_path) : m.agent_id
         out.push({
@@ -897,21 +896,24 @@ export const layer = Layer.effect(
     const resolveAgentReference = Effect.fn("AgentControl.resolveAgentReference")(function* (
       currentPath: AgentPath,
       reference: string,
+      senderID: SessionID,
     ) {
       const data = yield* InstanceState.get(state)
       const resolved = yield* AgentPath.resolve(currentPath, reference).pipe(
         Effect.mapError((e) => new AgentReferenceInvalidError({ reference, reason: e.reason })),
       )
-      // Root resolves via the rootRef set by registerSessionRoot.
-      if (AgentPath.isRoot(resolved)) {
-        const rootID = yield* Ref.get(data.rootRef)
-        if (rootID) return rootID
+      const slot = slotFor(data, senderID)
+      if (!slot) {
         return yield* new AgentReferenceInvalidError({
           reference,
           reason: "root session has not been registered",
         })
       }
-      const sid = yield* data.registry.agentIdForPath(resolved)
+      // Root resolves via the slot's rootID.
+      if (AgentPath.isRoot(resolved)) {
+        return slot.rootID
+      }
+      const sid = yield* slot.registry.agentIdForPath(resolved)
       if (sid) return sid
       return yield* new AgentReferenceInvalidError({
         reference,
@@ -921,12 +923,16 @@ export const layer = Layer.effect(
 
     const getAgentMetadata = Effect.fn("AgentControl.getAgentMetadata")(function* (id: SessionID) {
       const data = yield* InstanceState.get(state)
-      return yield* data.registry.agentMetadataForThread(id)
+      const slot = slotFor(data, id)
+      if (!slot) return undefined
+      return yield* slot.registry.agentMetadataForThread(id)
     })
 
     const subscribeStatus = Effect.fn("AgentControl.subscribeStatus")(function* (id: SessionID) {
       const data = yield* InstanceState.get(state)
-      const ref = data.statuses.get(id)
+      const slot = slotFor(data, id)
+      if (!slot) return yield* new AgentNotFoundError({ session: id })
+      const ref = slot.statuses.get(id)
       if (!ref) return yield* new AgentNotFoundError({ session: id })
       return ref
     })
@@ -935,7 +941,9 @@ export const layer = Layer.effect(
       id: SessionID,
     ) {
       const data = yield* InstanceState.get(state)
-      const mailbox = data.mailboxes.get(id)
+      const slot = slotFor(data, id)
+      if (!slot) return yield* new AgentNotFoundError({ session: id })
+      const mailbox = slot.mailboxes.get(id)
       if (!mailbox) return yield* new AgentNotFoundError({ session: id })
       return yield* mailbox.subscribe()
     })
@@ -944,7 +952,9 @@ export const layer = Layer.effect(
       id: SessionID,
     ) {
       const data = yield* InstanceState.get(state)
-      const mailbox = data.mailboxes.get(id)
+      const slot = slotFor(data, id)
+      if (!slot) return false
+      const mailbox = slot.mailboxes.get(id)
       if (!mailbox) return false
       return yield* mailbox.hasPending()
     })
@@ -953,14 +963,18 @@ export const layer = Layer.effect(
       id: SessionID,
     ) {
       const data = yield* InstanceState.get(state)
-      const mailbox = data.mailboxes.get(id)
+      const slot = slotFor(data, id)
+      if (!slot) return false
+      const mailbox = slot.mailboxes.get(id)
       if (!mailbox) return false
       return yield* mailbox.hasPendingTriggerTurn()
     })
 
     const drainMailbox = Effect.fn("AgentControl.drainMailbox")(function* (id: SessionID) {
       const data = yield* InstanceState.get(state)
-      const mailbox = data.mailboxes.get(id)
+      const slot = slotFor(data, id)
+      if (!slot) return [] as readonly InterAgentCommunication[]
+      const mailbox = slot.mailboxes.get(id)
       if (!mailbox) return [] as readonly InterAgentCommunication[]
       return yield* mailbox.drain()
     })
@@ -969,24 +983,17 @@ export const layer = Layer.effect(
       parentID: SessionID,
     ) {
       const data = yield* InstanceState.get(state)
-      // Determine the parent's canonical path. Three cases:
-      //  - parent is a registered agent → its metadata's agent_path
-      //  - parent is the registered root → AgentPath.root()
-      //  - parent is neither (a regular session that never spawned children)
-      //    → no descendants to cancel; bail.
-      const meta = yield* data.registry.agentMetadataForThread(parentID)
-      const rootID = yield* Ref.get(data.rootRef)
+      const slot = slotFor(data, parentID)
+      if (!slot) return
+      const meta = yield* slot.registry.agentMetadataForThread(parentID)
       const parentPath: AgentPath | undefined =
-        meta?.agent_path ?? (parentID === rootID ? AgentPath.root() : undefined)
+        meta?.agent_path ?? (parentID === slot.rootID ? AgentPath.root() : undefined)
       if (!parentPath) return
 
       const prefix =
         (parentPath as string) === "/root" ? "/root/" : (parentPath as string) + "/"
 
-      const live = yield* data.registry.liveAgents()
-      // Iterate descendants leaves-first so each shutdownOne sees its own
-      // metadata before its parent's closeAgent cascade rips it out from
-      // under it. Sort by path-depth descending — deeper paths first.
+      const live = yield* slot.registry.liveAgents()
       const descendants = live
         .filter(
           (m) =>
@@ -1002,9 +1009,6 @@ export const layer = Layer.effect(
 
       for (const child of descendants) {
         if (!child.agent_id) continue
-        // closeAgent itself cascades, but a leaves-first iteration plus the
-        // idempotent shortcut at the top of closeAgent (returns shutdown when
-        // the registry slot is already released) keeps each invocation cheap.
         yield* closeAgent(child.agent_id).pipe(Effect.catch(() => Effect.void))
       }
     })
@@ -1068,21 +1072,11 @@ export const layer = Layer.effect(
   }),
 )
 
-// AgentControl.defaultLayer self-provides its deps so that consumers of
-// `defaultLayer` (production AppRuntime, every existing test layer that
-// uses ToolRegistry.defaultLayer) don't need to be updated when this
-// service grows new requirements. Bus.layer is included so the in-effect
-// bus subscriber wires up against the same Bus.Service that consumers see
-// when they `yield* Bus.Service` against a test runtime that includes
-// Bus.defaultLayer (mergeAll dedupes by service tag — outer Bus wins).
 export const defaultLayer = layer.pipe(
   Layer.provide(Session.defaultLayer),
   Layer.provide(Bus.defaultLayer),
 )
 
-// Mirrors codex `agent_matches_prefix` (control.rs:1217-1229). Returns true
-// when the agent's path is exactly the prefix or sits underneath it as a
-// strict descendant. Root prefix matches everything.
 const agentMatchesPrefix = (agentPath: AgentPath | undefined, prefix: AgentPath): boolean => {
   if (AgentPath.isRoot(prefix)) return true
   if (!agentPath) return false

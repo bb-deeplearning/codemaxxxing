@@ -105,7 +105,7 @@ describe("e2e: worker pipeline (phase-1 \u2192 phase-2 with context handoff)", (
           expect(yield* llm.calls).toBe(2)
 
           // listAgents reports both children.
-          const list = yield* control.listAgents(AgentPath.root())
+          const list = yield* control.listAgents(AgentPath.root(), root.id)
           const names = list.map((entry) => entry.agent_name).sort()
           expect(names).toContain("/root/phase_one")
           expect(names).toContain("/root/phase_two")

@@ -82,6 +82,7 @@ describe("e2e: observer pattern (root drains worker reports, conditionally spawn
                 trigger_turn: false,
                 sent_at: i + 1,
               }),
+              w.thread_id,
             )
           }
 
@@ -115,7 +116,7 @@ describe("e2e: observer pattern (root drains worker reports, conditionally spawn
 
           // Final list shows scout/miner/builder/collector/promoted under
           // root. listAgents includes root itself; strip it.
-          const list = yield* control.listAgents(AgentPath.root())
+          const list = yield* control.listAgents(AgentPath.root(), root.id)
           const childNames = list
             .map((entry) => entry.agent_name)
             .filter((n) => n !== String(AgentPath.root()))

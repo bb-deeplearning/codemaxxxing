@@ -71,7 +71,7 @@ export const AgentSendTool = Tool.define(
               //    failure here is a user-visible "I couldn't find that
               //    agent" — surface it to the model rather than crashing.
               const resolved = yield* Effect.result(
-                control.resolveAgentReference(currentPath, params.target),
+                control.resolveAgentReference(currentPath, params.target, ctx.sessionID),
               )
               if (Result.isFailure(resolved)) {
                 return {
@@ -113,7 +113,7 @@ export const AgentSendTool = Tool.define(
               })
 
               const sendResult = yield* Effect.result(
-                control.sendInterAgentCommunication(targetSessionID, comm),
+                control.sendInterAgentCommunication(targetSessionID, comm, ctx.sessionID),
               )
               if (Result.isFailure(sendResult)) {
                 return {

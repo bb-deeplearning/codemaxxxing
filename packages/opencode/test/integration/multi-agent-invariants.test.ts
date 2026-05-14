@@ -11,10 +11,12 @@
 // `cross-root-send-rejection`, etc.
 
 import { afterEach, describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Result } from "effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Agent } from "@/agent/agent"
-import { AgentControl } from "@/agent/control"
+import { AgentControl, AgentNotFoundError } from "@/agent/control"
+import { AgentPath } from "@/agent/agent-path"
+import { InterAgentCommunication } from "@/agent/inter-agent-communication"
 import { Config } from "@/config/config"
 import { Session } from "@/session/session"
 import { Truncate } from "@/tool/truncate"
@@ -55,12 +57,77 @@ const installNeverLoop = Effect.gen(function* () {
 
 describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
   // TODO(wave_1): unskip when per-root scoping lands.
-  it.instance.skip("multi-root-isolation", () =>
+  it.instance("multi-root-isolation", () =>
     Effect.gen(function* () {
-      // Set up two roots in the same project, spawn worker_a in each, assert
-      // each root's listAgents only sees its own worker; cross-root send /
-      // close return AgentNotFoundError.
-      yield* Effect.void
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      const rootA = yield* sessions.create({ title: "chatA" })
+      const rootB = yield* sessions.create({ title: "chatB" })
+      yield* control.registerSessionRoot(rootA.id)
+      yield* control.registerSessionRoot(rootB.id)
+
+      // Spawn worker_a from each root. Currently (RED), the second spawn
+      // collides on `path_already_exists` because the registry is shared.
+      // After the fix, each root has its own registry → both succeed.
+      const childA = yield* control.spawnAgent({
+        parentID: rootA.id,
+        parentPath: AgentPath.root(),
+        task_name: "worker_a",
+        initial_message: "from A",
+      })
+      const childB = yield* control.spawnAgent({
+        parentID: rootB.id,
+        parentPath: AgentPath.root(),
+        task_name: "worker_a",
+        initial_message: "from B",
+      })
+      expect(childA.thread_id).not.toBe(childB.thread_id)
+
+      // Each root's listAgents shows only its own worker.
+      // Use the post-refactor signature: listAgents(currentPath, senderID, pathPrefix?)
+      const listA = yield* control.listAgents(AgentPath.root(), rootA.id)
+      const listB = yield* control.listAgents(AgentPath.root(), rootB.id)
+
+      const namesA = listA.map((l) => l.agent_name).sort()
+      const namesB = listB.map((l) => l.agent_name).sort()
+      expect(namesA).toEqual(["/root", "/root/worker_a"])
+      expect(namesB).toEqual(["/root", "/root/worker_a"])
+
+      // The two listings refer to DIFFERENT worker_a sessions.
+      // Drain childA's seed message; childB's mailbox keeps its seed.
+      const drainA1 = yield* control.drainMailbox(childA.thread_id)
+      expect(drainA1).toHaveLength(1)
+      expect(drainA1[0]?.content).toBe("from A")
+      const drainB1 = yield* control.drainMailbox(childB.thread_id)
+      expect(drainB1).toHaveLength(1)
+      expect(drainB1[0]?.content).toBe("from B")
+
+      // Send to rootA's worker — lands in childA's mailbox, NOT childB's.
+      yield* control.sendInterAgentCommunication(
+        childA.thread_id,
+        new InterAgentCommunication({
+          author: AgentPath.root(),
+          recipient: childA.metadata.agent_path ?? AgentPath.root(),
+          content: "for A only",
+          trigger_turn: false,
+          sent_at: 1,
+        }),
+        rootA.id,
+      )
+      const drainA2 = yield* control.drainMailbox(childA.thread_id)
+      const drainB2 = yield* control.drainMailbox(childB.thread_id)
+      expect(drainA2).toHaveLength(1)
+      expect(drainA2[0]?.content).toBe("for A only")
+      expect(drainB2).toHaveLength(0)
+
+      // Close rootA's worker — rootB's worker stays alive.
+      yield* control.closeAgent(childA.thread_id)
+      const listAAfter = yield* control.listAgents(AgentPath.root(), rootA.id)
+      const listBAfter = yield* control.listAgents(AgentPath.root(), rootB.id)
+      expect(listAAfter.find((l) => l.agent_name === "/root/worker_a")).toBeUndefined()
+      expect(listBAfter.find((l) => l.agent_name === "/root/worker_a")).toBeDefined()
     }),
   )
 
@@ -79,16 +146,103 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
   )
 
   // TODO(wave_1): unskip when per-root scoping lands.
-  it.instance.skip("cross-root-send-rejection", () =>
+  it.instance("cross-root-send-rejection", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      const rootA = yield* sessions.create({ title: "chatA" })
+      const rootB = yield* sessions.create({ title: "chatB" })
+      yield* control.registerSessionRoot(rootA.id)
+      yield* control.registerSessionRoot(rootB.id)
+
+      yield* control.spawnAgent({
+        parentID: rootA.id,
+        parentPath: AgentPath.root(),
+        task_name: "worker_a",
+        initial_message: "init A",
+      })
+      const childB = yield* control.spawnAgent({
+        parentID: rootB.id,
+        parentPath: AgentPath.root(),
+        task_name: "worker_a",
+        initial_message: "init B",
+      })
+      // Drain seed messages so the next drain length reflects new sends only.
+      yield* control.drainMailbox(childB.thread_id)
+
+      // From rootA, attempt to send to childB (a different root's child).
+      // Post-refactor: rejected with AgentNotFoundError.
+      const result = yield* Effect.result(
+        control.sendInterAgentCommunication(
+          childB.thread_id,
+          new InterAgentCommunication({
+            author: AgentPath.root(),
+            recipient: childB.metadata.agent_path ?? AgentPath.root(),
+            content: "cross-root attempt",
+            trigger_turn: true,
+            sent_at: 1,
+          }),
+          rootA.id,
+        ),
+      )
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure).toBeInstanceOf(AgentNotFoundError)
+      }
+
+      // childB's mailbox is unchanged — drain returns empty.
+      const drainedB = yield* control.drainMailbox(childB.thread_id)
+      expect(drainedB).toHaveLength(0)
     }),
   )
 
   // TODO(wave_1): unskip when per-root scoping lands.
-  it.instance.skip("session-deletion-cleanup", () =>
+  it.instance("session-deletion-cleanup", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      const rootA = yield* sessions.create({ title: "chatA" })
+      const rootB = yield* sessions.create({ title: "chatB" })
+      yield* control.registerSessionRoot(rootA.id)
+      yield* control.registerSessionRoot(rootB.id)
+
+      yield* control.spawnAgent({
+        parentID: rootA.id,
+        parentPath: AgentPath.root(),
+        task_name: "worker_a",
+        initial_message: "alive",
+      })
+      yield* control.spawnAgent({
+        parentID: rootB.id,
+        parentPath: AgentPath.root(),
+        task_name: "worker_b",
+        initial_message: "alive",
+      })
+
+      // Delete rootA. The per-root subscriber inside AgentControl observes
+      // Session.Event.Deleted and tears down rootA's slot. Sleep gives the
+      // bus + the subscriber time to drain.
+      yield* sessions.remove(rootA.id)
+      yield* Effect.sleep(50)
+
+      // Querying rootA either yields AgentNotFoundError OR empty (impl choice).
+      const listAResult = yield* Effect.result(
+        control.listAgents(AgentPath.root(), rootA.id),
+      )
+      if (Result.isSuccess(listAResult)) {
+        expect(listAResult.success).toEqual([])
+      } else {
+        expect(listAResult.failure).toBeInstanceOf(AgentNotFoundError)
+      }
+
+      // RootB still has its worker.
+      const listB = yield* control.listAgents(AgentPath.root(), rootB.id)
+      const namesB = listB.map((l) => l.agent_name).sort()
+      expect(namesB).toEqual(["/root", "/root/worker_b"])
     }),
   )
 

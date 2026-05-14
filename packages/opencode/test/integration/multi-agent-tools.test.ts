@@ -187,7 +187,7 @@ describe("integration: multi-agent v2 tools (spawn/send/list/wait/followup/close
         // After close, listAgents no longer reports the child.
         const rootMeta = yield* control.getAgentMetadata(root.id)
         const rootPath = rootMeta?.agent_path ?? AgentPath.root()
-        const finalList = yield* control.listAgents(rootPath)
+        const finalList = yield* control.listAgents(rootPath, root.id)
         expect(finalList.find((a) => a.agent_name === "/root/worker_a")).toBeUndefined()
       }),
     20_000,

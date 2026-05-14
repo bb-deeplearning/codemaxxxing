@@ -211,6 +211,7 @@ describe("e2e perf: concurrent-session invariants", () => {
                 trigger_turn: false,
                 sent_at: i,
               }),
+              root.id,
             )
             // Wait until seqRef reports a higher seq (the wakeup signal).
             yield* Effect.gen(function* () {
@@ -238,6 +239,7 @@ describe("e2e perf: concurrent-session invariants", () => {
                 trigger_turn: false,
                 sent_at: i,
               }),
+              root.id,
             )
             // Spin-poll the SubscriptionRef value rather than subscribing
             // a Stream per sample (per-iteration Stream setup would

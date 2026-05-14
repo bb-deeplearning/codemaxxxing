@@ -61,7 +61,7 @@ export const AgentFollowupTool = Tool.define(
               //    becomes a model-recoverable string instead of a defect.
               //    See GOTCHAS effect-v4-either-renamed-to-result.
               const resolved = yield* Effect.result(
-                control.resolveAgentReference(currentPath, params.target),
+                control.resolveAgentReference(currentPath, params.target, ctx.sessionID),
               )
               if (Result.isFailure(resolved)) {
                 return {
@@ -120,7 +120,7 @@ export const AgentFollowupTool = Tool.define(
               })
 
               yield* control
-                .sendInterAgentCommunication(targetSessionID, comm)
+                .sendInterAgentCommunication(targetSessionID, comm, ctx.sessionID)
                 .pipe(Effect.orDie)
 
               return {

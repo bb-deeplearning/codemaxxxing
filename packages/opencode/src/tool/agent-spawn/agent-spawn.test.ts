@@ -122,7 +122,7 @@ describe("tool.spawn_agent", () => {
         expect(Array.from(record.asks[0].always)).toEqual(["*"])
 
         // Registry now has the child — resolve canonical path back to the SessionID.
-        const sid = yield* control.resolveAgentReference(AgentPath.root(), "/root/worker")
+        const sid = yield* control.resolveAgentReference(AgentPath.root(), "/root/worker", root.id)
         expect(sid).toBe(result.metadata.child_session_id)
       }),
     ),

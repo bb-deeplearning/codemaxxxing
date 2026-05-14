@@ -89,6 +89,7 @@ describe("e2e perf: memory load (16 concurrent agents)", () => {
                   trigger_turn: true,
                   sent_at: turn + 1,
                 }),
+                root.id,
               )
             }
             // Some children may already exit before their next trigger

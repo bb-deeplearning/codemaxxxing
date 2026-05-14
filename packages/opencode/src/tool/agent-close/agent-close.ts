@@ -52,7 +52,7 @@ export const AgentCloseTool = Tool.define(
               )
 
               const resolved = yield* control
-                .resolveAgentReference(currentPath, params.target)
+                .resolveAgentReference(currentPath, params.target, ctx.sessionID)
                 .pipe(Effect.result)
               if (Result.isFailure(resolved)) {
                 return {

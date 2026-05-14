@@ -56,7 +56,7 @@ export const AgentListTool = Tool.define(
           })
 
           const result = yield* Effect.result(
-            control.listAgents(currentPath, params.path_prefix),
+            control.listAgents(currentPath, ctx.sessionID, params.path_prefix),
           )
           if (Result.isFailure(result)) {
             return {
