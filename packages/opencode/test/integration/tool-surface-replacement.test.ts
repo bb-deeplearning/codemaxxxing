@@ -1165,31 +1165,186 @@ describe("INTEGRATION_INVARIANTS — tool surface replacement", () => {
     }),
   )
 
-  // TODO(wave_5): unskip when prose migration preserves the git safety protocol fragment verbatim in exec_command.txt.
-  it.instance.skip("prose-migration-preserves-git-safety-protocol", () =>
+  // Wave 5 — prose migration preserves the git safety protocol fragment
+  // verbatim in exec_command.txt (modulo bash → exec_command tool-name
+  // substitutions). The full text of the protocol — every "NEVER", every
+  // "CRITICAL", every numbered step — is hand-tuned over many iterations.
+  // The mutation probe in NOTES.md verifies that deleting any single
+  // safety line goes RED.
+  it.instance("prose-migration-preserves-git-safety-protocol", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      const build = yield* agents.get("build")
+      const tools = yield* registry.tools({
+        modelID: ModelID.make("test-model"),
+        providerID: ProviderID.make("test"),
+        agent: build,
+      })
+      const exec = tools.find((t) => t.id === "exec_command")
+      if (!exec) throw new Error("exec_command missing from registry tools")
+      // Every Git Safety Protocol bullet from shell.txt must appear in
+      // the rendered exec_command description. Asserting line-by-line
+      // catches any deletion individually — see NOTES.md mutation probe.
+      const SAFETY_LINES = [
+        "Git Safety Protocol:",
+        "NEVER update the git config",
+        "NEVER run destructive/irreversible git commands",
+        "NEVER skip hooks (--no-verify, --no-gpg-sign, etc)",
+        "NEVER run force push to main/master",
+        "Avoid git commit --amend.",
+        "CRITICAL: If commit FAILED or was REJECTED by hook, NEVER amend",
+        "CRITICAL: If you already pushed to remote, NEVER amend",
+        "NEVER commit changes unless the user explicitly asks you to.",
+        "NEVER use the TodoWrite or Task tools",
+        "DO NOT push to the remote repository unless the user explicitly asks",
+        "Never use git commands with the -i flag",
+        "do not create an empty commit",
+      ]
+      for (const line of SAFETY_LINES) expect(exec.description).toContain(line)
     }),
   )
 
-  // TODO(wave_5): unskip when prose migration preserves the PR creation flow fragment verbatim in exec_command.txt.
-  it.instance.skip("prose-migration-preserves-pr-creation-flow", () =>
+  // Wave 5 — prose migration preserves the PR creation flow fragment
+  // verbatim in exec_command.txt. The flow describes a parallel-fan-out
+  // pattern that the model relies on; trimming it removes operational
+  // discipline.
+  it.instance("prose-migration-preserves-pr-creation-flow", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      const build = yield* agents.get("build")
+      const tools = yield* registry.tools({
+        modelID: ModelID.make("test-model"),
+        providerID: ProviderID.make("test"),
+        agent: build,
+      })
+      const exec = tools.find((t) => t.id === "exec_command")
+      if (!exec) throw new Error("exec_command missing from registry tools")
+      const PR_LINES = [
+        "Creating pull requests",
+        "Use the gh command via the exec_command tool for ALL GitHub-related tasks",
+        "Run a git status command to see all untracked files",
+        "Run a git log command and `git diff [base-branch]...HEAD`",
+        "draft a pull request summary",
+        "Create PR using gh pr create with the format below.",
+        "Use a HEREDOC to pass the body to ensure correct formatting.",
+        "gh pr create --title",
+        "Return the PR URL when you're done",
+      ]
+      for (const line of PR_LINES) expect(exec.description).toContain(line)
     }),
   )
 
-  // TODO(wave_5): unskip when prose migration preserves the spawn_agent eligible-subagent-types listing.
-  it.instance.skip("prose-migration-preserves-spawn-agent-eligible-list", () =>
+  // Wave 5 — describeSpawnAgent's per-subagent enumeration is appended at
+  // render time per registry.ts:348-361. The migration does not move it
+  // into the static file (which would double-render the listing). Assert
+  // the rendered description still includes the eligible-types listing
+  // for the build agent (which has both `explore` and `general` available
+  // per FIXTURES.md / agent.ts defaults).
+  it.instance("prose-migration-preserves-spawn-agent-eligible-list", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      const build = yield* agents.get("build")
+      const tools = yield* registry.tools({
+        modelID: ModelID.make("test-model"),
+        providerID: ProviderID.make("test"),
+        agent: build,
+      })
+      const spawn = tools.find((t) => t.id === "spawn_agent")
+      if (!spawn) throw new Error("spawn_agent missing from registry tools")
+      // Header rendered by describeSpawnAgent. Listing per built-in
+      // subagents the registry knows about.
+      const ENUM_HEADER = "Available agent types and the tools they have access to:"
+      expect(spawn.description).toContain(ENUM_HEADER)
+      const headerIdx = spawn.description.indexOf(ENUM_HEADER)
+      const enumeration = spawn.description.slice(headerIdx)
+      // Per FIXTURES.md and Agent.defaultLayer's built-ins, build sees
+      // `explore` and `general` as eligible subagent types.
+      expect(enumeration).toMatch(/^- explore:/m)
+      expect(enumeration).toMatch(/^- general:/m)
     }),
   )
 
-  // TODO(wave_5): unskip when migrated exec_command + spawn_agent descriptions stay within the prompt token budget.
-  it.instance.skip("prompt-token-count-within-budget", () =>
+  // Wave 5 — prompt token count budget verification. The migrated
+  // exec_command description absorbed the bash prose (git safety + PR
+  // creation + file-op restriction). Per PERF.md § "Prompt token
+  // budget", the new total may exceed the new tool's pre-migration
+  // baseline AS LONG AS it does not exceed the SUM of (`bash` baseline
+  // + `exec_command` baseline) minus a 10% redundancy assumption.
+  // spawn_agent didn't migrate substantive content (per WAVE.md
+  // sub-agent B); within ±5% of the pre-migration spawn_agent baseline.
+  //
+  // Reads the wave_5.json artifact written by the perf bench. Failing
+  // either ratio = wave failure with a regression report.
+  it.instance("prompt-token-count-within-budget", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      const wavePerf = yield* Effect.promise(async () => {
+        const file = path.resolve(
+          import.meta.dir,
+          "..",
+          "..",
+          "..",
+          "..",
+          ".wave",
+          "campaigns",
+          "replace-bash-task-2026-05-15",
+          "artifacts",
+          "perf",
+          "wave_5.json",
+        )
+        return Bun.file(file).json() as Promise<{
+          metrics: Record<string, { bytes?: number; tokens?: number }>
+        }>
+      })
+
+      const snapshotsDir = path.resolve(
+        import.meta.dir,
+        "..",
+        "..",
+        "..",
+        "..",
+        ".wave",
+        "campaigns",
+        "replace-bash-task-2026-05-15",
+        "artifacts",
+        "snapshots",
+        "prompt-prose",
+      )
+      const baselineBytes = (name: string) =>
+        Effect.promise(async () =>
+          (await Bun.file(path.join(snapshotsDir, name)).text()).length,
+        )
+      const bashBytes = yield* baselineBytes("bash-description.txt")
+      const execBaseline = yield* baselineBytes("exec-command-description.txt")
+      const taskBytes = yield* baselineBytes("task-description.txt")
+      const spawnBaseline = yield* baselineBytes("spawn-agent-description.txt")
+
+      // exec_command upper bound: SUM minus 10% redundancy assumption.
+      // No lower-bound check beyond the pre-migration baseline (-5%):
+      // the migration ADDS content, never removes it.
+      const execUpper = Math.floor((bashBytes + execBaseline) * 0.9)
+      const execLower = Math.floor(execBaseline * 0.95)
+      const execCurrent = wavePerf.metrics["prompt.render.exec_command"]?.bytes ?? -1
+      expect(execCurrent).toBeGreaterThan(0)
+      expect(execCurrent).toBeLessThanOrEqual(execUpper)
+      expect(execCurrent).toBeGreaterThanOrEqual(execLower)
+
+      // spawn_agent: no substantive migration (per Wave 5 sub-agent B
+      // decision documented in NOTES.md). Within ±5% of pre-migration
+      // baseline. Use spawn_agent's pre-migration snapshot, NOT the SUM,
+      // because no task content is folded in.
+      const spawnLower = Math.floor(spawnBaseline * 0.95)
+      const spawnUpper = Math.ceil(spawnBaseline * 1.05)
+      const spawnCurrent = wavePerf.metrics["prompt.render.spawn_agent"]?.bytes ?? -1
+      expect(spawnCurrent).toBeGreaterThan(0)
+      expect(spawnCurrent).toBeLessThanOrEqual(spawnUpper)
+      expect(spawnCurrent).toBeGreaterThanOrEqual(spawnLower)
+      // Reference the unused taskBytes: documents the comparison we
+      // chose NOT to make (sum-minus-10%) so future readers see the
+      // alternative budget shape and know it was considered.
+      expect(taskBytes).toBeGreaterThan(0)
     }),
   )
 
