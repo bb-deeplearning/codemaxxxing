@@ -3,7 +3,7 @@
 ## Attempt 1 — success
 
 **Session:** ses_1d73a96ffffegAtNmwPYklYmW7
-**Commit:** (filled in by next session via record-commit-SHA pass)
+**Commit:** 088bb3bf0
 **Date:** 2026-05-15
 **Decision on entry:** first attempt
 
