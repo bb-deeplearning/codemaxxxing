@@ -3,7 +3,7 @@
 ## Attempt 1 — success
 
 **Session:** ses_1d77620ccffe7kZkjEtVMFkHjJ
-**Commit:** TBD (set after `git commit`)
+**Commit:** 7eb1dbf2a
 **Date:** 2026-05-15
 **Decision on entry:** first attempt
 
