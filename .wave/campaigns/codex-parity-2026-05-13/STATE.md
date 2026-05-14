@@ -8,17 +8,17 @@ plan_source: specs/codex-parity-handoff.html
 executor_agent: caveman
 executor_model: ""
 executor_variant: ""
-current_wave: 15
-wave_status: pending
+current_wave: 16
+wave_status: all_complete
 failure_kind: ""
 retry_count: 0
 verify_count: 0
 user_question: ""
 loop_state: armed
-active_session_id: ses_1dbf253f8ffeQcPCzBZticVzXP
+active_session_id: ses_1dbc6f958ffekOK6SXqlmBjywQ
 active_session_kind: executor
 total_waves: 16
-session_count: 15
+session_count: 16
 created: 2026-05-13
 last_updated: 2026-05-14
 ```
@@ -42,4 +42,4 @@ Six multi-agent v2 tools (spawn/send/followup/wait/list/close) + shared currentA
 | 12 | complete | ses_1dc2c9350ffe0wFF7JqqvODXfB | 95f150e7c | Permission integration + agent system prompt fragments: per-built-in overrides for all 7 new keys (build/general allow, plan/compaction/title/summary deny, explore allows coordination subset and denies destructive); SystemPrompt.capabilityHints helper gated on agent mode + permission, three new fragments (persistent-processes, multi-agent-root, multi-agent-subagent) injected post-skills; 100% line coverage on wave-touched code in agent.ts + system.ts; backward-compat test asserts compaction/title/summary receive zero hints |
 | 13 | complete | ses_1dc1ad967fferifotQdujyeJ3p | 68401b382 | Backward compat verification: 62 tests across 6 files (legacy-session schema+round-trip, legacy task tool envelope, pty consumer schemas, system prompt regression, plugin hooks, event replay), synthetic legacy-session.json fixture exercises every MessageV2.Part variant, 4 pre-existing test failures on codemaxxxing branch are not regressions, manual smoke procedure documented in test/backward-compat/manual-smoke.md, 2 new GOTCHAS appended (syncevent-publish runtime mismatch, ID-brand string coercion) |
 | 14 | complete | ses_1dbf253f8ffeQcPCzBZticVzXP | 845816bbc | E2E suite (10 scenario files + final perf audit): parallel-explorers, worker-pipeline, debate, observer, persistent-repl, long-running-server, cancellation-cascade, permission-denial, concurrent-perf-invariants (4-sibling ≤1.6× + mailbox p99 ≤5ms), memory-load (16 agents × 4 turns, RSS delta ≤160 MiB); 12 tests pass; perf-final-report.md aggregates baseline + 10 wave files, all baseline metrics within budget; 2 new GOTCHAS appended (permission wildcard-deny removes tools, e2e perf median-of-N) |
-| 15 | pending  | — | — | Spec doc at specs/codex-parity.md |
+| 15 | complete | ses_1dbc6f958ffekOK6SXqlmBjywQ | — | spec doc shipped at specs/codex-parity.md (375 lines, tone-matched to specs/tui-render-freeze.md, links to plan/CONSTANTS.md + plan/TOOL_SCHEMAS.md + plan/MESSAGE_SHAPES.md + plan/PERF.md + plan/BACKWARD_COMPAT.md + artifacts/perf-final-report.md, file:line refs throughout) — campaign complete
