@@ -1,0 +1,308 @@
+{
+  "_comment": "Synthetic legacy session fixture for codex-parity wave 13 backward-compat tests. Hand-built to match the pre-campaign on-disk shape exactly: every MessageV2.Part variant present at least once, permission ruleset uses only pre-campaign keys (no exec_command / spawn_agent / send_message / etc.), Pty.Info entries omit the optional `origin` field, SubtaskPart omits the wave-9 `protocol` marker. The loader hydrates these via Session.Service.updateMessage / updatePart and asserts that read-back matches.",
+  "sessions": [
+    {
+      "id": "ses_legacy_root",
+      "slug": "legacy-root",
+      "projectID": "prj_legacy",
+      "directory": "/legacy/dir",
+      "title": "Legacy root session (no parent)",
+      "version": "0.0.0-legacy",
+      "agent": "build",
+      "model": {
+        "id": "claude-sonnet-4-6",
+        "providerID": "anthropic"
+      },
+      "time": {
+        "created": 1730000000000,
+        "updated": 1730000300000
+      },
+      "permission": [
+        { "permission": "bash", "pattern": "*", "action": "ask" },
+        { "permission": "edit", "pattern": "*", "action": "ask" },
+        { "permission": "write", "pattern": "*", "action": "ask" },
+        { "permission": "read", "pattern": "*", "action": "allow" },
+        { "permission": "task", "pattern": "*", "action": "ask" },
+        { "permission": "todowrite", "pattern": "*", "action": "allow" },
+        { "permission": "plan_enter", "pattern": "*", "action": "allow" },
+        { "permission": "plan_exit", "pattern": "*", "action": "allow" },
+        { "permission": "question", "pattern": "*", "action": "allow" },
+        { "permission": "doom_loop", "pattern": "*", "action": "ask" },
+        { "permission": "webfetch", "pattern": "*", "action": "allow" },
+        { "permission": "external_directory", "pattern": "*", "action": "ask" }
+      ]
+    },
+    {
+      "id": "ses_legacy_child",
+      "slug": "legacy-child",
+      "projectID": "prj_legacy",
+      "directory": "/legacy/dir",
+      "title": "Legacy child session (parentID set, no permission overrides)",
+      "version": "0.0.0-legacy",
+      "agent": "explore",
+      "parentID": "ses_legacy_root",
+      "time": {
+        "created": 1730000400000,
+        "updated": 1730000500000
+      }
+    }
+  ],
+  "messages": [
+    {
+      "id": "msg_user_1",
+      "sessionID": "ses_legacy_root",
+      "role": "user",
+      "agent": "user",
+      "model": { "providerID": "anthropic", "modelID": "claude-sonnet-4-6" },
+      "time": { "created": 1730000000100 }
+    },
+    {
+      "id": "msg_assistant_1",
+      "sessionID": "ses_legacy_root",
+      "role": "assistant",
+      "agent": "build",
+      "mode": "build",
+      "parentID": "msg_user_1",
+      "providerID": "anthropic",
+      "modelID": "claude-sonnet-4-6",
+      "path": { "cwd": "/legacy/dir", "root": "/legacy/dir" },
+      "cost": 0.0042,
+      "tokens": {
+        "total": 1234,
+        "input": 800,
+        "output": 400,
+        "reasoning": 34,
+        "cache": { "read": 100, "write": 50 }
+      },
+      "time": { "created": 1730000000200, "completed": 1730000000900 },
+      "finish": "end_turn"
+    },
+    {
+      "id": "msg_assistant_compaction",
+      "sessionID": "ses_legacy_root",
+      "role": "assistant",
+      "agent": "compaction",
+      "mode": "compaction",
+      "parentID": "msg_assistant_1",
+      "providerID": "anthropic",
+      "modelID": "claude-sonnet-4-6",
+      "path": { "cwd": "/legacy/dir", "root": "/legacy/dir" },
+      "cost": 0,
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache": { "read": 0, "write": 0 }
+      },
+      "summary": true,
+      "time": { "created": 1730000300000 },
+      "finish": "end_turn"
+    },
+    {
+      "id": "msg_user_child",
+      "sessionID": "ses_legacy_child",
+      "role": "user",
+      "agent": "user",
+      "model": { "providerID": "anthropic", "modelID": "claude-sonnet-4-6" },
+      "time": { "created": 1730000400100 }
+    }
+  ],
+  "parts": [
+    {
+      "id": "prt_text_user",
+      "sessionID": "ses_legacy_root",
+      "messageID": "msg_user_1",
+      "type": "text",
+      "text": "Help me understand the auth flow."
+    },
+    {
+      "id": "prt_step_start",
+      "sessionID": "ses_legacy_root",
+      "messageID": "msg_assistant_1",
+      "type": "step-start",
+      "snapshot": "snapshot-hash-step-start"
+    },
+    {
+      "id": "prt_reasoning",
+      "sessionID": "ses_legacy_root",
+      "messageID": "msg_assistant_1",
+      "type": "reasoning",
+      "text": "I should grep for the auth middleware first.",
+      "time": { "start": 1730000000300, "end": 1730000000400 }
+    },
+    {
+      "id": "prt_text_assistant",
+      "sessionID": "ses_legacy_root",
+      "messageID": "msg_assistant_1",
+      "type": "text",
+      "text": "Auth flow is in `src/auth/middleware.ts`. JWT validated against the public key in `auth-config.json`."
+    },
+    {
+      "id": "prt_tool_read",
+      "sessionID": "ses_legacy_root",
+      "messageID": "msg_assistant_1",
+      "type": "tool",
+      "callID": "call_read_1",
+      "tool": "read",
+      "state": {
+        "status": "completed",
+        "input": { "filePath": "/legacy/dir/src/auth/middleware.ts" },
+        "output": "export function authMiddleware(req) { ... }",
+        "title": "src/auth/middleware.ts",
+        "metadata": { "lines": 42 },
+        "time": { "start": 1730000000500, "end": 1730000000510 }
+      }
+    },
+    {
+      "id": "prt_tool_edit",
+      "sessionID": "ses_legacy_root",
+      "messageID": "msg_assistant_1",
+      "type": "tool",
+      "callID": "call_edit_1",
+      "tool": "edit",
+      "state": {
+        "status": "error",
+        "input": { "filePath": "/legacy/dir/src/auth/middleware.ts", "oldString": "x", "newString": "y" },
+        "error": "oldString not found in content",
+        "metadata": {},
+        "time": { "start": 1730000000600, "end": 1730000000610 }
+      }
+    },
+    {
+      "id": "prt_tool_bash",
+      "sessionID": "ses_legacy_root",
+      "messageID": "msg_assistant_1",
+      "type": "tool",
+      "callID": "call_bash_1",
+      "tool": "bash",
+      "state": {
+        "status": "running",
+        "input": { "command": "bun typecheck" },
+        "title": "bun typecheck",
+        "time": { "start": 1730000000700 }
+      }
+    },
+    {
+      "id": "prt_tool_todowrite",
+      "sessionID": "ses_legacy_root",
+      "messageID": "msg_assistant_1",
+      "type": "tool",
+      "callID": "call_todo_1",
+      "tool": "todowrite",
+      "state": {
+        "status": "pending",
+        "input": { "todos": [] },
+        "raw": "{\"todos\":[]}"
+      }
+    },
+    {
+      "id": "prt_tool_task",
+      "sessionID": "ses_legacy_root",
+      "messageID": "msg_assistant_1",
+      "type": "tool",
+      "callID": "call_task_1",
+      "tool": "task",
+      "state": {
+        "status": "completed",
+        "input": {
+          "description": "Find auth tests",
+          "prompt": "Locate all tests for the auth middleware",
+          "subagent_type": "explore"
+        },
+        "output": "task_id: ses_legacy_child (for resuming to continue this task if needed)\n\n<task_result>\nFound 3 tests in test/auth/.\n</task_result>",
+        "title": "Find auth tests",
+        "metadata": { "sessionId": "ses_legacy_child" },
+        "time": { "start": 1730000000800, "end": 1730000000820 }
+      }
+    },
+    {
+      "id": "prt_subtask",
+      "sessionID": "ses_legacy_root",
+      "messageID": "msg_assistant_1",
+      "type": "subtask",
+      "prompt": "Locate all tests for the auth middleware",
+      "description": "Find auth tests",
+      "agent": "explore",
+      "model": { "providerID": "anthropic", "modelID": "claude-sonnet-4-6" }
+    },
+    {
+      "id": "prt_file",
+      "sessionID": "ses_legacy_root",
+      "messageID": "msg_assistant_1",
+      "type": "file",
+      "mime": "image/png",
+      "filename": "diagram.png",
+      "url": "data:image/png;base64,iVBORw0KGgo="
+    },
+    {
+      "id": "prt_agent",
+      "sessionID": "ses_legacy_root",
+      "messageID": "msg_assistant_1",
+      "type": "agent",
+      "name": "explore"
+    },
+    {
+      "id": "prt_snapshot",
+      "sessionID": "ses_legacy_root",
+      "messageID": "msg_assistant_1",
+      "type": "snapshot",
+      "snapshot": "abc123def456"
+    },
+    {
+      "id": "prt_patch",
+      "sessionID": "ses_legacy_root",
+      "messageID": "msg_assistant_1",
+      "type": "patch",
+      "hash": "deadbeef",
+      "files": ["src/auth/middleware.ts", "src/auth/types.ts"]
+    },
+    {
+      "id": "prt_retry",
+      "sessionID": "ses_legacy_root",
+      "messageID": "msg_assistant_1",
+      "type": "retry",
+      "attempt": 1,
+      "error": {
+        "name": "APIError",
+        "data": {
+          "message": "Rate limit exceeded",
+          "statusCode": 429,
+          "isRetryable": true
+        }
+      },
+      "time": { "created": 1730000000850 }
+    },
+    {
+      "id": "prt_step_finish",
+      "sessionID": "ses_legacy_root",
+      "messageID": "msg_assistant_1",
+      "type": "step-finish",
+      "reason": "stop",
+      "snapshot": "snapshot-hash-step-finish",
+      "cost": 0.0042,
+      "tokens": {
+        "total": 1234,
+        "input": 800,
+        "output": 400,
+        "reasoning": 34,
+        "cache": { "read": 100, "write": 50 }
+      }
+    },
+    {
+      "id": "prt_compaction",
+      "sessionID": "ses_legacy_root",
+      "messageID": "msg_assistant_compaction",
+      "type": "compaction",
+      "auto": true,
+      "overflow": false,
+      "tail_start_id": "msg_assistant_1"
+    },
+    {
+      "id": "prt_text_child",
+      "sessionID": "ses_legacy_child",
+      "messageID": "msg_user_child",
+      "type": "text",
+      "text": "Inherited prompt from the legacy task tool dispatch."
+    }
+  ]
+}

@@ -8,17 +8,17 @@ plan_source: specs/codex-parity-handoff.html
 executor_agent: caveman
 executor_model: ""
 executor_variant: ""
-current_wave: 13
+current_wave: 14
 wave_status: pending
 failure_kind: ""
 retry_count: 0
 verify_count: 0
 user_question: ""
 loop_state: armed
-active_session_id: ses_1dc2c9350ffe0wFF7JqqvODXfB
+active_session_id: ses_1dc1ad967fferifotQdujyeJ3p
 active_session_kind: executor
 total_waves: 16
-session_count: 13
+session_count: 14
 created: 2026-05-13
 last_updated: 2026-05-14
 ```
@@ -38,8 +38,8 @@ last_updated: 2026-05-14
 Six multi-agent v2 tools (spawn/send/followup/wait/list/close) + shared currentAgentPath helper: 172 wave-8 tests, 100% line+branch on all 8 new files, registry + permission defaults wired, integration test walks all six in sequence
 | 9 | complete | ses_1dcbb89d3ffe0EQ4B6do4NnUYx | 12aa8deaf | runLoop integration: SubtaskPart `protocol: "v2"` marker, AgentControl.registerRunLoop + drainMailbox + hasPendingTriggerTurn + cancelChildrenOf, parent cancel cascades to children, mailbox drained at top of every iteration, 7 new prompt-test scenarios cover legacy/v2/drain/empty/cancel/spawn-fail/trigger-defer + slugify, control.ts 100% line, perf p50 8.5µs (baseline 19.5µs) within budget |
 | 10 | complete | ses_1dc85d4b8ffeEurxIqQy062Fjn | 9bb594a3e | EventV2 + Bus events for agent lifecycle (Spawn.Started/Ended, Closed, Wait.Started/Ended, Message.Sent), status derivation from Step.Started/Ended, onSpawnEvent removed, 100% line coverage on touched files |
-| 11 | complete | ses_1dc4f7beeffeQVk1kqm9V8DUPf | 79b832071 | TUI subagent enhancements: subagent-status helper, SubagentFooterView (with status display), MailboxMessage component, dialog-subagent close action, all four touched files at 100% line coverage; multi-agent-render bench p50 4-sibling 1.30× single (cap 1.5×); helper+view / wrapper file split documented in GOTCHAS
+| 11 | complete | ses_1dc4f7beeffeQVk1kqm9V8DUPf | 79b832071 | TUI subagent enhancements: subagent-status helper, SubagentFooterView (with status display), MailboxMessage component, dialog-subagent close action, all four touched files at 100% line coverage; multi-agent-render bench p50 4-sibling 1.30× single (cap 1.5×); helper+view / wrapper file split documented in GOTCHAS |
 | 12 | complete | ses_1dc2c9350ffe0wFF7JqqvODXfB | 95f150e7c | Permission integration + agent system prompt fragments: per-built-in overrides for all 7 new keys (build/general allow, plan/compaction/title/summary deny, explore allows coordination subset and denies destructive); SystemPrompt.capabilityHints helper gated on agent mode + permission, three new fragments (persistent-processes, multi-agent-root, multi-agent-subagent) injected post-skills; 100% line coverage on wave-touched code in agent.ts + system.ts; backward-compat test asserts compaction/title/summary receive zero hints |
-| 13 | pending  | — | — | Backward compat verification (legacy snapshot, task tool, pty consumer) |
+| 13 | complete | ses_1dc1ad967fferifotQdujyeJ3p | — | Backward compat verification: 62 tests across 6 files (legacy-session schema+round-trip, legacy task tool envelope, pty consumer schemas, system prompt regression, plugin hooks, event replay), synthetic legacy-session.json fixture exercises every MessageV2.Part variant, 4 pre-existing test failures on codemaxxxing branch are not regressions, manual smoke procedure documented in test/backward-compat/manual-smoke.md, 2 new GOTCHAS appended (syncevent-publish runtime mismatch, ID-brand string coercion) |
 | 14 | pending  | — | — | E2E integration tests + final perf audit |
 | 15 | pending  | — | — | Spec doc at specs/codex-parity.md |

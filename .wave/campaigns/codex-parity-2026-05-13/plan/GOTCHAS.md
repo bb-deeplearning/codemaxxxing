@@ -1473,3 +1473,107 @@ When writing future WAVE.md verification blocks, use the substring form. When in
 - See `[bun-test-bench-file-path]` (wave_1) for the inverse case (bench file vs source file).
 
 ---
+
+## [syncevent-publish-uses-top-level-bus-runtime] events emitted via SyncEvent.run land on the TOP-LEVEL Bus.publish runtime, NOT the in-effect Bus.Service in your test layer
+
+**Discovered in:** wave_13
+**Date:** 2026-05-14
+**Surfaces affected:** any wave whose tests subscribe to bus events that are emitted as a side effect of `SyncEvent.run` — wave 13 backward-compat event-replay test; future waves that observe sourced-event publication (e.g. wave 14 e2e tests, any wave that asserts session lifecycle events fire from message updates)
+**Severity:** DX-trap (subscriber array stays empty; assertions trivially pass for the wrong reason)
+
+### Symptom
+
+A test sets up `testEffect(Layer.mergeAll(Session.defaultLayer, Bus.layer, SyncEvent.layer.pipe(Layer.provide(Bus.layer))))`, subscribes via the in-effect `bus.subscribeAllCallback(...)` Service method, calls `Session.updateMessage` / `Session.updatePart` / `SyncEvent.run(...)` to trigger event emission, then asserts the subscriber's collected array is non-empty. The array stays empty. No error, no warning — `expect(seen.length).toBeGreaterThan(0)` fails with `Received: 0`.
+
+### Root cause
+
+`SyncEvent.run` (and `SyncEvent.replay`) publish the resulting event via the top-level helper `ProjectBus.publish(def, data, { id: event.id })` at `sync/index.ts:311`. The top-level `publish` helper resolves through its own `makeRuntime(Service, layer)` runtime (`bus/index.ts:179`), which is a SEPARATE Bus.Service instance from the one in the test's `testEffect` layer.
+
+The wave-3 GOTCHA `[bus-subscribe-helper-vs-service-method-cross-runtime-mismatch]` documents the converse: top-level `Bus.subscribe` doesn't see events published via the in-effect `bus.publish`. This wave hit the inverse: in-effect `bus.subscribeAllCallback` doesn't see events published via the top-level `ProjectBus.publish` that `SyncEvent.run` is hardwired to use.
+
+The two runtimes share `memoMap` only when both go through the same path (e.g. tests using `AppRuntime.runPromise` for both publish and subscribe work; tests with `testEffect` + in-effect subscribe break because the test layer's PubSub instances are separate from the global helper runtime's PubSub instances).
+
+### Fix pattern
+
+For tests that subscribe to events published BY `SyncEvent.run` (or any other top-level helper publisher), use the top-level subscribe helpers:
+
+```ts
+// Bad: in-effect subscribeAllCallback misses events published via SyncEvent.run
+const bus = yield* Bus.Service
+const off = yield* bus.subscribeAllCallback((evt) => seen.push(evt))
+
+// Good: top-level Bus.subscribeAll matches the runtime that SyncEvent uses
+const off = Bus.subscribeAll((evt) => seen.push(evt))
+yield* Effect.sleep(20)  // let the subscription attach before publishing
+yield* hydrate(...)
+yield* Effect.sleep(50)  // let the subscriber drain pending events
+off()
+```
+
+Symmetric to the wave-3 rule:
+
+| Publisher | Subscriber that sees the events |
+|---|---|
+| In-effect `bus.publish(...)` (your test, services using `Bus.Service`) | In-effect `bus.subscribeCallback(...)` |
+| Top-level `Bus.publish(...)` helper (or anything routing through `ProjectBus.publish`, including `SyncEvent.run` / `SyncEvent.replay`) | Top-level `Bus.subscribe(...)` / `Bus.subscribeAll(...)` |
+
+When you don't know which path a publisher takes, grep the source: `Bus.publish` (capital B) is the helper; `bus.publish` (lowercase) is the in-effect Service method.
+
+### Reference
+
+- Working example: `packages/opencode/test/backward-compat/event-replay.test.ts` uses top-level `Bus.subscribeAll` to observe events from `SyncEvent.run` calls inside the hydrator.
+- Failing pattern (commented out in wave-13 attempt): `bus.subscribeAllCallback` from the in-effect Service produced 0 events for `Session.updateMessage` calls.
+- Source of the asymmetry: `packages/opencode/src/sync/index.ts:311` (`ProjectBus.publish` is the top-level helper) vs `packages/opencode/src/bus/index.ts:179` (`makeRuntime` for top-level helpers — separate from `testEffect`'s Bus.Service).
+- Inverse gotcha: `[bus-subscribe-helper-vs-service-method-cross-runtime-mismatch]` (wave_3).
+
+---
+
+## [session-id-descending-not-make-for-fixture-string-coercion] use `SessionID.descending(string)` over `SessionID.make(string)` when handing a known-good string to a brand schema
+
+**Discovered in:** wave_13
+**Date:** 2026-05-14
+**Surfaces affected:** any wave that loads JSON fixtures with stable IDs and needs to wrap them in branded ID types — wave 13 backward-compat fixture loader; future waves with snapshot-driven assertion patterns (wave 14 e2e, wave 15 spec doc examples)
+**Severity:** DX-trap (`Schema.brand` `.make` rejects plain strings at typecheck despite accepting them at runtime)
+
+### Symptom
+
+Calling `SessionID.make("ses_legacy_root")` against a `Schema.brand("SessionID")`-derived constructor produces a TS2769:
+
+```
+Argument of type 'string' is not assignable to parameter of type 'string & Brand<"SessionID">'.
+  Type 'string' is not assignable to type 'Brand<"SessionID">'.
+```
+
+The string IS a valid SessionID at runtime (starts with the right prefix), but TS's signature on `BrandSchema.make` requires the input to ALREADY be branded — chicken-and-egg.
+
+### Root cause
+
+`Schema.brand(...)` produces a constructor whose `.make()` method's input type carries the brand. The intent is "if you're calling `.make()`, you've already validated/branded the input upstream." For the common path (constructing IDs via `Identifier.ascending` / `Identifier.descending` which return prefix-validated branded strings) this is fine. For the fixture path (loading a JSON string that happens to be a valid ID) the type system blocks the direct `.make` call.
+
+`MessageID.make("msg_xxx")` and `PtyID.make("pty_xxx")` etc. all hit the same trap.
+
+### Fix pattern
+
+Use the `.ascending(given?)` or `.descending(given?)` static defined alongside each ID schema. These accept a plain `string` parameter (validated against the prefix at runtime) and return a properly branded value:
+
+```ts
+// Bad: TS rejects, even though "ses_legacy_root" is a valid SessionID string
+const sid = SessionID.make("ses_legacy_root")
+
+// Good: descending accepts string, validates prefix, returns branded SessionID
+const sid = SessionID.descending("ses_legacy_root")
+
+// Same pattern for MessageID / PartID / PtyID:
+const mid = MessageID.ascending("msg_user_1")
+const pid = PartID.ascending("prt_text_user")
+const tid = PtyID.ascending("pty_legacy_term_1")
+```
+
+The validation rule lives at `src/id/id.ts:41`: `if (!given.startsWith(prefixes[prefix])) throw ...`. The function returns `given` verbatim when valid, so `SessionID.descending("ses_legacy_root")` is functionally `"ses_legacy_root"` with the brand applied.
+
+### Reference
+
+- ID definitions: `packages/opencode/src/session/schema.ts` (SessionID/MessageID/PartID), `packages/opencode/src/pty/schema.ts` (PtyID).
+- Working example: `packages/opencode/test/backward-compat/legacy-session.test.ts` and `pty-existing-consumers.test.ts` both use `<ID>.descending(...)` / `<ID>.ascending(...)` for fixture-string-to-brand coercion.
+- Identifier validation: `packages/opencode/src/id/id.ts:36-45` (`generateID` accepts a `given` string and returns it after prefix validation).
+- Counter-example: `test/storage/json-migration.test.ts:222` uses `SessionID.make("ses_test456def")` — works only because that test predates the brand change; new code should follow the `.descending` / `.ascending` pattern.
