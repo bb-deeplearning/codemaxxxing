@@ -1121,6 +1121,34 @@ describe("tool.shell abort", () => {
     })
   }, 15_000)
 
+  test("rejects negative timeout values via schema", async () => {
+    await WithInstance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const bash = await initShell()
+        let caught: unknown
+        try {
+          await Effect.runPromise(
+            bash.execute(
+              {
+                command: "echo neg",
+                description: "Negative timeout",
+                timeout: -1,
+              },
+              ctx,
+            ),
+          )
+        } catch (e) {
+          caught = e
+        }
+        // Schema's PositiveInt catches before execute body — confirm the
+        // standard schema-error message surfaces, not the legacy manual throw.
+        expect(String(caught)).toContain("invalid arguments")
+        expect(String(caught)).toContain("greater than 0")
+      },
+    })
+  })
+
   test.skipIf(process.platform === "win32")("captures stderr in output", async () => {
     await WithInstance.provide({
       directory: projectRoot,

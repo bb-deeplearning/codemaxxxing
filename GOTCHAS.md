@@ -37,6 +37,7 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | Wiring a long-lived bus subscriber inside a service | `bus-subscriber-needs-instance-state-fork-and-instance-ref`, `syncevent-publish-uses-helper-bus-not-test-layer-bus` |
 | Storing service state shared across instances | `agentcontrol-providerref-must-live-in-layer-not-instancestate` |
 | Defining a new tool with `Tool.define` | `tool-define-inner-effect-gen-closing-brace`, `tool-execute-needs-explicit-result-type-disjoint-metadata`, `tool-context-ask-typed-as-void` |
+| Lifting helpers out of `Tool.define` into a sibling module | `tool-define-execute-r-must-be-never-capture-services-in-closure` |
 | Adding a new dep to `ToolRegistry`'s layer | `agentcontrol-required-by-toolregistry-existing-test-layers` |
 | Spawning model PTYs (`origin: "model"`) | `pty-onexit-auto-remove-tui-only`, `pty-create-term-override-tui-only` |
 | Adding a wave bench against the frozen baseline | `pty-bench-baseline-vs-new-work`, `runloop-bench-vs-baseline-methodology-mismatch`, `opentui-render-bench-noise-needs-best-of-n`, `bench-tool-yield-loses-transitive-deps` |
@@ -87,8 +88,9 @@ Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offs
 - L551 `eventv2-and-bus-dual-emission-with-parallel-type-prefixes` — keep EventV2 (`session.next.<domain>.…`) and BusEvent (`<domain>.…`) under different type prefixes; emit both with the same payload.
 
 ### Tool definitions
-- L952 `tool-define-inner-effect-gen-closing-brace` — wrapping the spec in an inner `Effect.gen` leaves a `})` line at 0 hits.
-- L981 `tool-execute-needs-explicit-result-type-disjoint-metadata` — multi-branch `execute` with disjoint metadata needs `Effect.Effect<Tool.ExecuteResult>` annotation.
+- L954 `tool-define-execute-r-must-be-never-capture-services-in-closure` — lifting helpers out of `Tool.define` widens execute's R; capture services in the outer closure and provide inline.
+- L995 `tool-define-inner-effect-gen-closing-brace` — wrapping the spec in an inner `Effect.gen` leaves a `})` line at 0 hits.
+- L1024 `tool-execute-needs-explicit-result-type-disjoint-metadata` — multi-branch `execute` with disjoint metadata needs `Effect.Effect<Tool.ExecuteResult>` annotation.
 - L918 `tool-context-ask-typed-as-void` — `ctx.ask` is typed `Effect<void>` but raises at runtime; use `Effect.acquireUseRelease` for cleanup.
 - L172 `agentcontrol-required-by-toolregistry-existing-test-layers` — adding a new dep to `ToolRegistry.layer` silently breaks every custom test layer.
 - L257 `bench-tool-yield-loses-transitive-deps` — yielding a tool factory directly skips transitive deps; route through `ToolRegistry.tools(...)`.
@@ -946,6 +948,47 @@ return yield* Effect.acquireUseRelease(
 Inline cleanup paths (e.g. `ctx.abort` detected before the read) still need explicit cleanup since they return success exits.
 **Why:** `Tool.Context.ask` is declared as `Effect.Effect<void>` — the error channel is `never`. `.pipe(Effect.catch(handler))` is type-checked but unreachable. In reality the Permission service raises typed failures; the `Tool.define` wrapper applies `Effect.orDie`, converting them into defects that bypass `Effect.catch`.
 **See:** `packages/opencode/src/tool/tool.ts:24` (`ask` declaration), `:124` (`Effect.orDie`).
+
+---
+
+### `tool-define-execute-r-must-be-never-capture-services-in-closure`
+
+**Severity:** DX-trap
+**When:** Lifting a helper out of a `Tool.define`'s outer `Effect.gen` into a sibling module as an `Effect.fn` that yields its services from inside (e.g. `function* () { const fs = yield* AppFileSystem.Service; ... }`).
+**Symptom:** Tool typechecks fine in isolation. Wiring the new helper into the existing `execute` body breaks `Tool.define`:
+```
+Argument of type 'Effect<..., never, ChildProcessSpawner | AppFileSystem.Service | ...>'
+  is not assignable to parameter of type 'Effect<Init<..., M>, never, R>'.
+    Type 'ChildProcessSpawner | AppFileSystem.Service' is not assignable to type 'never'.
+```
+The Tool's `execute(args, ctx)` signature in `tool.ts` enforces `Effect.Effect<ExecuteResult<M>, never, never>`. R must be empty by the time `execute` returns. Every service the inner code transitively needs must be satisfied at the call site, not the type signature.
+**Fix:** Yield each service ONCE in the outer `Effect.gen` (where R is allowed to be wide), capture them as locals, then provide them inline at every call site of the lifted helper. A small `provide` lambda keeps the noise contained:
+
+```ts
+export const ShellTool = Tool.define(ShellID.ToolID, Effect.gen(function* () {
+  const spawner = yield* ChildProcessSpawner          // captured in closure
+  const fs = yield* AppFileSystem.Service             // captured in closure
+
+  // Shim — keeps execute's R = never while letting scan helpers self-yield.
+  const scanProvide = <A, E>(eff: Effect.Effect<A, E, ChildProcessSpawner | AppFileSystem.Service>) =>
+    eff.pipe(
+      Effect.provideService(ChildProcessSpawner, spawner),
+      Effect.provideService(AppFileSystem.Service, fs),
+    )
+
+  return () => Effect.gen(function* () {
+    return {
+      execute: (params, ctx) => Effect.gen(function* () {
+        const scan = yield* scanProvide(ShellScan.scanCommand({ ... }))   // R discharged here
+        // ...
+      }),
+    }
+  })
+}))
+```
+
+**Why:** `Tool.define`'s constraint is structural: the registry's typed dispatch needs `execute` to be self-contained at the value level. The R-channel widening from `Effect.fn` helpers travels up the gen until something provides the service. Layer-level provision works for `init()` (whose R is in the type), but not for `execute` (whose R must be `never` regardless of how the body composes). This pattern landed in Wave 1 of the `replace-bash-task-2026-05-15` campaign when `argPath`/`resolvePath`/`cygpath`/`collect` moved out of `tool/shell.ts` into `tool/shell/scan.ts`. Wave 2 reuses the same pattern when wiring `ShellScan.*` into `tool/process/exec-command.ts`.
+**See:** `packages/opencode/src/tool/shell.ts` (post-Wave-1) — `scanProvide` shim wrapping `ShellScan.scanCommand` calls. Related: `agentcontrol-required-by-toolregistry-existing-test-layers` (sibling layering pattern).
 
 ---
 

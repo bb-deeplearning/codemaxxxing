@@ -12,20 +12,24 @@
 import { afterEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { Agent } from "@/agent/agent"
 import { AgentControl } from "@/agent/control"
 import { Config } from "@/config/config"
+import { InstanceState } from "@/effect/instance-state"
 import { Permission } from "@/permission"
+import { Plugin } from "@/plugin"
 import { Session } from "@/session/session"
+import { Shell } from "@/shell/shell"
 import { Truncate } from "@/tool/truncate"
+import { ShellScan } from "@/tool/shell/scan"
 import { ToolRegistry } from "@/tool/registry"
+import * as Tool from "@/tool/tool"
+import { MessageID, SessionID } from "@/session/schema"
 import { disposeAllInstances } from "../fixture/fixture"
+import { loadScannerCorpus } from "../fixtures/load-config"
+import { generateCommand, makeRng, scanEqual } from "../fixtures/fuzz"
 import { testEffect } from "../lib/effect"
-
-// `expect` stays imported per the WAVE.md template — later waves swap stub
-// bodies for real assertions. Reference once so unused-import linters stay
-// quiet on the Wave 0 scaffold.
-void expect
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -35,35 +39,183 @@ const it = testEffect(
   Layer.mergeAll(
     Agent.defaultLayer,
     AgentControl.defaultLayer,
+    AppFileSystem.defaultLayer,
     Config.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
     Permission.defaultLayer,
+    Plugin.defaultLayer,
     Session.defaultLayer,
     Truncate.defaultLayer,
     ToolRegistry.defaultLayer,
   ),
 )
 
+const defaultShell = Shell.acceptable()
+
+type CapturedRequest = Omit<Permission.Request, "id" | "sessionID" | "tool">
+
+const SENTINEL = new Error("__invariant_stop__")
+
+function captureCtx(opts?: { stopOnFirst?: boolean }): {
+  requests: CapturedRequest[]
+  ctx: Tool.Context
+} {
+  const requests: CapturedRequest[] = []
+  const ctx: Tool.Context = {
+    sessionID: SessionID.make("ses_inv"),
+    messageID: MessageID.make(""),
+    callID: "",
+    agent: "build",
+    abort: AbortSignal.any([]),
+    messages: [],
+    metadata: () => Effect.void,
+    ask: (req) =>
+      Effect.sync(() => {
+        requests.push(req)
+        if (opts?.stopOnFirst) throw SENTINEL
+      }),
+  }
+  return { requests, ctx }
+}
+
+const sortedUnique = (arr: ReadonlyArray<string>) => Array.from(new Set(arr)).sort()
+const dirFromGlob = (g: string) => g.replace(/[/\\]\*$/, "")
+
 describe("INTEGRATION_INVARIANTS — tool surface replacement", () => {
-  // TODO(wave_1): unskip when scanner extract preserves byte-identical bash output across the 50-command corpus.
-  it.instance.skip("scanner-extract-preserves-bash-output", () =>
+  // Wave 1 — extract preserves bash-output: every corpus entry produces the
+  // same captured ask payloads as the legacy scanner did at Wave 0.
+  it.instance("scanner-extract-preserves-bash-output", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      const corpus = yield* Effect.promise(() => loadScannerCorpus())
+      const instance = yield* InstanceState.context
+
+      const failures: string[] = []
+      for (const entry of corpus) {
+        const scan = yield* ShellScan.scanCommand({
+          command: entry.cmd,
+          shell: defaultShell,
+          cwd: instance.directory,
+          instance,
+        })
+        const { requests, ctx } = captureCtx({ stopOnFirst: true })
+        yield* ShellScan.askForScan(ctx, scan).pipe(Effect.catchCause(() => Effect.void))
+
+        const bashReq = requests.find((r) => r.permission === "bash")
+        const extReq = requests.find((r) => r.permission === "external_directory")
+
+        const got = {
+          patterns: bashReq ? sortedUnique([...bashReq.patterns]) : [],
+          always: bashReq ? sortedUnique([...bashReq.always]) : [],
+          dirs: extReq ? sortedUnique([...extReq.patterns].map(dirFromGlob)) : [],
+        }
+        const expected = {
+          patterns: [...entry.expected_patterns].sort(),
+          always: [...entry.expected_always].sort(),
+          dirs: [...entry.expected_dirs].sort(),
+        }
+
+        if (
+          JSON.stringify(got.patterns) !== JSON.stringify(expected.patterns) ||
+          JSON.stringify(got.always) !== JSON.stringify(expected.always) ||
+          JSON.stringify(got.dirs) !== JSON.stringify(expected.dirs)
+        ) {
+          failures.push(
+            `cmd=${JSON.stringify(entry.cmd)}\n  expected=${JSON.stringify(expected)}\n  got=${JSON.stringify(got)}`,
+          )
+        }
+      }
+      if (failures.length > 0) throw new Error(`corpus diverged:\n${failures.join("\n")}`)
+      expect(failures.length).toBe(0)
     }),
   )
 
-  // TODO(wave_1): unskip when scanCommand is deterministic under 64 concurrent invocations.
-  it.instance.skip("scanner-deterministic-under-concurrent-load", () =>
+  // Wave 1 — concurrent stress: 64 invocations against varied corpus inputs
+  // must each return the result that matches their own input. Catches cross
+  // contamination from shared parser state.
+  it.instance("scanner-deterministic-under-concurrent-load", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      const corpus = yield* Effect.promise(() => loadScannerCorpus())
+      const instance = yield* InstanceState.context
+      const inputs = Array.from({ length: 64 }, (_, i) => corpus[i % corpus.length])
+
+      const results = yield* Effect.forEach(
+        inputs,
+        (entry) =>
+          ShellScan.scanCommand({
+            command: entry.cmd,
+            shell: defaultShell,
+            cwd: instance.directory,
+            instance,
+          }).pipe(Effect.map((scan) => ({ entry, scan }))),
+        { concurrency: 64 },
+      )
+
+      const failures: string[] = []
+      for (const { entry, scan } of results) {
+        const { requests, ctx } = captureCtx({ stopOnFirst: true })
+        yield* ShellScan.askForScan(ctx, scan).pipe(Effect.catchCause(() => Effect.void))
+        const bashReq = requests.find((r) => r.permission === "bash")
+        const extReq = requests.find((r) => r.permission === "external_directory")
+        const got = {
+          patterns: bashReq ? sortedUnique([...bashReq.patterns]) : [],
+          always: bashReq ? sortedUnique([...bashReq.always]) : [],
+          dirs: extReq ? sortedUnique([...extReq.patterns].map(dirFromGlob)) : [],
+        }
+        const expected = {
+          patterns: [...entry.expected_patterns].sort(),
+          always: [...entry.expected_always].sort(),
+          dirs: [...entry.expected_dirs].sort(),
+        }
+        if (
+          JSON.stringify(got.patterns) !== JSON.stringify(expected.patterns) ||
+          JSON.stringify(got.always) !== JSON.stringify(expected.always) ||
+          JSON.stringify(got.dirs) !== JSON.stringify(expected.dirs)
+        ) {
+          failures.push(`cmd=${entry.cmd}: ${JSON.stringify({ got, expected })}`)
+        }
+      }
+      if (failures.length > 0) throw new Error(`concurrent diverged:\n${failures.join("\n")}`)
+      expect(failures.length).toBe(0)
     }),
   )
 
-  // TODO(wave_1): unskip when scanCommand survives 1000 fuzz inputs without crashing.
-  it.instance.skip("scanner-handles-1000-fuzz-inputs-without-crash", () =>
-    Effect.gen(function* () {
-      yield* Effect.void
-    }),
+  // Wave 1 — fuzz: 1000 generated commands. None crash, all are
+  // deterministic on rerun. Seed printed in the failure path so a flaky
+  // failure can be reproduced.
+  it.instance(
+    "scanner-handles-1000-fuzz-inputs-without-crash",
+    () =>
+      Effect.gen(function* () {
+        const seed = Number(BigInt(Bun.nanoseconds()) & 0xffffffffn)
+        const rng = makeRng(seed)
+        const instance = yield* InstanceState.context
+        for (let i = 0; i < 1000; i++) {
+          const cmd = generateCommand(rng)
+          const a = yield* ShellScan.scanCommand({
+            command: cmd,
+            shell: defaultShell,
+            cwd: instance.directory,
+            instance,
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.sync(() => {
+                throw new Error(`fuzz crash i=${i} seed=${seed} cmd=${JSON.stringify(cmd)}: ${cause}`)
+              }),
+            ),
+          )
+          const b = yield* ShellScan.scanCommand({
+            command: cmd,
+            shell: defaultShell,
+            cwd: instance.directory,
+            instance,
+          })
+          if (!scanEqual(a, b)) {
+            throw new Error(`non-deterministic i=${i} seed=${seed} cmd=${JSON.stringify(cmd)}`)
+          }
+        }
+        expect(true).toBe(true)
+      }),
+    60_000,
   )
 
   // TODO(wave_2): unskip when exec_command honors saved permission.bash allow patterns.
