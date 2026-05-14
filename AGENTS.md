@@ -4,6 +4,17 @@
 - Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
 - Prefer automation: execute requested actions without confirmation unless blocked by missing info or safety/irreversibility.
 
+## Gotchas
+
+`GOTCHAS.md` at the repo root is the curated knowledge base of sharp edges (Effect v4, Bus / InstanceState, opentui rendering, Bun coverage / test discovery, PTY origin gating, perf bench methodology, permission routing, etc.). It uses progressive disclosure:
+
+- `Read GOTCHAS.md limit=200` loads only the indexes (≈4 KB) — start here.
+- The "By surface" table maps "you're about to do X" to relevant slugs.
+- The "By category" index lists every slug with a `L###` jump target.
+- Load a single entry with `Read GOTCHAS.md offset=<L> limit=30`. Don't read the whole file.
+
+Before writing tests, benches, tools, or anything that touches `Bus.Service` / `InstanceState` / `Tool.define` / opentui / PTY, scan the indexes for relevant slugs.
+
 ## Style Guide
 
 ### General Principles

@@ -1,0 +1,994 @@
+# Gotchas
+
+Sharp edges discovered the hard way while building codemaxxxing. Each entry is one painful debugging session distilled to a fix pattern. Read before doing the matching kind of work; you'll save the same hours we did.
+
+## How to use this file (for agents and humans)
+
+This file uses progressive disclosure. Three layers:
+
+1. **By surface** (next section) — a table mapping "you're about to do X" to the slugs you should read. Skim this in ~30 seconds.
+2. **By category** — slugs grouped by subsystem with one-line summaries. Open the section that matches your work.
+3. **Full entries** — every gotcha in detail, alphabetical by slug. Jump via the line numbers in the indexes; do not read the whole file unless you're auditing.
+
+For agents: do `Read GOTCHAS.md limit=200` to load only the indexes. When a slug looks relevant, do a targeted `Read GOTCHAS.md offset=<line> limit=40` to load just that entry.
+
+Entry shape is uniform:
+
+- **When:** the surface that triggers it.
+- **Symptom:** what you observe when you hit it.
+- **Fix:** the pattern that works.
+- **Why:** one-paragraph root cause.
+- **See:** working example file path, plus `[cross-ref-slugs]` to related entries.
+
+Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent slowdown / OOM), `DX-trap` (wastes engineering time, doesn't ship bugs), `API-quirk` (Effect/Bun/etc. surface that surprises).
+
+## By surface — skim this first
+
+| You're doing... | Read entries |
+|---|---|
+| Adding a new file that must reach 100% line coverage | `bun-coverage-line1-quirk`, `bun-coverage-line1-schema-class-only`, `schema-class-function-coverage` |
+| Writing a `*.bench.ts` or `*.bench.tsx` file | `bun-test-bench-file-path`, `bench-file-pattern-split`, `bench-managed-runtime-needs-effect-scoped` |
+| Verifying per-file coverage with `bun test --coverage` | `bun-test-coverage-source-file-arg-runs-zero-tests`, `bun-coverage-aggregation-flake` |
+| Spot-checking with `bun test test/` | `bun-test-test-dir-runs-baseline-orchestrator` |
+| Touching the TUI render hot path | `tui-flex-row-with-tall-text`, `opentui-multi-text-node-vs-single-baseline-cap` |
+| Adding a new TUI component that needs 100% line cov | `tui-component-coverage-needs-mount-split` |
+| Mounting `testRender` from `@opentui/solid` | `opentui-testRender-leak` |
+| Subscribing to bus events in tests | `bus-subscribe-helper-vs-service-method-cross-runtime-mismatch`, `syncevent-publish-uses-top-level-bus-runtime` |
+| Wiring a long-lived bus subscriber inside a service | `bus-subscriber-needs-instance-state-fork-and-instance-ref`, `syncevent-publish-uses-helper-bus-not-test-layer-bus` |
+| Storing service state shared across instances | `agentcontrol-providerref-must-live-in-layer-not-instancestate` |
+| Defining a new tool with `Tool.define` | `tool-define-inner-effect-gen-closing-brace`, `tool-execute-needs-explicit-result-type-disjoint-metadata`, `tool-context-ask-typed-as-void` |
+| Adding a new dep to `ToolRegistry`'s layer | `agentcontrol-required-by-toolregistry-existing-test-layers` |
+| Spawning model PTYs (`origin: "model"`) | `pty-onexit-auto-remove-tui-only`, `pty-create-term-override-tui-only` |
+| Adding a wave bench against the frozen baseline | `pty-bench-baseline-vs-new-work`, `runloop-bench-vs-baseline-methodology-mismatch`, `opentui-render-bench-noise-needs-best-of-n` |
+| Writing e2e perf invariants | `e2e-perf-sibling-fanout-needs-median-of-n` |
+| Verifying a clamp's timing on a TTY-mode process | `tty-line-discipline-echo-defeats-clamp-timing-tests` |
+| Converting typed-error Effects to assertable values | `effect-v4-either-renamed-to-result` |
+| Subscribing to a `SubscriptionRef`'s changes | `subscriptionref-changes-is-top-level` |
+| Polling Instance-bound state from inside async callbacks | `bench-effect-runpromise-loses-instance-in-async-callback` |
+| Loading JSON fixtures with branded IDs | `session-id-descending-not-make-for-fixture-string-coercion` |
+| Writing a permission-deny e2e test | `permission-disabled-removes-tool-from-active-set` |
+| Asserting forbidden words against tool description prose | `word-boundary-regex-vs-prose-collisions` |
+| Tightening a Schema field from optional → required | `bug-3-fix-left-test-files-with-stale-required-shape` |
+| Porting concepts from another codebase (Codex/etc.) | `codex-role-vocabulary-imported-verbatim` |
+| Adding a domain event consumed by both sourced log + bus | `eventv2-and-bus-dual-emission-with-parallel-type-prefixes` |
+| Cleaning up resources in tools when permission is rejected | `tool-context-ask-typed-as-void` |
+
+## By category — slugs with one-line summaries and line offsets
+
+Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offset=N limit=30` to load just one entry. If an entry has shifted, fall back to `grep` for the slug.
+
+### Coverage / test infrastructure
+- L277 `bun-coverage-line1-quirk` — line 1 imports can report 0 hits in lcov.
+- L288 `bun-coverage-line1-schema-class-only` — variant of the above for `Schema.Class`-only files.
+- L706 `schema-class-function-coverage` — `Schema.TaggedErrorClass` keeps function% < 100% even at 100% lines.
+- L312 `bun-test-bench-file-path` — `bun test foo.bench.ts` matches no files; prefix with `./`.
+- L208 `bench-file-pattern-split` — two valid `.bench.ts` shapes; pick the embedded `test()` form per wave.
+- L266 `bun-coverage-aggregation-flake` — `bun test --coverage <dir>/` can drop hits that single-file runs cover.
+- L322 `bun-test-coverage-source-file-arg-runs-zero-tests` — passing a source path silently runs zero tests, exit 0.
+- L345 `bun-test-test-dir-runs-baseline-orchestrator` — `bun test test/` reruns and overwrites frozen baseline JSON.
+
+### Effect v4 specifics
+- L465 `effect-v4-either-renamed-to-result` — `Either` → `Result`; `Effect.either` → `Effect.result`; `right`/`left` → `success`/`failure`.
+- L743 `subscriptionref-changes-is-top-level` — `SubscriptionRef.changes(ref)`, not `ref.changes`.
+- L223 `bench-managed-runtime-needs-effect-scoped` — `provideTmpdirInstance` needs explicit `Effect.scoped` under `ManagedRuntime`.
+- L184 `bench-effect-runpromise-loses-instance-in-async-callback` — `Effect.runPromise` inside `Effect.promise` loses the Instance ALS binding.
+
+### Bus / Instance state
+- L365 `bus-subscribe-helper-vs-service-method-cross-runtime-mismatch` — top-level vs in-effect subscribe target different PubSubs in `testEffect`.
+- L386 `bus-subscriber-needs-instance-state-fork-and-instance-ref` — long-lived subscribers must fork inside `InstanceState.make` AND re-inject `InstanceRef`.
+- L785 `syncevent-publish-uses-top-level-bus-runtime` — events from `SyncEvent.run` land on the top-level Bus runtime, not your test layer's.
+- L766 `syncevent-publish-uses-helper-bus-not-test-layer-bus` — same root cause from the other side: subscribe via top-level `Bus.subscribe` from inside `InstanceState.make`.
+- L130 `agentcontrol-providerref-must-live-in-layer-not-instancestate` — single-value, instance-agnostic state belongs at layer scope, not in `InstanceState`.
+
+### Sourced events
+- L499 `eventv2-and-bus-dual-emission-with-parallel-type-prefixes` — keep EventV2 (`session.next.<domain>.…`) and BusEvent (`<domain>.…`) under different type prefixes; emit both with the same payload.
+
+### Tool definitions
+- L850 `tool-define-inner-effect-gen-closing-brace` — wrapping the spec in an inner `Effect.gen` leaves a `})` line at 0 hits.
+- L879 `tool-execute-needs-explicit-result-type-disjoint-metadata` — multi-branch `execute` with disjoint metadata needs `Effect.Effect<Tool.ExecuteResult>` annotation.
+- L816 `tool-context-ask-typed-as-void` — `ctx.ask` is typed `Effect<void>` but raises at runtime; use `Effect.acquireUseRelease` for cleanup.
+- L164 `agentcontrol-required-by-toolregistry-existing-test-layers` — adding a new dep to `ToolRegistry.layer` silently breaks every custom test layer.
+
+### PTY
+- L668 `pty-onexit-auto-remove-tui-only` — `proc.onExit` auto-removal must gate on `origin === "tui"` so model PTYs survive for post-exit drain.
+- L646 `pty-create-term-override-tui-only` — `Pty.create`'s `TERM=xterm-256color` overlay must gate on `origin === "tui"`.
+- L629 `pty-bench-baseline-vs-new-work` — combining new work into an existing baseline metric is apples-to-oranges; split metrics.
+- L911 `tty-line-discipline-echo-defeats-clamp-timing-tests` — TTY echo wakes `Pty.read` early; verify clamps at the unit level.
+
+### Bench methodology
+- L561 `opentui-render-bench-noise-needs-best-of-n` — opentui `renderOnce` benches need best-of-3 to suppress noise.
+- L535 `opentui-multi-text-node-vs-single-baseline-cap` — N separate `<text>` nodes inherently exceed a single-text baseline by ~1.5×; use `<text><span/>...<span/></text>`.
+- L690 `runloop-bench-vs-baseline-methodology-mismatch` — in-`Effect.gen` microbenches and per-sample-`runPromise` baselines measure different things.
+- L435 `e2e-perf-sibling-fanout-needs-median-of-n` — single-iteration timing flakes under a noisy suite; median-of-5 minimum.
+- L586 `opentui-testRender-leak` — `testRender` allocates native resources; always `handle.renderer.destroy()`.
+
+### TUI rendering
+- L957 `tui-flex-row-with-tall-text` — `<box flexDirection="row">` containing a tall `<text>` child silently freezes opentui paint.
+- L933 `tui-component-coverage-needs-mount-split` — split hooks-using TUI components into helpers+view + wrapper to reach 100% line cov.
+
+### Permission / tool routing
+- L606 `permission-disabled-removes-tool-from-active-set` — wildcard `permission: deny` strips the tool entirely; the `ctx.ask` path never fires.
+
+### ID brand coercion
+- L716 `session-id-descending-not-make-for-fixture-string-coercion` — use `<ID>.descending(string)` / `.ascending(string)`, not `.make(string)`, when wrapping plain fixture strings.
+
+### Asserting on prose
+- L978 `word-boundary-regex-vs-prose-collisions` — `\bword\b` matches every English usage; scope assertions to the structured section, not the whole concatenated description.
+
+### Schema maintenance
+- L249 `bug-3-fix-left-test-files-with-stale-required-shape` — tightening optional → required can leave dependent tests broken in ways `bun typecheck` won't catch through type-erased call sites.
+
+### Cross-codebase porting
+- L419 `codex-role-vocabulary-imported-verbatim` — when porting concepts from a reference codebase, map them to host primitives; never invent new vocabulary that conflicts. Tests must assert real behavior, not just propagation.
+
+---
+
+## Full entries
+
+Alphabetical by slug. Each entry stands alone — read just what you need.
+
+### `agentcontrol-providerref-must-live-in-layer-not-instancestate`
+
+**Severity:** correctness-bug
+**When:** Storing single-value state shared across instances inside `InstanceState.make` and trying to register it from a sibling layer's init effect.
+**Symptom:** First test that materializes the layer crashes with `instance: No context found for instance` from inside `InstanceState.get(state)`.
+**Fix:** Hoist single-value, instance-agnostic state to **layer scope** (top of `Layer.effect`'s effect). Keep per-instance maps inside `InstanceState.make`.
+
+```ts
+export const layer = Layer.effect(
+  Service,
+  Effect.gen(function* () {
+    // Layer-scope: shared across every instance the layer serves.
+    const providerRef = yield* Ref.make<RunLoopProvider | undefined>(undefined)
+
+    const state = yield* InstanceState.make(
+      Effect.fn("AgentControl.state")(function* () {
+        // Per-instance: registry, mailboxes, statuses, fibers, listeners.
+      }),
+    )
+
+    const registerRunLoop = Effect.fn(...)(function* (fn) {
+      // Reads layer-scope ref → no Instance binding required.
+      yield* Ref.set(providerRef, fn)
+    })
+  }),
+)
+```
+
+**Why:** Layer init runs once globally when the runtime materializes; no Instance is bound at that point. `InstanceState.get(state)` requires `Instance.current` bound (it's a `ScopedCache.get` keyed by directory). Registration is logically global and must not pretend to be per-instance.
+**Rule of thumb:** Set-once-at-layer-build → layer scope. Set-per-instance, varies-per-directory → `InstanceState`.
+**See:** `packages/opencode/src/agent/control.ts` `providerRef`. Related: `bus-subscriber-needs-instance-state-fork-and-instance-ref` (opposite resolution for the per-instance subscriber case).
+
+---
+
+### `agentcontrol-required-by-toolregistry-existing-test-layers`
+
+**Severity:** DX-trap
+**When:** Adding a new `Foo.Service` to `ToolRegistry`'s layer requirements.
+**Symptom:** Three unrelated test files fail to typecheck:
+```
+test/tool/registry.test.ts: Type 'Service' is not assignable to type 'never'.
+test/session/prompt.test.ts: ...
+test/session/snapshot-tool-race.test.ts: ...
+```
+**Fix:**
+1. Add `Layer.provide(Foo.defaultLayer)` to `ToolRegistry.defaultLayer` so `defaultLayer` consumers don't break.
+2. `git grep "ToolRegistry.layer.pipe" packages/opencode/test` to find every custom layer composition and add `Layer.provide(Foo.defaultLayer)` to each.
+3. `git grep "Layer.provide(ProcessSessions.defaultLayer)" packages/opencode/test` is a good proxy — these files usually need the new dep too.
+
+**Why:** `defaultLayer` self-supplies its deps, so `defaultLayer` consumers are fine. Tests that build their own composition (typically to inject test config or to avoid expensive defaults) must ALSO provide every new dep. The dep list is implicit — TS only flags it when residual `R` ends up non-empty.
+**See:** `packages/opencode/src/tool/registry.ts` `Service` requirements + `defaultLayer` composition.
+
+---
+
+### `bench-effect-runpromise-loses-instance-in-async-callback`
+
+**Severity:** DX-trap
+**When:** Polling Instance-dependent state from inside an `Effect.promise(async () => …)` callback.
+**Symptom:** `Effect.runPromise(svc.someMethod())` inside the async callback crashes with `instance: No context found for instance`.
+**Fix:** Poll inside an `Effect.gen` scope so `Instance.current` stays valid through the loop:
+
+```ts
+yield* Effect.gen(function* () {
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    const list = yield* svc.someMethod()  // inherits the test's Instance binding
+    if (list.length === 0) return
+    yield* Effect.sleep(30)
+  }
+  throw new Error("timed out waiting for ...")
+})
+```
+
+**Why:** `Effect.runPromise` builds a fresh root scope. The Instance ALS context bound by `provideTmpdirInstance` is on the test's call stack — the new root scope of the inner `runPromise` doesn't inherit it. `Effect.sleep` inside a `while` with `Effect.gen` works because each `yield*` is a continuation in the same fiber.
+**See:** `packages/opencode/test/session/prompt.test.ts` "cancel propagates" test.
+
+---
+
+### `bench-file-pattern-split`
+
+**Severity:** DX-trap
+**When:** Producing a perf bench file.
+**Symptom:** Two patterns coexist in the codebase. Mixing them silently double-counts or fails to run.
+**Fix:** Use **pattern (2)** for per-wave benches — single self-contained `.bench.ts` with embedded `test(...)` and `afterAll`. Run via `bun test ./test/perf/<wave>.bench.ts` (see `bun-test-bench-file-path`). Aggregator-style baselines stay in pattern (1):
+
+- Pattern 1: `test/perf/baseline/*.bench.ts` exports a function returning `Record<string, BenchResult>`; orchestrated by `baseline.test.ts`.
+- Pattern 2: self-contained file with embedded `test()` calls + own `afterAll`.
+
+**Why:** `bun test` only runs files whose names match `*.test.*` etc. Pattern (1) needs an orchestrator. Pattern (2) makes the bench file itself match by including `test()` calls.
+**See:** `packages/opencode/test/perf/baseline/baseline.test.ts` (pattern 1), `packages/opencode/test/perf/head-tail-buffer.bench.ts` (pattern 2).
+
+---
+
+### `bench-managed-runtime-needs-effect-scoped`
+
+**Severity:** DX-trap
+**When:** Writing a perf bench file that uses `provideTmpdirInstance` under `ManagedRuntime`.
+**Symptom:** Cryptic crash:
+```
+error: Service not found: effect/Scope (defined at .../effect/dist/internal/effect.js:1471:46)
+```
+**Fix:** Wrap with `Effect.scoped` before handing to the runtime:
+
+```ts
+const runWithInstance = <A, E, R>(self: Effect.Effect<A, E, R>) => {
+  const runtime = ManagedRuntime.make(layer)
+  return runtime
+    .runPromise(
+      Effect.scoped(provideTmpdirInstance(() => self)) as Effect.Effect<A, E, never>,
+    )
+    .finally(() => runtime.dispose())
+}
+```
+
+**Why:** `provideTmpdirInstance` uses `Effect.addFinalizer`, which requires a Scope. `it.instance(...)` already wraps bodies in `Effect.scoped`; `ManagedRuntime.make(layer)` does NOT provide a default scope.
+**See:** `packages/opencode/test/perf/agent-control.bench.ts`, `packages/opencode/test/fixture/fixture.ts:166-187`.
+
+---
+
+### `bug-3-fix-left-test-files-with-stale-required-shape`
+
+**Severity:** DX-trap
+**When:** Tightening a `Schema.Struct` field from `Schema.optional` to required.
+**Symptom:** Typecheck errors in test files that build inputs without the new required field. Sites that route through `Tool.Def`-typed handles erase the Parameters type, so TS doesn't flag them — they only fail at runtime as `SchemaError(Missing key)`. Schema introspection tests asserting `expect((json.required ?? []).slice().sort())` go stale silently.
+**Fix:**
+1. Run `bun typecheck` immediately and fix every flagged call site in the same commit.
+2. `git grep "<field-name>"` across `*.test.ts` to find sites that route through type-erased handles.
+3. Run the affected test files to surface runtime SchemaError failures.
+4. Audit any test asserting on the schema's `required` list / `accepts` happy path — these encode the OLD shape.
+5. Prefer typed `Tool.Def<typeof Parameters, ...>` over plain `Tool.Def` cast so future schema changes flag at the call site.
+
+**Why:** When a generic `Tool.Def` cast erases the Parameters type, the typechecker can't see that a required field is missing. Combined with the team practice of running `bun typecheck` separately from per-file `bun test` runs, schema tightening can quietly accumulate test debt.
+**See:** Affected files when this last hit: `packages/opencode/src/tool/agent-spawn/agent-spawn.test.ts`, `packages/opencode/src/tool/agent-spawn/schema.test.ts`, `packages/opencode/test/integration/multi-agent-tools.test.ts`.
+
+---
+
+### `bun-coverage-aggregation-flake`
+
+**Severity:** DX-trap
+**When:** Verifying coverage by passing a directory to `bun test --coverage`.
+**Symptom:** `bun test --coverage src/foo/` reports 98.54% on `src/foo/index.ts` with specific lines missing. `bun test --coverage src/foo/index.test.ts` (single file) reports 99.27% with those same lines covered.
+**Fix:** Always run `bun test --coverage <single-file>.test.ts` rather than `bun test --coverage <directory>/`. Single-file runs produce accurate per-line coverage; aggregation across files is unreliable. Treat any percentage that's "100% minus a platform-conditional branch" as effectively 100%.
+**Why:** Bun's V8-backed coverage instrumentation appears to lose hit counts on certain branches when the same code path is exercised across files in an aggregated run. The actual code IS exercised — coverage merely fails to credit it.
+**See also:** `bun-test-coverage-source-file-arg-runs-zero-tests`.
+
+---
+
+### `bun-coverage-line1-quirk`
+
+**Severity:** DX-trap
+**When:** Verifying 100% line coverage on a new file.
+**Symptom:** lcov shows `DA:1,0` (line 1, 0 hits) for the first import statement; coverage stuck at ~99%.
+**Fix:** Reorder imports so line 1 is `import * as <name> from "node:<builtin>"` (namespace import from a node-prefixed builtin) rather than a default import or comment. Don't waste cycles on other shapes — the order is the lever.
+**Why:** Bun's V8 coverage instruments differently depending on the import shape and order. A default-style import on line 1, or a comment on line 1, can report as 0 hits even though the import is evaluated.
+**See also:** `bun-coverage-line1-schema-class-only` for the Schema.Class variant.
+
+---
+
+### `bun-coverage-line1-schema-class-only`
+
+**Severity:** DX-trap
+**When:** Adding a new file that declares ONLY a `Schema.Class<...>` (no top-level `Schema.Union`, no top-level value variable).
+**Symptom:** `import { Schema } from "effect"` on line 1 reports 0 hits in lcov even though every import is evaluated. A sibling file with the same line-1 import that ALSO declares a top-level `Schema.Union` const reports the same line at 100%.
+**Fix:** Reorder imports so line 1 is anything other than `import { Schema } from "effect"`. A workspace-relative import works:
+
+```ts
+// BAD — line 1 reads 0 hits
+import { Schema } from "effect"
+import { SessionID } from "@/session/schema"
+export class Foo extends Schema.Class<Foo>("Foo")({ ... }) {}
+
+// GOOD — same imports, different order
+import { SessionID } from "@/session/schema"
+import { Schema } from "effect"
+export class Foo extends Schema.Class<Foo>("Foo")({ ... }) {}
+```
+
+**Why:** `Schema.Union(...)` / `Schema.Struct(...)` triggers an IIFE-style execution path that records line 1. `Schema.Class<...>` uses a TS class-like path that bypasses the synthetic record, leaving line 1 marked as 0 hits in LCOV.
+**See also:** `bun-coverage-line1-quirk` (the original).
+
+---
+
+### `bun-test-bench-file-path`
+
+**Severity:** DX-trap
+**When:** Running a `*.bench.ts` file directly via `bun test`.
+**Symptom:** `bun test test/perf/foo.bench.ts` exits with `The following filters did not match any test files`.
+**Fix:** Prefix the path: `bun test ./test/perf/foo.bench.ts`. The `./` makes Bun treat the argument as a path rather than a name filter. WAVE.md verification commands that omit the `./` are subtly wrong.
+**Why:** `bun test <arg>` interprets bare `<arg>` as a substring filter against discovered test file names (`.test.`, `_test_`, `.spec`, `_spec_`). `*.bench.ts` matches none of those patterns, so no file matches.
+
+---
+
+### `bun-test-coverage-source-file-arg-runs-zero-tests`
+
+**Severity:** DX-trap
+**When:** Asserting per-file coverage by passing a source file path to `bun test --coverage`.
+**Symptom:** `bun test --coverage src/foo.tsx` emits a "filter did not match any test files" warning. Coverage table is empty. **Exit code is 0.** Naive interpretation: "coverage is fine"; reality: "no tests ran."
+**Fix:** Use the test-file substring, not the source-file path:
+
+```bash
+# Bad — runs zero tests; coverage table empty; exit 0
+bun test --coverage src/cli/cmd/tui/routes/session/foo.tsx
+
+# Good — runs tests matching "foo.test"; coverage instruments all loaded modules
+bun test --coverage foo.test
+
+# Then grep for the source file in the report:
+bun test --coverage foo.test 2>&1 | grep -E "foo\.tsx"
+```
+
+**Why:** `bun test` interprets bare positional args as substring filters against test file names (`*.test.*` / `*.spec.*`). A source file path matches no test file, so the test set is empty.
+**See also:** `bun-test-bench-file-path` (inverse case).
+
+---
+
+### `bun-test-test-dir-runs-baseline-orchestrator`
+
+**Severity:** correctness-bug (corrupts the perf baseline)
+**When:** Running `bun test test/` to spot-check the suite.
+**Symptom:** Tests pass clean. Then `git status` shows `baseline-perf.json` modified with fresh numbers from your machine — every percentile shifted to whatever the current run measured. Subsequent waves' regression budgets compare against the contaminated baseline.
+**Fix:** For broad spot-checks, run per-area instead of `bun test test/`:
+
+```bash
+# Good
+bun test test/session/
+bun test test/tool/
+bun test test/integration/
+bun test src/   # doesn't include the perf dir
+```
+
+If you accidentally regenerate the baseline, restore it: `git checkout <path-to-baseline-perf.json>`. A defensive fix is to gate the orchestrator behind an env flag (e.g. `OPENCODE_CAPTURE_PERF_BASELINE=1`).
+**Why:** The baseline orchestrator (`test/perf/baseline/baseline.test.ts`) is a regular `.test.ts` file with `afterAll` that writes the baseline JSON. `bun test test/` discovers and runs it.
+
+---
+
+### `bus-subscribe-helper-vs-service-method-cross-runtime-mismatch`
+
+**Severity:** DX-trap
+**When:** A test uses `testEffect(layer)` with `Bus.defaultLayer` and tries to subscribe via the top-level `Bus.subscribe(...)` helper.
+**Symptom:** Tool publishes events normally during execution but the subscriber array stays empty. `expect(events.length).toBeGreaterThanOrEqual(1)` fails.
+**Fix:** Subscribe via the in-effect `Bus.Service` method:
+
+```ts
+// Bad: top-level helper, separate runtime, sees nothing
+const off = Bus.subscribe(Pty.Event.Created, (evt) => events.push(evt))
+
+// Good: in-effect Service method, same runtime as the publishers
+const bus = yield* Bus.Service
+const off = yield* bus.subscribeCallback(Pty.Event.Created, (evt) => events.push(evt))
+```
+
+**Why:** `Bus.subscribe` (top-level helper) runs against its own `makeRuntime(Service, layer)` runtime. The test's `testEffect` runtime has a SEPARATE `Bus.Service` instance with its own PubSub.
+**See also:** `syncevent-publish-uses-top-level-bus-runtime` (the inverse — when you DO want the top-level subscribe). `bus-subscriber-needs-instance-state-fork-and-instance-ref` (production subscriber pattern).
+
+---
+
+### `bus-subscriber-needs-instance-state-fork-and-instance-ref`
+
+**Severity:** correctness-bug
+**When:** Wiring a continuous `bus.subscribe(...)` listener inside a service's layer to react to events from other services.
+**Symptom:** Layer-scope `Effect.forkScoped(bus.subscribe(def).pipe(Stream.runForEach(...)))` does one of: (1) crashes with `instance: No context found for instance`, (2) runs but the callback never fires, (3) runs and misses the first publish in a test.
+**Fix:** Three coordinated moves:
+
+1. **Fork inside `InstanceState.make`'s builder, not at layer scope.** The builder runs lazily on the first method call for that instance, with `Instance.current` bound:
+
+```ts
+yield* InstanceState.make(
+  Effect.fn("Foo.state")(function* () {
+    const ctx = yield* InstanceState.context  // capture for re-injection
+
+    yield* Effect.forkScoped(
+      bus
+        .subscribe(SomeInbound)
+        .pipe(Stream.runForEach((evt) => handle(evt)))
+        .pipe(Effect.provideService(InstanceRef, ctx)),
+    )
+    return state
+  }),
+)
+```
+
+2. **Re-inject `InstanceRef` via `Effect.provideService(InstanceRef, ctx)`** on the forked stream — fibers inherit Effect Context but Instance.current lives in native ALS, which doesn't propagate reliably across scheduler hops.
+3. **In tests, sleep 20ms after the first method call (which triggers builder + fork) before publishing** so the lazy stream attaches.
+
+**Why:** Three interacting facts: `Bus.subscribe` resolves through `InstanceState.get(state)` (needs Instance bound); layer init has no Instance; `Effect.forkScoped` schedules the fiber on the next tick (loses races against immediate publish).
+**See also:** `agentcontrol-providerref-must-live-in-layer-not-instancestate` (opposite case — single-value, instance-agnostic state belongs at layer scope).
+
+---
+
+### `codex-role-vocabulary-imported-verbatim`
+
+**Severity:** correctness-bug + conceptual-mismatch
+**When:** Porting concepts from a reference codebase (Codex, Claude Code, etc.) into codemaxxxing.
+**Symptom:** Smoke test fails at runtime with messages like `agent_type "explorer" is not a valid agent type`. The model picks role names it found in the prompt prose and passes them as agent types; the spawned child can't be looked up; the runLoop errors.
+**Fix:** Two-part rule:
+
+1. **When porting concepts, map them to host primitives — never invent new vocabulary that conflicts with what the host has.** Verify the mapping by grepping the host codebase for the concept under both names. If both exist, the mapping is the bug.
+2. **Tests must assert real behavior, not just propagation.** A test that says "field X arrives at place Y" is testing serialization. A test that says "after spawning with X, the child does Z" is testing behavior. 100% test coverage doesn't catch propagation-only tests.
+
+Mechanical pattern: enumerate valid host values via a runtime describer (e.g. `describeSpawnAgent`) so the model only sees names that actually resolve. Filter by host-side rules (mode, hidden, permission). Drop hardcoded role mentions from prompt prose; point at the templated list.
+**Why:** Two codebases often have overlapping concepts under different names (Codex's "roles" map to opencode's "agents"). Importing the foreign vocabulary verbatim sets up the model to call something that doesn't exist.
+**See also:** `word-boundary-regex-vs-prose-collisions` (the testing trap that hid this for a campaign).
+
+---
+
+### `e2e-perf-sibling-fanout-needs-median-of-n`
+
+**Severity:** DX-trap
+**When:** Asserting a ratio between two timed samples (single-session vs N-sibling, baseline vs concurrent) in an e2e perf test.
+**Symptom:** Test passes in isolation. Run as part of the full e2e suite, the ratio swings wildly and the test fails ~30% of the time. The implementation didn't change — only suite pollution did.
+**Fix:** Run N iterations of each phase, take the median, compare medians:
+
+```ts
+const ITERS = 5
+const singleSamples: number[] = []
+const fanSamples: number[] = []
+for (let it = 0; it < ITERS; it++) {
+  const t0 = Bun.nanoseconds()
+  yield* runSinglePhase(it)
+  singleSamples.push(Bun.nanoseconds() - t0)
+
+  const tf = Bun.nanoseconds()
+  yield* runFanPhase(it)
+  fanSamples.push(Bun.nanoseconds() - tf)
+}
+const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!
+expect(median(fanSamples) / median(singleSamples)).toBeLessThan(1.6)
+```
+
+Median-of-5 is stable across runs where single-iteration ratios flake. Bump to median-of-10 for very noisy machines. Don't use "best-of-N" — picking the best fan iteration would understate the realistic cost. Median is the right central tendency. For ops you can run hundreds of times, prefer percentile-based (p99) assertions instead.
+**Why:** Single-iteration timing has no defense against background noise from preceding tests, GC, scheduler variance. A 10ms vs 25ms swing purely from scheduler luck blows any ratio assertion.
+**See also:** `opentui-render-bench-noise-needs-best-of-n` (same problem class for opentui benches).
+
+---
+
+### `effect-v4-either-renamed-to-result`
+
+**Severity:** DX-trap
+**When:** Writing a test that converts a typed-error Effect into a non-throwing assertable value.
+**Symptom:** Test won't even load:
+```
+SyntaxError: Export named 'Either' not found in module '.../effect/dist/index.js'.
+```
+**Fix:** Rename across the board:
+
+| Old (v3) | New (v4) |
+|---|---|
+| `Either` | `Result` |
+| `Effect.either` | `Effect.result` |
+| `Either.isRight` | `Result.isSuccess` |
+| `Either.isLeft` | `Result.isFailure` |
+| `r.right` / `r.left` | `r.success` / `r.failure` |
+| `Schema.decodeUnknownEither` | `Schema.decodeUnknownResult` |
+
+```ts
+import { Effect, Result } from "effect"
+
+const runResult = <A>(eff: Effect.Effect<A, MyError>) =>
+  Effect.runSync(Effect.result(eff))
+
+const r = runResult(svc.decode("bad"))
+expect(Result.isFailure(r)).toBe(true)
+if (Result.isFailure(r)) expect(r.failure.reason).toMatch(/.../)
+```
+
+**Why:** Effect v4 renamed `Either` (and every API around it) to `Result`, with field accessors `success`/`failure`. The `effect` package's top-level barrel no longer re-exports anything named `Either`.
+
+---
+
+### `eventv2-and-bus-dual-emission-with-parallel-type-prefixes`
+
+**Severity:** API-quirk
+**When:** Introducing a new domain event consumed by BOTH the EventV2 sourced log (DB / replay / projectors) AND in-process Bus subscribers (TUI / plugins / status derivation).
+**Symptom:** The naive design — same type string for both, rely on `SyncEvent.init` auto-registering a BusEvent — breaks down: subscribers can't import the auto-registered Definition handle (it's a side effect of init, not exported); same-type collision between an explicit BusEvent.define and the auto-registration breaks SDK type stability.
+**Fix:** Use **two different type prefixes**:
+
+- `session.next.<domain>.<event>` for EventV2 defs (sourced log; persisted by projectors; matched in `SessionEvent.All` union).
+- `<domain>.<event>` for BusEvent defs (in-process pub/sub; the Definition object is exported and stable).
+
+Inside the service, emit on BOTH channels with the same payload:
+
+```ts
+function emitSpawn(payload) {
+  try { EventV2.run(SessionEvent.Agent.Spawn.Started.Sync, payload) } catch { /* swallow */ }
+  yield* bus.publish(Event.SpawnStarted, payload).pipe(Effect.ignore)
+}
+```
+
+For inbound subscriptions (subscribing to an EventV2 emitted by another service), construct a local `BusEvent.Definition` shape from the EventV2 def's `Sync.type` and `Sync.properties`:
+
+```ts
+export const Inbound = {
+  StepStarted: {
+    type: SessionEvent.Step.Started.Sync.type,
+    properties: SessionEvent.Step.Started.Sync.properties,
+  } as const,
+}
+yield* bus.subscribe(Inbound.StepStarted).pipe(Stream.runForEach(...))
+```
+
+**Why:** `SyncEvent.init` walks the EventV2 registry and calls `BusEvent.define(def.type, def.properties)`. The returned Definition is discarded — there's no exported handle. Co-locating both under the same type creates fragility (cross-runtime mismatches, last-one-wins SDK gen).
+**See:** `packages/opencode/src/agent/control.ts` `Event` and `Inbound` consts.
+
+---
+
+### `opentui-multi-text-node-vs-single-baseline-cap`
+
+**Severity:** DX-trap
+**When:** Benching multiple opentui text nodes against a single-text baseline (e.g. `session.render.steady`).
+**Symptom:** N separate `<text>{sig()}</text>` nodes settle around 1.45-1.65× the single-text baseline — right on a typical 1.5× cap. Test fails intermittently.
+**Fix:** Use `<text>` with multiple `<span>` children instead of multiple sibling `<text>` nodes:
+
+```tsx
+// BAD — 4 cells, p50 ~78µs vs single 50µs (1.55×)
+<>
+  <text>{sigs[0]()}</text>
+  <text>{sigs[1]()}</text>
+  ...
+</>
+
+// GOOD — 1 cell with 4 dirty spans, p50 ~64µs vs single 50µs (1.30×)
+<text>
+  <span>{sigs[0]()}</span> <span>{sigs[1]()}</span> ...
+</text>
+```
+
+**Why:** opentui composes a single text node as one cell even when each span is independently dirty. Multiple sibling `<text>` nodes incur per-cell composition cost that scales close to linearly. The structural floor for N≥2 vs N=1 cannot be made smaller than ~1.4×.
+**See also:** `opentui-render-bench-noise-needs-best-of-n` (per-run noise — different problem).
+
+---
+
+### `opentui-render-bench-noise-needs-best-of-n`
+
+**Severity:** DX-trap
+**When:** Benching an opentui render path against a wave_0 baseline metric.
+**Symptom:** A bench faithfully replaying the baseline algorithm passes most runs and fails others — `p99 +85% > 15%`, `p99 +358% > 15%`. Captured `max` per run swings from ~330µs to ~6.5ms across runs of the same code.
+**Fix:** Run the bench multiple times and pick the run with the lowest p50:
+
+```ts
+const runs: BenchResult[] = []
+for (let r = 0; r < 3; r++) {
+  runs.push(await bench({ samples: 1000, warmup: 100, label: "process.render.steady" }, async () => {
+    counter++
+    setText(`update ${counter}`)
+    await handle.renderOnce()
+  }))
+}
+const result = runs.reduce((best, x) => (x.p50 < best.p50 ? x : best))
+```
+
+3 × 1000 samples is enough in practice. This is a measurement strategy, not a fix to the renderer — picking a less-noisy sample approximates "what would I see on a quiet machine" (which is what the baseline captured).
+**Why:** opentui's `renderOnce` cost is dominated by per-frame composition through native bindings, with substantial variance from JS GC, OS scheduling, background workload. A single 6ms outlier in 100 samples moves p99 from ~190µs to ~3ms.
+**See also:** `e2e-perf-sibling-fanout-needs-median-of-n` (related principle for e2e timing).
+
+---
+
+### `opentui-testRender-leak`
+
+**Severity:** perf-regression (unbounded memory growth)
+**When:** Calling `testRender` per sample in a benchmark.
+**Symptom:** Bench memory grows monotonically. After 50+ iterations the bench process is multi-GB. No error — just slow and eventually OOM.
+**Fix:** Always `handle.renderer.destroy()` between iterations:
+
+```tsx
+const firstPaint = await bench({ samples: 30, ... }, async () => {
+  const handle = await testRender(() => <MyComponent />, { width: 100, height: 40 })
+  await handle.renderOnce()
+  handle.renderer.destroy()
+})
+```
+
+For "steady state" benches, mount once outside the bench loop and only call `renderOnce()` inside — but still `destroy()` after the bench finishes.
+**Why:** `testRender` returns a `TestRenderer` backed by native opentui resources. There's no automatic teardown when the JS handle goes out of scope.
+
+---
+
+### `permission-disabled-removes-tool-from-active-set`
+
+**Severity:** DX-trap
+**When:** Writing an e2e test that verifies a tool's *runtime denial flow* via wildcard permission deny.
+**Symptom:** Test creates a session with `permission: [{ permission: "spawn_agent", pattern: "*", action: "deny" }]`. Stubbed model response calls `spawn_agent`. The tool's `execute` body never runs — the assistant message contains `tool: "invalid"` with `input.error: "Model tried to call unavailable tool 'spawn_agent'..."`.
+**Fix:**
+- For "the model sees the denial as a tool error and the loop continues", assert the tool resolved to the `invalid` wrapper:
+
+```ts
+const invalidTool = msgs
+  .filter((m) => m.info.role === "assistant")
+  .flatMap((m) => m.parts)
+  .find((p): p is MessageV2.ToolPart => p.type === "tool" && p.tool === "invalid")
+expect(invalidTool).toBeDefined()
+```
+
+- For "the tool's own denial path fires" (e.g. testing `acquireUseRelease` cleanup on `Permission.DeniedError`), use a **non-wildcard pattern** that doesn't match the wildcard-deny check inside `Permission.disabled`. Patterns like `pattern: "specific_value", action: "deny"` survive the filter; the tool stays available; calling it triggers the real `ctx.ask` → `DeniedError` path.
+
+**Why:** `resolveTools` calls `Permission.disabled(toolNames, mergedRuleset)` BEFORE handing tools to the AI SDK. Tools matching a wildcard-deny rule are removed from the active toolset entirely.
+**See:** `packages/opencode/src/permission/index.ts:311-320` (`Permission.disabled`), `packages/opencode/src/session/llm.ts:450-456` (`resolveTools`).
+
+---
+
+### `pty-bench-baseline-vs-new-work`
+
+**Severity:** DX-trap
+**When:** Running a bench labeled the same as a baseline metric, but with extra new work in the loop.
+**Symptom:** `pty.push.4kb` regresses ~84% vs the baseline (1.875µs → ~3.5µs for 100 chunks). Default 5/10/15% budget rejects it. The new work is 100 × ~16ns of mandatory array-push and number-increment — there is no way to make it free.
+**Fix:** Keep the baseline-named metric a faithful replay of the baseline algorithm. Add a **separate metric** for the new work's standalone cost with no baseline comparison (or compare against a closer-matched baseline):
+
+```ts
+test("bench: pty.push.4kb (regression check vs baseline)", ...)  // identical to baseline
+test("bench: pty.push.4kb.headtail (new head/tail push cost)", ...)
+```
+
+**Why:** The baseline measures the legacy algorithm only. Re-running with extra work added is comparing apples to oranges. The 5% budget assumed the new work would be invisible at synthetic-scale; it isn't, because the legacy floor is already micro-optimized to ~18ns/chunk.
+**See also:** `runloop-bench-vs-baseline-methodology-mismatch` (related principle).
+
+---
+
+### `pty-create-term-override-tui-only`
+
+**Severity:** correctness-bug
+**When:** Spawning model-origin PTYs and passing `env` overrides via `Pty.create`.
+**Symptom:** `exec_command` test: spawning a child with `env: { TERM: "dumb", ... }` reads `TERM=xterm-256color` inside the child. The model-supplied env overlay is silently overridden.
+**Fix:** Gate the `TERM=xterm-256color` overlay on `origin === "tui"`:
+
+```ts
+const origin = input.origin ?? "tui"
+const env = (
+  origin === "tui"
+    ? { ...process.env, ...input.env, ...shell.env, TERM: "xterm-256color", OPENCODE_TERMINAL: "1" }
+    : { ...process.env, ...shell.env, ...input.env }
+)
+```
+
+For model-origin spawns, `input.env` is applied LAST so the caller's overlay (TERM=dumb, NO_COLOR=1, etc.) is observed.
+**Why:** Hardcoded `TERM=xterm-256color` is correct for desktop terminal-pane callers (xterm-style readline expects it). `unified_exec` needs `TERM=dumb` to suppress color codes and pager prompts in CI-like contexts.
+**See also:** `pty-onexit-auto-remove-tui-only` (same gating principle, different surface).
+
+---
+
+### `pty-onexit-auto-remove-tui-only`
+
+**Severity:** correctness-bug
+**When:** Consuming `Pty.read` after a model-origin process exits.
+**Symptom:** `Pty.read` returns `undefined` immediately after the child exits, even though the spec says it should return buffered final output plus `exited: true` and the exit code.
+**Fix:** Gate the auto-removal on `session.info.origin === "tui"`:
+
+```ts
+proc.onExit(({ exitCode }) => {
+  // ... set exited / exitCode / publish Exited / resolve exitDeferred ...
+  if (session.info.origin === "tui") {
+    bridge.fork(remove(id))
+  }
+})
+```
+
+Model-spawned PTYs (`origin: "model"`) stay in the map until the LRU pruner reaps them. TUI-spawned PTYs keep the legacy disappear-on-exit behavior so the desktop terminal pane list doesn't fill with zombie tabs.
+**Why:** The legacy `proc.onExit` callback unconditionally forks `remove(id)`, deleting the session from the registry. That's correct for desktop terminal panes but breaks `unified_exec`, which needs exited processes in the store so the model can still drain final bytes.
+**See also:** `pty-create-term-override-tui-only` (same origin-gating pattern).
+
+---
+
+### `runloop-bench-vs-baseline-methodology-mismatch`
+
+**Severity:** DX-trap
+**When:** A wave bench compares a runLoop-region metric against a baseline that was measured with different per-sample structure.
+**Symptom:** New metric measures `drainMailbox + Stream.runDrain` inside a single `Effect.gen` with a tight inner loop, captured at p50 ~10µs. Baseline (just `Stream.runDrain` with per-sample `Effect.runPromise`) sits at p50 ~19µs. Comparison: -55% on p50 — looks like a huge improvement, well under budget. Reality: the new metric does *more* work in a tighter inner loop (no per-sample runPromise overhead). The "improvement" is illusory.
+**Fix:** Two viable approaches:
+
+1. **Match the baseline's per-sample structure.** Wrap each sample in `await runtime.runPromise(myEffect)`. Fixed overhead matches; comparison is meaningful but expensive (~10µs floor dominates).
+2. **Acknowledge the methodological gap and treat the baseline comparison as a sanity check, not a strict bound.** Accept that the new metric is faster because of less per-sample overhead, not because the new work is free. Capture a separate "drain-only" microbench to attribute precisely.
+
+If a future bench is suspiciously fast (e.g. -50% vs baseline) AND introduces new work, that's the smell — verify per-sample structure matches.
+**Why:** Per-sample `Effect.runPromise` adds ~10µs of fixed overhead (resolves layer via memo, wraps in fresh root scope, `Effect.gen` startup). Baseline measures inner work + that overhead; tight-loop benches measure inner work alone.
+**See also:** `pty-bench-baseline-vs-new-work` (related principle).
+
+---
+
+### `schema-class-function-coverage`
+
+**Severity:** DX-trap (false-positive coverage gap)
+**When:** A new file with a `Schema.TaggedErrorClass` needs to pass a coverage check.
+**Symptom:** Function% stuck at ~92% even after every observable behavior is tested. Bun's `--coverage` shows `91.67 | 100.00`.
+**Fix:** Target 100% **line** coverage rather than function coverage. Function% is a lossy proxy. If a wave's verification checks "100% on file X" and you see 100% lines + ~90% functions because of a TaggedErrorClass, it's passing the real constraint.
+**Why:** `Schema.TaggedErrorClass()` synthesizes class members at definition time (internal `_tag` accessors, `pipe`, equality helpers). Bun's V8 coverage counts them as functions but they aren't directly callable from user code. Function% ceiling is roughly `(N - 1) / N`.
+
+---
+
+### `session-id-descending-not-make-for-fixture-string-coercion`
+
+**Severity:** DX-trap
+**When:** Loading JSON fixtures with stable IDs that need wrapping in branded ID types.
+**Symptom:** `SessionID.make("ses_legacy_root")` produces TS2769:
+```
+Argument of type 'string' is not assignable to parameter of type 'string & Brand<"SessionID">'.
+```
+The string IS a valid SessionID at runtime — chicken-and-egg.
+**Fix:** Use `.descending(string)` or `.ascending(string)` instead of `.make(string)`:
+
+```ts
+// Bad: TS rejects
+const sid = SessionID.make("ses_legacy_root")
+
+// Good: validates prefix at runtime, returns properly branded value
+const sid = SessionID.descending("ses_legacy_root")
+const mid = MessageID.ascending("msg_user_1")
+const pid = PartID.ascending("prt_text_user")
+const tid = PtyID.ascending("pty_legacy_term_1")
+```
+
+**Why:** `Schema.brand(...)` produces a constructor whose `.make()` requires the input to ALREADY be branded. The intent is "if you're calling `.make()`, you've validated upstream." The `.descending/.ascending` statics accept plain strings and validate the prefix at runtime.
+**See:** `packages/opencode/src/id/id.ts:36-45` (`generateID` validates and brands).
+
+---
+
+### `subscriptionref-changes-is-top-level`
+
+**Severity:** DX-trap
+**When:** Reading a `SubscriptionRef`'s change stream.
+**Symptom:** Runtime crash:
+```
+TypeError: undefined is not an object (evaluating 'ref.changes.pipe')
+```
+TypeScript doesn't flag the call.
+**Fix:** Use the top-level helper:
+
+```ts
+import { SubscriptionRef, Stream } from "effect"
+
+const stream = SubscriptionRef.changes(ref).pipe(Stream.take(1))
+const collected = yield* Stream.runCollect(stream)
+```
+
+**Why:** In Effect v4, the `changes` stream is a top-level function `SubscriptionRef.changes(ref)`, not an instance accessor. The v3 `ref.changes` instance method is gone.
+**See:** `packages/opencode/src/pty/index.ts:513` (working production example).
+
+---
+
+### `syncevent-publish-uses-helper-bus-not-test-layer-bus`
+
+**Severity:** correctness-bug + test-flake
+**When:** Subscribing to `Session.Event.Deleted` (or any other SyncEvent-published event) from inside `InstanceState.make` via the layer-built `Bus.Service`.
+**Symptom:** Subscriber forks fine, type string matches, `SyncEvent.process` runs and calls `ProjectBus.publish` — yet the in-effect subscriber NEVER receives the event. Even a wildcard `bus.subscribeAll()` on the same `Bus.Service` misses it.
+**Fix:** Subscribe via the **top-level** `Bus.subscribe(def, callback)` helper from inside the `InstanceState.make` builder — NOT `bus.subscribe` on the layer-local service. Capture the `off` callback and register it via `Effect.addFinalizer`:
+
+```ts
+const off = Bus.subscribe(Inbound.SessionDeleted, (evt) => { ... })
+yield* Effect.addFinalizer(() => Effect.sync(() => off()))
+```
+
+The callback runs OUTSIDE Effect; for fire-and-forget work use `Effect.runPromise(...).catch(() => {})`. Pure synchronous map mutations are fine inline.
+**Why:** The test runtime builds its OWN `Bus.Service` per test. The cross-runtime helper (`Bus.publish`) uses `makeRuntime` backed by a process-wide memoMap. These are TWO different `Bus.Service` instances. `SyncEvent.run → Database.effect → ProjectBus.publish` lands on the memoMap helper's Bus; the in-effect subscriber sits on the test layer's Bus. Their PubSubs are entirely disjoint. In production (single `AppRuntime` + memoMap) both paths share one `Bus.Service`, so this never surfaces.
+**See:** `packages/opencode/src/bus/index.ts:187` (top-level publish), `:195` (top-level subscribe), `:179` (`makeRuntime`).
+**See also:** `bus-subscribe-helper-vs-service-method-cross-runtime-mismatch` (the converse for tests).
+
+---
+
+### `syncevent-publish-uses-top-level-bus-runtime`
+
+**Severity:** DX-trap
+**When:** A test subscribes to bus events that are emitted as a side effect of `SyncEvent.run` / `SyncEvent.replay`.
+**Symptom:** The subscriber's collected array stays empty. `expect(seen.length).toBeGreaterThan(0)` fails with `Received: 0`. No error, no warning.
+**Fix:** Use top-level `Bus.subscribeAll(...)` / `Bus.subscribe(...)` for events emitted by top-level helpers:
+
+```ts
+// Bad: in-effect subscribeAllCallback misses events published via SyncEvent.run
+const bus = yield* Bus.Service
+const off = yield* bus.subscribeAllCallback((evt) => seen.push(evt))
+
+// Good: top-level Bus.subscribeAll matches the runtime SyncEvent uses
+const off = Bus.subscribeAll((evt) => seen.push(evt))
+yield* Effect.sleep(20)  // let the subscription attach before publishing
+yield* hydrate(...)
+yield* Effect.sleep(50)  // let the subscriber drain
+off()
+```
+
+| Publisher | Subscriber that sees the events |
+|---|---|
+| In-effect `bus.publish(...)` | In-effect `bus.subscribeCallback(...)` |
+| Top-level `Bus.publish(...)` (incl. `SyncEvent.run`/`replay`) | Top-level `Bus.subscribe(...)` / `Bus.subscribeAll(...)` |
+
+When unsure which path a publisher takes: `Bus.publish` (capital B) is the helper; `bus.publish` (lowercase) is the in-effect Service method.
+**Why:** `SyncEvent.run` and `SyncEvent.replay` publish via `ProjectBus.publish(def, data, { id: event.id })`. The top-level `publish` helper resolves through its own `makeRuntime` runtime — a SEPARATE `Bus.Service` instance from the one in the test's `testEffect` layer.
+**See also:** `syncevent-publish-uses-helper-bus-not-test-layer-bus` (the production-side mirror), `bus-subscribe-helper-vs-service-method-cross-runtime-mismatch`.
+
+---
+
+### `tool-context-ask-typed-as-void`
+
+**Severity:** correctness-bug + DX-trap
+**When:** A tool needs to clean up resources (PTYs, file handles, network connections) on permission rejection.
+**Symptom:** Writing `yield* ctx.ask(...).pipe(Effect.catch((err) => cleanup))` looks correct but the catch handler never executes. Coverage reports the cleanup as dead. In production, the spawned PTY leaks until the InstanceState finalizer reclaims the project.
+**Fix:** Use `Effect.acquireUseRelease` so the release fires on ANY non-success exit (defects, interrupts, typed failures):
+
+```ts
+return yield* Effect.acquireUseRelease(
+  // acquire: spawn pty + allocate session
+  Effect.gen(function* () {
+    const info = yield* pty.create(...)
+    const session = yield* sessions.allocate(...)
+    return { info, session }
+  }),
+  // use: ask + read + return result
+  ({ info, session }) => mainLogic(info, session),
+  // release: cleanup if non-success exit
+  ({ info, session }, exit) =>
+    Exit.isFailure(exit)
+      ? Effect.gen(function* () {
+          yield* sessions.remove(session.processId)
+          yield* pty.remove(info.id)
+        })
+      : Effect.void,
+)
+```
+
+Inline cleanup paths (e.g. `ctx.abort` detected before the read) still need explicit cleanup since they return success exits.
+**Why:** `Tool.Context.ask` is declared as `Effect.Effect<void>` — the error channel is `never`. `.pipe(Effect.catch(handler))` is type-checked but unreachable. In reality the Permission service raises typed failures; the `Tool.define` wrapper applies `Effect.orDie`, converting them into defects that bypass `Effect.catch`.
+**See:** `packages/opencode/src/tool/tool.ts:24` (`ask` declaration), `:124` (`Effect.orDie`).
+
+---
+
+### `tool-define-inner-effect-gen-closing-brace`
+
+**Severity:** DX-trap (false-positive coverage gap)
+**When:** Defining a tool with `Tool.define(id, Effect.gen(... return () => Effect.gen(... return spec)))`.
+**Symptom:** File reports 99.28% line coverage; the only missing line is the closing `})` of the inner `Effect.gen`. Behavior tests pass; the line is unhittable structurally.
+**Fix:** Drop the inner `Effect.gen` wrapper. Return the spec object directly from the outer `Effect.gen`:
+
+```ts
+// BAD — closing `})` of inner Effect.gen reports 0 hits
+export const FooTool = Tool.define(ID, Effect.gen(function* () {
+  const svc = yield* SomeService
+  return () => Effect.gen(function* () {
+    return { description, parameters: Parameters, execute: (...) => Effect.gen(...) }
+  })
+}))
+
+// GOOD — direct return; 100/100 line + branch
+export const FooTool = Tool.define(ID, Effect.gen(function* () {
+  const svc = yield* SomeService
+  return { description, parameters: Parameters, execute: (...) => Effect.gen(...) }
+}))
+```
+
+If a tool genuinely needs deferred construction, use `() => Effect.succeed({ ... })` instead of `() => Effect.gen(function* () { return { ... } })`.
+**Why:** Bun's V8 coverage records the inner `})` as 0 hits even when the generator body executes successfully. The wrapper is logically pointless when the spec is constructible synchronously.
+**See:** `packages/opencode/src/tool/tool.ts:57-59` (`Init` accepts both `DefWithoutID` and `() => Effect<DefWithoutID>`).
+
+---
+
+### `tool-execute-needs-explicit-result-type-disjoint-metadata`
+
+**Severity:** DX-trap
+**When:** Defining a tool whose `execute` returns different `metadata` shapes per branch (success vs validation-error vs typed-error mapping).
+**Symptom:** Tool typechecks in isolation. Adding it to `tool/registry.ts` produces a wall of errors:
+```
+Argument of type 'Effect<...{ metadata: { error: ... } | { queued: ... } ...}, ...>' is not assignable to parameter of type 'Effect<Init<..., M>>'.
+```
+Downstream test files asserting `expect(result.metadata.queued).toBe(true)` start failing typecheck:
+```
+Argument of type 'true' is not assignable to parameter of type 'undefined'.
+```
+**Fix:** Annotate `execute`'s return type explicitly:
+
+```ts
+import * as Tool from "../tool"
+
+execute: (params: Parameters, ctx: Tool.Context): Effect.Effect<Tool.ExecuteResult> =>
+  Effect.gen(function* () {
+    if (someError) {
+      return { title: "...", metadata: { error: "x" }, output: "..." }
+    }
+    return { title: "...", metadata: { queued: true, target_session_id: id }, output: "..." }
+  })
+```
+
+`Tool.ExecuteResult` defaults `M` to `Metadata = { [key: string]: any }`. The annotation prevents TS from narrowing `M` to the per-branch union.
+**Why:** `Tool.define<P, M, R, ID>` infers `M` from the return type. Multiple branches with disjoint shapes narrow `M` to a union; downstream `result.metadata.<field>` access then fails for fields that only exist on some branches.
+**Alternative:** widen via local `metadata: Record<string, unknown>` before the return.
+
+---
+
+### `tty-line-discipline-echo-defeats-clamp-timing-tests`
+
+**Severity:** DX-trap
+**When:** Asserting a yield-time clamp's effect on actual elapsed wall time when the test fixture is a TTY-mode process.
+**Symptom:** Test asserts that `yield_time_ms: 50` clamps to 250ms (the `MIN_YIELD_TIME_MS` floor). Expected elapsed: ~350ms. Actual: ~106ms. The clamp logic IS correct.
+**Fix:** Verify clamp behaviour at the unit level; don't try to verify it via end-to-end elapsed wall time:
+
+```ts
+// Good: unit test the clamp
+expect(clampWriteYieldTime(50)).toBe(250)
+expect(clampEmptyPollYieldTime(100)).toBe(5_000)
+
+// Bad: timing-based clamp verification (race-prone)
+const start = Date.now()
+yield* writeDef.execute({ session_id: sid, chars: "x", yield_time_ms: 50 }, ctx)
+expect(Date.now() - start).toBeGreaterThanOrEqual(300) // FAILS due to TTY echo
+```
+
+**Why:** When the spawned process is in TTY mode, the kernel's TTY line discipline echoes input characters back as output. Writing `"x\n"` produces `"x\r\n"` flowing back through `proc.onData`, which advances the byteCursor and fires the SubscriptionRef notify in `Pty.read`'s race. The read returns immediately on the wakeup-on-data path well before the 250ms idle deadline.
+
+---
+
+### `tui-component-coverage-needs-mount-split`
+
+**Severity:** DX-trap
+**When:** Adding a TUI component that uses hooks (`useSync`, `useTheme`, `useRoute`, etc.) and must reach 100% line coverage.
+**Symptom:** `testRender(() => <Foo />)` throws `<provider> context must be used within a context provider`. Coverage on `foo.tsx` reports ~80% — helpers and view are 100% but the wrapper body is 0%.
+**Fix:** Split the file into two:
+
+1. `foo.tsx` — pure helpers + view component (`FooView`) that takes resolved data + theme RGBA as props. Testable with `testRender(() => <FooView {...props} />)` directly.
+2. `foo-mount.tsx` (name must NOT substring-match `foo` for the `bun test` filter) — the production `Foo()` wrapper that calls hooks and threads derived data into `FooView`.
+
+Update consumers to import `Foo` from `foo-mount.tsx`. Coverage on `foo.tsx` reaches 100%; `foo-mount.tsx` is excluded from the coverage requirement.
+
+**Companion gotcha:** `Rule` from `@tui/component/border` calls `useTheme()` unconditionally even when given a `color` prop. A pure-prop view that uses `<Rule color={props.ruleColor} />` still throws at testRender. Inline the equivalent border:
+
+```tsx
+<box flexShrink={0} flexGrow={1} height={1} border={["bottom"]}
+  customBorderChars={RULE_BORDER_CHARS} borderColor={props.ruleColor} />
+```
+
+with `RULE_BORDER_CHARS = { ...EmptyBorder, horizontal: "─" }` at module scope.
+**Why:** `createSimpleContext` throws on `use()` outside its `provider`. Provider `init()`s often have side effects. Coverage only credits lines that EXECUTED — wrappers never invoked stay uncovered.
+
+---
+
+### `tui-flex-row-with-tall-text`
+
+**Severity:** perf-regression (catastrophic — paint stalls past the failing node)
+**When:** Touching the TUI render hot path (`routes/session/index.tsx`, `BlockTool`, `InlineTool`, message body components, anything rendering MCP / LLM / user-pasted text).
+**Symptom:** Streaming visually halts mid-message. Solid reactivity keeps firing into the store, new messages mount, deltas accumulate — but **none of it appears on screen**. Same data renders fine in upstream OpenCode.
+**Fix:**
+- **Never wrap a child whose content can grow tall in `<box flexDirection="row">`.** Stack as vertical siblings instead. For fixed-width chrome, use absolute positioning (e.g. marginalia in a left gutter).
+- **Don't use `wrapMode="word"` on text nodes that can hold user-pastable / multi-KB content.** Default wrap is correct.
+- **Sanitize any string that flows from `props.input.<arbitrary-key>` into a `<text>` node** — use `@tui/util/inline-safe`.
+
+**Audit checklist when touching the render hot path:**
+1. `rg 'flexDirection="row"' packages/opencode/src/cli/cmd/tui/routes/session/index.tsx` — for each hit, ask "could the primary child of this row ever be tall?" If yes, restructure.
+2. `rg 'wrapMode="word"' packages/opencode/src/cli/cmd/tui/` — for each hit, ask "can this text node ever hold user-pasted or multi-KB content?" If yes, drop the attribute.
+3. If the fork has structural nodes (boxes, rows, attributes) in a render-hot-path component that upstream doesn't, that's a regression suspect by default.
+4. Any string interpolated into a `<text>` node — sanitize.
+
+**Why:** opentui is a naive measure-then-paint renderer on a 2D character grid. A row whose primary cell is a `<text>` that can wrap to many rows silently exceeds opentui's internal layout-measurement budget. When it does, paint stalls past the failing node and **everything subsequent stops rendering**. The browser-style `<row><text/><pill/></row>` with `justifyContent="space-between"` pattern that's free in browsers (retained-mode compositing, GPU reflow) is O(W × H) per render in opentui. **This bug class hit the codebase four times in two weeks** before the proactive sweep.
+**See:** `packages/opencode/src/cli/cmd/tui/util/inline-safe.ts` (sanitizer).
+
+---
+
+### `word-boundary-regex-vs-prose-collisions`
+
+**Severity:** DX-trap
+**When:** Asserting "forbidden word X must not appear" against a tool's full description string when the description concatenates prose (`*.txt`) + structured enumeration (registry-appended bullets).
+**Symptom:** `expect(spawn.description).not.toMatch(/\bworker\b/)` fails because `\bexplorer\b` matches "an explorer.", `\bworker\b` matches "Observer/worker —", `\bdefault\b` matches "by default." and "(default):".
+**Fix:** Scope the regex to the structured section. Locate the enumeration header, slice from there, then anchor the regex to bullet starts:
+
+```ts
+const ENUM_HEADER = "Available agent types and the tools they have access to:"
+const headerIdx = spawn.description.indexOf(ENUM_HEADER)
+if (headerIdx < 0) throw new Error("enumeration header missing — describer changed?")
+const enumeration = spawn.description.slice(headerIdx)
+expect(enumeration).not.toMatch(/^- explorer:/m)   // matches only bullet entries
+```
+
+For tests verifying "this word does not appear ANYWHERE", use the underlying SOURCE (the registry method's return value) so prose and enumeration stay separable.
+**Why:** Word boundaries `\b` match between a word character (`[A-Za-z0-9_]`) and a non-word character. In prose, EVERY occurrence of a word in a sentence is bounded by spaces, punctuation, parens, or em-dashes — all non-word chars. The intent ("don't allow `worker_a` etc.") was conflated with "underscore-suffixed only" — but `\bworker\b` matches both.
