@@ -1,0 +1,121 @@
+{
+  "captured_at": "2026-05-14T23:41:55.429Z",
+  "git_sha": "9ddce7bea",
+  "bun_version": "1.3.13",
+  "metrics": {
+    "scan.cmd_short": {
+      "label": "scan.cmd_short",
+      "samples": 500,
+      "p50": 66833,
+      "p95": 117958,
+      "p99": 172166,
+      "min": 47750,
+      "max": 283833,
+      "mean": 72976.916
+    },
+    "scan.cmd_pipe": {
+      "label": "scan.cmd_pipe",
+      "samples": 500,
+      "p50": 53875,
+      "p95": 74583,
+      "p99": 186209,
+      "min": 45542,
+      "max": 1286917,
+      "mean": 62424.31
+    },
+    "scan.cmd_chain": {
+      "label": "scan.cmd_chain",
+      "samples": 500,
+      "p50": 46209,
+      "p95": 60792,
+      "p99": 110042,
+      "min": 38875,
+      "max": 205334,
+      "mean": 49016.51
+    },
+    "scan.cmd_long": {
+      "label": "scan.cmd_long",
+      "samples": 500,
+      "p50": 46000,
+      "p95": 62500,
+      "p99": 89792,
+      "min": 40333,
+      "max": 195708,
+      "mean": 48903.184
+    },
+    "shell.exec": {
+      "label": "shell.exec",
+      "samples": 20,
+      "p50": 20349541,
+      "p95": 23546125,
+      "p99": 26777875,
+      "min": 18288125,
+      "max": 26777875,
+      "mean": 20918506.1
+    },
+    "exec_command.exec": {
+      "label": "exec_command.exec",
+      "samples": 20,
+      "p50": 73469333,
+      "p95": 76891500,
+      "p99": 80135750,
+      "min": 65321333,
+      "max": 80135750,
+      "mean": 72558806.15
+    },
+    "permission.disabled": {
+      "label": "permission.disabled",
+      "samples": 500,
+      "p50": 60000,
+      "p95": 64542,
+      "p99": 69166,
+      "min": 56792,
+      "max": 78042,
+      "mean": 60522.418
+    },
+    "spawn_agent.spawn": {
+      "label": "spawn_agent.spawn",
+      "samples": 20,
+      "p50": 635667,
+      "p95": 756625,
+      "p99": 783917,
+      "min": 539417,
+      "max": 783917,
+      "mean": 647068.9
+    },
+    "registry.tools": {
+      "label": "registry.tools",
+      "samples": 500,
+      "p50": 269792,
+      "p95": 307792,
+      "p99": 321167,
+      "min": 233875,
+      "max": 1229458,
+      "mean": 274348.834
+    },
+    "prompt.render.exec_command": {
+      "label": "prompt.render.exec_command",
+      "samples": 1,
+      "p50": 0,
+      "p95": 0,
+      "p99": 0,
+      "min": 0,
+      "max": 0,
+      "mean": 0,
+      "bytes": 12393,
+      "tokens": 12393
+    },
+    "prompt.render.spawn_agent": {
+      "label": "prompt.render.spawn_agent",
+      "samples": 1,
+      "p50": 0,
+      "p95": 0,
+      "p99": 0,
+      "min": 0,
+      "max": 0,
+      "mean": 0,
+      "bytes": 5811,
+      "tokens": 5811
+    }
+  }
+}

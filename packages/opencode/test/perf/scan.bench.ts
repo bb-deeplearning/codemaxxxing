@@ -12,12 +12,16 @@ import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import { Effect, Layer, ManagedRuntime } from "effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { Agent } from "../../src/agent/agent"
 import { AgentControl } from "../../src/agent/control"
+import { Bus } from "../../src/bus"
 import { Config } from "../../src/config/config"
+import { Plugin } from "../../src/plugin"
 import { Session } from "../../src/session/session"
 import { Truncate } from "../../src/tool/truncate"
 import { ToolRegistry } from "../../src/tool/registry"
+import { ShellTool } from "../../src/tool/shell"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { SessionID, MessageID } from "../../src/session/schema"
 import * as Tool from "../../src/tool/tool"
@@ -97,8 +101,11 @@ function recordCtx(sessionID: SessionID): Tool.Context {
 const benchLayer = Layer.mergeAll(
   AgentControl.defaultLayer,
   Agent.defaultLayer,
+  AppFileSystem.defaultLayer,
+  Bus.layer,
   Config.defaultLayer,
   CrossSpawnSpawner.defaultLayer,
+  Plugin.defaultLayer,
   Session.defaultLayer,
   Truncate.defaultLayer,
   ToolRegistry.defaultLayer,
@@ -125,8 +132,18 @@ const toolDef = (toolID: string) =>
     const build = yield* agents.get("build")
     const tools = yield* registry.tools({ ...STUB_MODEL, agent: build })
     const found = tools.find((t) => t.id === toolID)
-    if (!found) throw new Error(`tool ${toolID} not present`)
-    return found
+    if (found) return found
+    // Wave 4 dropped `bash` (and `task`) from the registry's model-facing
+    // builtin array. ShellTool stays internally importable per the
+    // `legacy-shell-tool-still-runnable-from-internal-code` invariant — yield
+    // it directly so this Wave 1 bench keeps measuring the legacy path.
+    // Methodology delta vs the wave_1.json snapshot: skips the registry's
+    // Plugin.trigger("tool.definition") wrapper. Same execute fn underneath.
+    if (toolID === "bash") {
+      const shell = yield* ShellTool
+      return yield* shell.init()
+    }
+    throw new Error(`tool ${toolID} not present`)
   })
 
 const benchShellScan = (label: string, cmd: string, samples: number) =>
