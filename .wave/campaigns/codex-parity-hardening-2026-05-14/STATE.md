@@ -29,7 +29,7 @@ last_updated: 2026-05-14
 |------|----------|---------|--------|-------|
 | 0 | complete | ses_1dab5d497ffeqTcXWqL9ALEVZV | 18932fbcd | scaffold + bug-3 audit (B+X applied: enum-scoped regex + agent_type fixes); 2 new GOTCHAS |
 | 1 | complete | ses_1da9a4a82ffeiCmmC0ugEVon1i | f3b932663 | bug 1 — per-root scoping landed (3 invariants GREEN, 100% line cov, perf within budget; 1 new GOTCHA) |
-| 2 | complete | ses_1da6ca331ffeXZnhNR0OsSb3l2 | — | bug 2 — completion watcher landed (3 invariants GREEN, 100% line cov, perf within all 9 budgets; root now has mailbox; spawn p99 +14.86% near edge of +15% budget — best-of-N analysis in NOTES) |
+| 2 | complete | ses_1da6ca331ffeXZnhNR0OsSb3l2 | 09a3a7759 | bug 2 — completion watcher landed (3 invariants GREEN, 100% line cov, perf within all 9 budgets; root now has mailbox; spawn p99 +14.86% near edge of +15% budget — best-of-N analysis in NOTES) |
 | 3 | pending  | — | — | audit pass — apply remaining invariants (cascade, drain-under-concurrent-sends, pty-cleanup) |
 | 4 | pending  | — | — | backward compat verification + perf audit + final report |
 | 5 | pending  | — | — | spec doc at specs/codex-parity-hardening.md |
