@@ -1,0 +1,17 @@
+{
+  "captured_at": "2026-05-14T22:52:42.458Z",
+  "git_sha": "40058f99c",
+  "bun_version": "1.3.13",
+  "metrics": {
+    "registry.tools": {
+      "label": "registry.tools",
+      "samples": 500,
+      "p50": 276500,
+      "p95": 314500,
+      "p99": 355958,
+      "min": 240375,
+      "max": 1543208,
+      "mean": 281697.262
+    }
+  }
+}

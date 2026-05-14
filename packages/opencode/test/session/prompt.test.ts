@@ -797,7 +797,28 @@ it.live("trigger_turn pending defers loop exit even when assistant has finished"
   ),
 )
 
-it.live(
+// Wave 4 (replace-bash-task-2026-05-15) — `task` is no longer in the
+// model-facing tool list (registry's builtin array dropped tool.task).
+// The LLM stub `llm.tool("task", ...)` queues a tool call the model
+// can't actually emit; the session has no `tools["task"]` handler so
+// the call dispatches into invalidTool / nothing.
+//
+// The behavior this test asserted — TaskTool's metadata propagation
+// from `ctx.metadata({ title, metadata: { sessionId, model } })` —
+// remains exercised by:
+//   * `test/integration/legacy-internal-runnable.test.ts` "TaskTool.execute
+//     still works when invoked directly" — calls TaskTool's execute
+//     directly and asserts on `result.metadata.sessionId`.
+//   * `test/tool/task.test.ts` "execute resumes an existing task session
+//     from task_id" + sibling cases — full TaskTool execution path with
+//     metadata assertions.
+//
+// Skipped here because porting to spawn_agent is non-trivial (different
+// metadata field names: spawn_agent emits agent_path / agent_nickname /
+// task_name / parent_path, not sessionId / title / model). spawn_agent's
+// metadata flow is covered by `test/integration/multi-agent-invariants.test.ts`
+// and `test/tool/agent-spawn/agent-spawn.test.ts`.
+it.live.skip(
   "running task tool preserves metadata after tool-call transition",
   () =>
     provideTmpdirServer(
@@ -1563,7 +1584,25 @@ unix(
   30_000,
 )
 
-unix(
+// Wave 4 (replace-bash-task-2026-05-15) — `bash` is no longer in the
+// model-facing tool list. The truncation behavior asserted here
+// (metadata.truncated + metadata.outputPath + "...output truncated...") is
+// specific to the legacy bash tool's spill-to-file pattern. exec_command
+// uses head/tail in-memory truncation with a different metadata shape
+// (`original_token_count`, `wall_time_seconds`, etc.) — the migration is
+// not a 1:1 mapping.
+//
+// Bash truncation behavior is still exercised by:
+//   * `test/tool/shell.test.ts` "tool.shell truncation" describe block —
+//     direct ShellTool execute calls with the spill-to-file pattern.
+//   * `test/integration/legacy-internal-runnable.test.ts` —
+//     ShellTool.execute still works internally.
+//
+// Skipped here because porting to exec_command's truncation surface is
+// non-trivial and the underlying behavior is covered elsewhere. Using
+// `it.live.skip` directly because `unix` is a conditional function whose
+// type union doesn't expose `.skip` without narrowing.
+it.live.skip(
   "cancel finalizes interrupted bash tool output through normal truncation",
   () =>
     provideTmpdirServer(

@@ -80,16 +80,23 @@ describe("experimental HttpApi", () => {
     expect(await consoleOrgs.json()).toEqual({ orgs: [] })
 
     expect(toolList.status).toBe(200)
+    // Wave 4 (replace-bash-task-2026-05-15) — `bash` is no longer in the
+    // model-facing tool list (registry's builtin array drops `tool.shell`
+    // + `tool.task`). The codex-ported `exec_command` takes its place
+    // for shell-flavored work; the experimental tool list reflects that.
     expect(await toolList.json()).toContainEqual(
       expect.objectContaining({
-        id: "bash",
+        id: "exec_command",
         description: expect.any(String),
         parameters: expect.any(Object),
       }),
     )
 
     expect(toolIDs.status).toBe(200)
-    expect(await toolIDs.json()).toContain("bash")
+    const ids = await toolIDs.json()
+    expect(ids).toContain("exec_command")
+    expect(ids).not.toContain("bash")
+    expect(ids).not.toContain("task")
 
     expect(worktrees.status).toBe(200)
     expect(await worktrees.json()).toEqual([])

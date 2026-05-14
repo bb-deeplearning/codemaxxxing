@@ -247,13 +247,30 @@ export const layer: Layer.Layer<
           builtin: [
             tool.invalid,
             ...(questionEnabled ? [tool.question] : []),
-            tool.shell,
+            // tool.shell — model surface dropped Wave 4 of replace-bash-task-2026-05-15;
+            // exec_command + write_stdin replace it. Internal callers can still
+            // resolve via `import { ShellTool } from "@/tool/shell"` directly.
+            // The `shell` binding above (line 220) and `state.task: tool.task` at
+            // the end of this object both stay so legacy code paths continue to
+            // compile. The plugin-hook bridge in `tools()` below dispatches
+            // tool.definition events with toolID="bash" for exec_command and
+            // write_stdin so plugins keying on the legacy ID continue to mutate
+            // the new tools' descriptions.
             tool.read,
             tool.glob,
             tool.grep,
             tool.edit,
             tool.write,
-            tool.task,
+            // tool.task — model surface dropped Wave 4 of replace-bash-task-2026-05-15;
+            // spawn_agent + 5 v2 friends (send_message, followup_task,
+            // wait_agent, list_agents, close_agent) replace it. Internal
+            // callers (none today, but kept for plugin reactivation) can
+            // still resolve via `named().task` — the `task: tool.task`
+            // self-reference at the bottom of this return object still
+            // wires that up. The plugin-hook bridge in `tools()` below
+            // dispatches tool.definition events with toolID="task" for
+            // spawn_agent + the 5 friends so plugins keying on the legacy
+            // ID continue to mutate their descriptions.
             tool.fetch,
             tool.todo,
             tool.search,
@@ -365,11 +382,55 @@ export const layer: Layer.Layer<
             description: tool.description,
             parameters: tool.parameters,
           }
+
+          // Wave 4 (replace-bash-task-2026-05-15) — plugin hook bridge.
+          // Tools whose model-facing surface replaces a dropped legacy
+          // tool ALSO dispatch a tool.definition event under the legacy
+          // ID so plugins keying on `bash` / `task` continue to mutate
+          // the new tools' descriptions. Bridge dispatches LEGACY FIRST
+          // so its mutations land on `output` before the new-id hook
+          // sees the same reference (per WAVE.md gotcha 3 — reversing
+          // the order would let the legacy hook clobber the new one).
+          //
+          // Only `tool.definition` is bridged. `tool.execute.before` /
+          // `tool.execute.after` (fired from `session/prompt.ts`) are
+          // NOT bridged because execution semantics differ between
+          // bash (one-shot) and exec_command (persistent PTY); a plugin
+          // wrapping bash execution would mishandle exec_command's
+          // PID/yield semantics. Documented as a plugin migration
+          // boundary in BACKWARD_COMPAT.md "Out of scope".
+          //
+          // Bridge map is per-new-id → legacy-id, mirroring the
+          // SHELL_TOOLS / MULTI_AGENT_TOOLS group routing in
+          // permission/index.ts. Adding a new bridged tool means adding
+          // a row here AND extending the relevant group constant.
+          const legacyId =
+            tool.id === ExecCommandTool.id || tool.id === WriteStdinTool.id
+              ? ShellTool.id
+              : tool.id === AgentSpawnTool.id ||
+                  tool.id === AgentSendTool.id ||
+                  tool.id === AgentFollowupTool.id ||
+                  tool.id === AgentWaitTool.id ||
+                  tool.id === AgentListTool.id ||
+                  tool.id === AgentCloseTool.id
+                ? TaskTool.id
+                : null
+          if (legacyId) {
+            yield* plugin.trigger("tool.definition", { toolID: legacyId }, output)
+          }
+
           yield* plugin.trigger("tool.definition", { toolID: tool.id }, output)
           return {
             id: tool.id,
             description: [
               output.description,
+              // tool.id === TaskTool.id branch: dead code after Wave 4
+              // dropped tool.task from `builtin` — `filtered` no longer
+              // contains a tool whose id matches TaskTool.id. Left for
+              // plugin reactivation paths that might re-register the
+              // legacy task tool via `Plugin.tool` overrides; harmless
+              // when dead because the boolean short-circuits to undefined
+              // and `.filter(Boolean)` drops it.
               tool.id === TaskTool.id ? yield* describeTask(input.agent) : undefined,
               tool.id === AgentSpawnTool.id ? yield* describeSpawnAgent(input.agent) : undefined,
               tool.id === SkillTool.id ? yield* describeSkill(input.agent) : undefined,

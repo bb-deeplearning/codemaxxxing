@@ -10,6 +10,7 @@
 // can grep for them.
 
 import { afterEach, describe, expect } from "bun:test"
+import path from "path"
 import { Effect, Fiber, Layer, Schema } from "effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
@@ -27,13 +28,16 @@ import { Session } from "@/session/session"
 import { Shell } from "@/shell/shell"
 import { Truncate } from "@/tool/truncate"
 import { ShellScan } from "@/tool/shell/scan"
+import { ShellTool } from "@/tool/shell"
 import { ProcessSessions } from "@/tool/process/sessions"
 import { ExecCommandTool } from "@/tool/process/exec-command"
 import { WriteStdinTool } from "@/tool/process/write-stdin"
 import { AgentSpawnTool } from "@/tool/agent-spawn/agent-spawn"
+import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { ToolRegistry } from "@/tool/registry"
 import * as Tool from "@/tool/tool"
-import { MessageID, SessionID } from "@/session/schema"
+import { MessageID, PartID, SessionID } from "@/session/schema"
+import type { MessageV2 } from "@/session/message-v2"
 import { disposeAllInstances } from "../fixture/fixture"
 import { loadPermissionConfig, loadScannerCorpus } from "../fixtures/load-config"
 import { generateCommand, makeRng, scanEqual } from "../fixtures/fuzz"
@@ -832,45 +836,332 @@ describe("INTEGRATION_INVARIANTS — tool surface replacement", () => {
     60_000,
   )
 
-  // TODO(wave_4): unskip when bash is dropped from the model-visible tool list.
-  it.instance.skip("model-tool-list-no-bash", () =>
+  // Wave 4 — bash dropped from registry's builtin array. The model-visible
+  // tool list per agent must no longer contain "bash". Per Wave 0 NOTES
+  // item 6, registry.tools() doesn't apply per-agent permission filtering;
+  // all built-in agents see the same list. Per-agent assertions in
+  // src/tool/registry.test.ts cover the explicit per-agent enumeration;
+  // here we cover the build-agent shape that the BC matrix's "Snapshot
+  // diffs" row depends on.
+  it.instance("model-tool-list-no-bash", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      const build = yield* agents.get("build")
+      const tools = yield* registry.tools({
+        modelID: ModelID.make("test-model"),
+        providerID: ProviderID.make("test"),
+        agent: build,
+      })
+      const ids = tools.map((t) => t.id)
+      expect(ids).not.toContain("bash")
+      expect(ids).toContain("exec_command")
+      expect(ids).toContain("write_stdin")
     }),
   )
 
-  // TODO(wave_4): unskip when task is dropped from the model-visible tool list.
-  it.instance.skip("model-tool-list-no-task", () =>
+  // Wave 4 — task dropped from registry's builtin array. Same invariant
+  // shape as the bash row above. spawn_agent + 5 friends remain.
+  it.instance("model-tool-list-no-task", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      const build = yield* agents.get("build")
+      const tools = yield* registry.tools({
+        modelID: ModelID.make("test-model"),
+        providerID: ProviderID.make("test"),
+        agent: build,
+      })
+      const ids = tools.map((t) => t.id)
+      expect(ids).not.toContain("task")
+      expect(ids).toContain("spawn_agent")
+      expect(ids).toContain("send_message")
+      expect(ids).toContain("followup_task")
+      expect(ids).toContain("wait_agent")
+      expect(ids).toContain("list_agents")
+      expect(ids).toContain("close_agent")
     }),
   )
 
-  // TODO(wave_4): unskip when plugin tool.definition hooks for bash apply to exec_command.
-  it.instance.skip("plugin-bash-hook-applies-to-exec-command", () =>
+  // Wave 4 — bridge in registry.ts:tools() dispatches a tool.definition
+  // event with toolID="bash" before the new-id event for tools whose
+  // legacy ID is bash (exec_command + write_stdin). Plugins keying on
+  // legacy "bash" continue to mutate exec_command's description.
+  // The full plugin contract suite (4 contracts) lives in the dedicated
+  // plugin-bridge.test.ts — this invariant pins the spec scenario.
+  it.instance("plugin-bash-hook-applies-to-exec-command", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      const plugin = yield* Plugin.Service
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      const build = yield* agents.get("build")
+
+      // Inject a hook directly into the Plugin instance state. The
+      // plugin-bridge.test.ts uses the file-loaded plugin pattern for
+      // contract coverage (closer to user reality); this invariant takes
+      // the in-process injection path because it's the single-assertion
+      // shape and faster to spin up. The two paths converge on the same
+      // Plugin.Service.trigger contract.
+      const hooks = yield* plugin.list()
+      // tool.definition's signature: (input: { toolID: string }, output:
+      // { description: string; parameters: any }) => Promise<void>. Append
+      // a tag when toolID === "bash".
+      hooks.push({
+        "tool.definition": async (input, output) => {
+          if (input.toolID === "bash") {
+            output.description = (output.description ?? "") + "\n[bridge-injected via bash]"
+          }
+        },
+      })
+
+      const tools = yield* registry.tools({
+        modelID: ModelID.make("test-model"),
+        providerID: ProviderID.make("test"),
+        agent: build,
+      })
+      const exec = tools.find((t) => t.id === "exec_command")
+      if (!exec) throw new Error("exec_command missing from registry tools")
+      expect(exec.description).toContain("[bridge-injected via bash]")
     }),
   )
 
-  // TODO(wave_4): unskip when plugin tool.definition hooks for task apply to spawn_agent.
-  it.instance.skip("plugin-task-hook-applies-to-spawn-agent", () =>
+  // Wave 4 — task → spawn_agent bridge. Mirror of the bash invariant
+  // above. Plugins keying on legacy "task" continue to mutate
+  // spawn_agent's description.
+  it.instance("plugin-task-hook-applies-to-spawn-agent", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      const plugin = yield* Plugin.Service
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      const build = yield* agents.get("build")
+
+      const hooks = yield* plugin.list()
+      hooks.push({
+        "tool.definition": async (input, output) => {
+          if (input.toolID === "task") {
+            output.description = (output.description ?? "") + "\n[bridge-injected via task]"
+          }
+        },
+      })
+
+      const tools = yield* registry.tools({
+        modelID: ModelID.make("test-model"),
+        providerID: ProviderID.make("test"),
+        agent: build,
+      })
+      const spawn = tools.find((t) => t.id === "spawn_agent")
+      if (!spawn) throw new Error("spawn_agent missing from registry tools")
+      expect(spawn.description).toContain("[bridge-injected via task]")
     }),
   )
 
-  // TODO(wave_4): unskip when ShellTool stays importable + executable from internal code despite being unadvertised.
-  it.instance.skip("legacy-shell-tool-still-runnable-from-internal-code", () =>
+  // Wave 4 — ShellTool stays importable and runnable from internal code
+  // even after Wave 4 drops it from the registry's builtin array. The
+  // file remains compileable; no internal callers break.
+  it.instance("legacy-shell-tool-still-runnable-from-internal-code", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      if (process.platform === "win32") return
+      Shell.acceptable.reset()
+      const tool = yield* ShellTool
+      const def = yield* tool.init()
+      const ctx: Tool.Context = {
+        sessionID: SessionID.make("ses_inv_legacy_shell"),
+        messageID: MessageID.make(""),
+        callID: "",
+        agent: "build",
+        abort: AbortSignal.any([]),
+        messages: [],
+        metadata: () => Effect.void,
+        ask: () => Effect.void,
+      }
+      const result = yield* def.execute(
+        { command: "echo legacy-shell-invariant", description: "echo invariant" },
+        ctx,
+      )
+      expect(result.output).toContain("legacy-shell-invariant")
+      expect(result.title).toBe("echo invariant")
     }),
   )
 
-  // TODO(wave_4): unskip when TaskTool stays importable + executable from internal code despite being unadvertised.
-  it.instance.skip("legacy-task-tool-still-runnable-from-internal-code", () =>
+  // Wave 4 — TaskTool stays importable and runnable from internal code.
+  // Mirror of the shell invariant. Stub promptOps avoids spawning a real
+  // subagent run-loop.
+  it.instance("legacy-task-tool-still-runnable-from-internal-code", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({ title: "inv-legacy-task" })
+      const user = yield* sessions.updateMessage({
+        id: MessageID.ascending(),
+        role: "user",
+        sessionID: chat.id,
+        agent: "build",
+        model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
+        time: { created: Date.now() },
+      })
+      const assistant: MessageV2.Assistant = {
+        id: MessageID.ascending(),
+        role: "assistant",
+        parentID: user.id,
+        sessionID: chat.id,
+        mode: "build",
+        agent: "build",
+        cost: 0,
+        path: { cwd: "/tmp", root: "/tmp" },
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("test-model"),
+        providerID: ProviderID.make("test"),
+        time: { created: Date.now() },
+      }
+      yield* sessions.updateMessage(assistant)
+
+      const replyText = "legacy-task-invariant"
+      const promptOps: TaskPromptOps = {
+        cancel() {},
+        resolvePromptParts: (template) => Effect.succeed([{ type: "text" as const, text: template }]),
+        prompt: (input) => {
+          const id = MessageID.ascending()
+          const msg: MessageV2.WithParts = {
+            info: {
+              id,
+              role: "assistant",
+              parentID: input.messageID ?? MessageID.ascending(),
+              sessionID: input.sessionID,
+              mode: input.agent ?? "general",
+              agent: input.agent ?? "general",
+              cost: 0,
+              path: { cwd: "/tmp", root: "/tmp" },
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: input.model?.modelID ?? ModelID.make("test-model"),
+              providerID: input.model?.providerID ?? ProviderID.make("test"),
+              time: { created: Date.now() },
+              finish: "stop",
+            },
+            parts: [
+              {
+                id: PartID.ascending(),
+                messageID: id,
+                sessionID: input.sessionID,
+                type: "text",
+                text: replyText,
+              },
+            ],
+          }
+          return Effect.succeed(msg)
+        },
+      }
+
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      const result = yield* def.execute(
+        { description: "inv legacy task", prompt: "x", subagent_type: "general" },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+          callID: "",
+        },
+      )
+      expect(result.output).toContain(replyText)
+      expect(result.metadata.sessionId).toBeDefined()
+    }),
+  )
+
+  // Wave 4 — snapshot diff against Wave 0's pre-replacement capture.
+  // Asserts the EXACT diff: only `bash` and `task` are removed; nothing
+  // else moves. Per Wave 0 NOTES item 6, the snapshots may include
+  // user-installed tools (e.g. `github-pr-search`) that don't exist in
+  // a clean test instance — filter to STANDARD_BUILTIN_IDS to compare
+  // apples-to-apples. The standard builtin set is the universe of IDs
+  // that `registry.ts:builtin` constructs from local imports (excludes
+  // custom tools loaded from `.opencode/tool/` and external plugins).
+  //
+  // Crucially: `current` is NOT filtered by STANDARD_BUILTIN_IDS — only
+  // the baseline is. That asymmetry is what makes this test RED pre-fix:
+  // pre-Wave-4 `current` contains `bash` and `task`, the filtered
+  // baseline does not, so the equality fails. Post-Wave-4 `current`
+  // matches the filtered baseline.
+  it.instance("model-tool-list-snapshot-matches-post-Wave-4-shape", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      // Iterate over agents that exist as built-ins in clean test
+      // instances. Caveman is a user-defined agent (visible in Wave 0
+      // snapshots from the executor's machine); not present here.
+      const agentNames = ["build", "general", "explore", "plan"] as const
+
+      // Universe of standard builtin tool IDs. Subset of `registry.ts`'s
+      // `builtin` array, drawn from STATE-of-art post-Wave-4 expectation
+      // plus Wave 0 baseline minus the two campaign drops.
+      const STANDARD_BUILTIN_IDS = new Set([
+        "invalid",
+        "question",
+        "read",
+        "glob",
+        "grep",
+        "edit",
+        "write",
+        "webfetch",
+        "todowrite",
+        "websearch",
+        "skill",
+        "exec_command",
+        "write_stdin",
+        "spawn_agent",
+        "send_message",
+        "followup_task",
+        "wait_agent",
+        "list_agents",
+        "close_agent",
+      ])
+      const REMOVED = new Set(["bash", "task"])
+
+      for (const agentName of agentNames) {
+        const baselinePath = path.resolve(
+          import.meta.dir,
+          "..",
+          "..",
+          "..",
+          "..",
+          ".wave",
+          "campaigns",
+          "replace-bash-task-2026-05-15",
+          "artifacts",
+          "snapshots",
+          `tool-list-${agentName}.json`,
+        )
+        const baselineRaw = (yield* Effect.promise(() =>
+          Bun.file(baselinePath).json(),
+        )) as Array<{ id: string }>
+        const baselineFiltered = baselineRaw
+          .map((entry) => entry.id)
+          .filter((id) => STANDARD_BUILTIN_IDS.has(id))
+          .sort()
+        const expectedRemoved = baselineRaw
+          .map((entry) => entry.id)
+          .filter((id) => REMOVED.has(id))
+
+        // Pre-Wave-4 baseline included `bash` and `task` per the BC
+        // matrix; if the baseline doesn't list them, Wave 0 capture is
+        // suspect.
+        expect(expectedRemoved).toEqual(["bash", "task"])
+
+        const agent = yield* agents.get(agentName)
+        const tools = yield* registry.tools({
+          modelID: ModelID.make("test-model"),
+          providerID: ProviderID.make("test"),
+          agent,
+        })
+        const currentIds = tools.map((t) => t.id).sort()
+        // Asymmetric: do NOT filter `current` by STANDARD_BUILTIN_IDS.
+        // Pre-Wave-4 `current` contains `bash` + `task` and won't match
+        // the filtered-baseline; post-Wave-4 it matches.
+        expect(currentIds).toEqual(baselineFiltered)
+      }
     }),
   )
 

@@ -207,13 +207,15 @@ it.live("tool execution produces non-empty session diff (snapshot race)", () =>
         permission: [{ permission: "*", pattern: "*", action: "allow" }],
       })
 
-      // Use bash tool (always registered) to create a file
+      // Wave 4 (replace-bash-task-2026-05-15) — `bash` was dropped from
+      // the model-facing tool list. Use exec_command instead. Same
+      // observable test scenario: tool call writes a file, summary diff
+      // observes the change.
       const command = `echo 'snapshot race test content' > ${path.join(dir, "race-test.txt")}`
-      yield* llm.toolMatch((hit) => JSON.stringify(hit.body).includes("create the file"), "bash", {
-        command,
-        description: "create test file",
+      yield* llm.toolMatch((hit) => JSON.stringify(hit.body).includes("create the file"), "exec_command", {
+        cmd: command,
       })
-      yield* llm.textMatch((hit) => JSON.stringify(hit.body).includes("bash"), "done")
+      yield* llm.textMatch((hit) => JSON.stringify(hit.body).includes("exec_command"), "done")
 
       // Seed user message
       yield* prompt.prompt({
@@ -241,7 +243,7 @@ it.live("tool execution produces non-empty session diff (snapshot race)", () =>
       const allMsgs = yield* MessageV2.filterCompactedEffect(session.id)
       const tool = allMsgs
         .flatMap((m) => m.parts)
-        .find((p): p is MessageV2.ToolPart => p.type === "tool" && p.tool === "bash")
+        .find((p): p is MessageV2.ToolPart => p.type === "tool" && p.tool === "exec_command")
       expect(tool?.state.status).toBe("completed")
 
       // Poll for diff — summarize() is fire-and-forget

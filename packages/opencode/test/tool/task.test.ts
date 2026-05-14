@@ -107,6 +107,16 @@ function reply(input: SessionPrompt.PromptInput, text: string): MessageV2.WithPa
 }
 
 describe("tool.task", () => {
+  // Wave 4 (replace-bash-task-2026-05-15) — `tool.task` is dropped from
+  // the registry's builtin array, so `registry.tools()` no longer
+  // returns a tool with `id === TaskTool.id`. The describeTask
+  // enumeration logic still exists (and is still imported by the
+  // registry for future plugin reactivation paths) but is dead code at
+  // the model surface. The describeSpawnAgent twin renders the same
+  // shape (sorted enumeration, task-key permission filter) for the
+  // model-visible spawn_agent tool. These two tests verify the
+  // enumeration BEHAVIOR survives the registry surface change by
+  // reading spawn_agent's description instead.
   it.live("description sorts subagents by name and is stable across calls", () =>
     provideTmpdirInstance(
       () =>
@@ -116,7 +126,7 @@ describe("tool.task", () => {
           const registry = yield* ToolRegistry.Service
           const get = Effect.fnUntraced(function* () {
             const tools = yield* registry.tools({ ...ref, agent: build })
-            return tools.find((tool) => tool.id === TaskTool.id)?.description ?? ""
+            return tools.find((tool) => tool.id === "spawn_agent")?.description ?? ""
           })
           const first = yield* get()
           const second = yield* get()
@@ -158,7 +168,8 @@ describe("tool.task", () => {
           const build = yield* agent.get("build")
           const registry = yield* ToolRegistry.Service
           const description =
-            (yield* registry.tools({ ...ref, agent: build })).find((tool) => tool.id === TaskTool.id)?.description ?? ""
+            (yield* registry.tools({ ...ref, agent: build })).find((tool) => tool.id === "spawn_agent")?.description ??
+            ""
 
           expect(description).toContain("- alpha: Alpha agent")
           expect(description).not.toContain("- zebra: Zebra agent")

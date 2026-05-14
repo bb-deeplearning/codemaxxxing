@@ -1198,7 +1198,10 @@ test("bench: my_metric", async () => {
 ```
 
 **Why:** Tail percentiles (`sorted[N-1]` when N is small) are dominated by the cleanest run, not the underlying distribution. With `samples: 20`, `p99 = sorted[19] = max` — any single GC pause, kernel scheduling jitter, or laptop thermal blip blows the metric. Increasing samples to 100+ gives a true p99 but doesn't match baseline methodology, so deltas are misleading. Best-of-N over runs that match baseline methodology gives the cleanest comparable measurement. **Don't pick best-per-percentile across runs** (a Frankenstein measurement) — pick the best COHERENT run.
-**See:** `packages/opencode/test/perf/exec-command.bench.ts` (Wave 2 of replace-bash-task-2026-05-15) — `pickBest` helper + best-of-8 over `runExecBench`. Related: `opentui-render-bench-noise-needs-best-of-n`, `runloop-bench-vs-baseline-methodology-mismatch`.
+
+**Pick the percentile that matters, not always p50.** When a metric is dominated by tail outliers (PTY allocation, plugin dispatch, registry construction — anything with cold-path branches), best-by-p50 may pick a run whose p50 is fastest but whose p99 still hits an outlier. The bench then blows the 15% p99 budget even though the median improved. The fix is `pickBest = (runs) => runs.reduce((a, r) => r.p99 < a.p99 ? r : a)` — best-by-p99. The trade-off: the chosen run may have slightly slower p50 (acceptable when p50 has ample headroom — e.g. -20% versus baseline). Empirically: Wave 4 `registry.tools` (replace-bash-task-2026-05-15) flipped from `p99 +34%` (best-by-p50) to `p99 -29%` (best-by-p99) on the same 5 runs.
+
+**See:** `packages/opencode/test/perf/exec-command.bench.ts` (Wave 2 of replace-bash-task-2026-05-15) — `pickBest` helper + best-of-8 over `runExecBench` (best-by-p50). `packages/opencode/test/perf/registry-tools.bench.ts` (Wave 4 of same campaign) — best-by-p99 variant for tail-sensitive metric. Related: `opentui-render-bench-noise-needs-best-of-n`, `runloop-bench-vs-baseline-methodology-mismatch`.
 
 ---
 

@@ -17,6 +17,16 @@
 // References: WAVE.md step 3, INTEGRATION_INVARIANTS.md
 // `spawn-agent-description-filters-by-task-rules`,
 // PERMISSION_MAPPING.md § "Post-Wave-3 mapping (task group)".
+//
+// Wave 4 — model-tool-list assertions covering invariants
+// `model-tool-list-no-bash` and `model-tool-list-no-task`. The registry's
+// `builtin` array drops `tool.shell` and `tool.task`, so per-agent
+// `tools()` results no longer expose them while the codex-ported
+// `exec_command` + `spawn_agent` (and 5 v2 friends) take their place.
+// Per-agent coverage matches the BACKWARD_COMPAT.md "Snapshot diffs" rows
+// for the build / plan / general / explore agents (caveman + custom-agent
+// variations are user-defined and don't exist in clean test instances —
+// covered by the snapshot-diff invariant in tool-surface-replacement.test.ts).
 
 import { afterEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
@@ -122,7 +132,7 @@ describe("ToolRegistry.describeSpawnAgent — Wave 3 task-key filter", () => {
   )
 
   it.live(
-    "describeSpawnAgent and describeTask filters agree (both consult task key)",
+    "describeSpawnAgent filter consults task key (post-Wave-3 collapse)",
     () =>
       provideTmpdirInstance(() =>
         Effect.gen(function* () {
@@ -136,20 +146,76 @@ describe("ToolRegistry.describeSpawnAgent — Wave 3 task-key filter", () => {
           const tools = yield* registry.tools({ ...STUB_MODEL, agent })
 
           const spawn = tools.find((t) => t.id === "spawn_agent")
-          const task = tools.find((t) => t.id === "task")
-          if (!spawn || !task) throw new Error("spawn_agent / task missing from registry tools")
-
-          // Both tools' enumerations should now agree: explore filtered, general kept.
+          if (!spawn) throw new Error("spawn_agent missing from registry tools")
+          // Wave 4 — `task` tool is no longer in `tools()` output (dropped
+          // from registry's builtin array). The describeTask branch in
+          // tools() is dead code; the cross-check that describeTask and
+          // describeSpawnAgent agree is now meaningless because task
+          // isn't model-visible. We retain just the spawn_agent half of
+          // the original Wave 3 assertion: explore filtered out via
+          // task: deny, general unaffected.
           const spawnEnum = findEnumeration(spawn.description)
-          const taskEnum = findEnumeration(task.description)
           expect(spawnEnum).not.toMatch(/^- explore:/m)
-          expect(taskEnum).not.toMatch(/^- explore:/m)
-          // general is "subagent" mode (eligible for spawn_agent which excludes
-          // hidden) AND non-primary (eligible for task which excludes "primary").
-          // Both enumerations include it.
           expect(spawnEnum).toMatch(/^- general:/m)
-          expect(taskEnum).toMatch(/^- general:/m)
         }),
       ),
   )
+})
+
+// =============================================================================
+// Wave 4 — `tool.shell` and `tool.task` are dropped from the registry's
+// `builtin` array. The model-visible tool list per agent must no longer
+// contain `bash` or `task`. The codex-ported replacements (`exec_command` +
+// `write_stdin` for shell, `spawn_agent` + 5 v2 friends for task) MUST stay
+// visible. Per-agent coverage matches BACKWARD_COMPAT.md § "Snapshot diffs".
+//
+// Per Wave 0 NOTES item 6: `ToolRegistry.tools(...)` does NOT apply
+// per-agent permission filtering (that happens downstream in
+// `session/llm.ts:resolveTools` via `Permission.disabled`). All agents see
+// the same builtin list from the registry; only `describeSpawnAgent` /
+// `describeTask` enumerations vary by agent. So these per-agent assertions
+// are equivalent on the registry surface — but enumerating each built-in
+// agent makes the future drift case (someone adds an agent-level filter
+// inside tools()) immediately visible per row.
+//
+// describeTask continues to be defined and exported by the registry — the
+// `tool.id === TaskTool.id` branch in `tools()` is dead code after Wave 4
+// because `filtered` no longer contains a tool with id "task" (per WAVE.md
+// gotcha 2: kept for plugin reactivation). The fact that the branch is
+// dead doesn't matter for these tests; we just assert the model-visible
+// IDs.
+// =============================================================================
+
+const BUILTIN_AGENTS = ["build", "plan", "general", "explore"] as const
+
+describe("ToolRegistry.tools — Wave 4 model-visible list excludes bash + task", () => {
+  for (const agentName of BUILTIN_AGENTS) {
+    it.live(
+      `registry.tools() for ${agentName} agent does NOT include bash or task`,
+      () =>
+        provideTmpdirInstance(() =>
+          Effect.gen(function* () {
+            const registry = yield* ToolRegistry.Service
+            const agents = yield* Agent.Service
+            const agent = yield* agents.get(agentName)
+            const tools = yield* registry.tools({ ...STUB_MODEL, agent })
+            const ids = tools.map((t) => t.id)
+            // model-tool-list-no-bash + model-tool-list-no-task invariants.
+            expect(ids).not.toContain("bash")
+            expect(ids).not.toContain("task")
+            // exec_command + spawn_agent take their place. registry.tools()
+            // does NOT apply per-agent permission filtering (per Wave 0
+            // NOTES item 6), so all agents see the same builtin list.
+            expect(ids).toContain("exec_command")
+            expect(ids).toContain("write_stdin")
+            expect(ids).toContain("spawn_agent")
+            expect(ids).toContain("send_message")
+            expect(ids).toContain("followup_task")
+            expect(ids).toContain("wait_agent")
+            expect(ids).toContain("list_agents")
+            expect(ids).toContain("close_agent")
+          }),
+        ),
+    )
+  }
 })
