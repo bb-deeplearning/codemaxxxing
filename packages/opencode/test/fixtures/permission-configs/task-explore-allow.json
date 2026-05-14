@@ -1,0 +1,8 @@
+{
+  "permission": {
+    "task": {
+      "explore": "allow",
+      "general": "ask"
+    }
+  }
+}

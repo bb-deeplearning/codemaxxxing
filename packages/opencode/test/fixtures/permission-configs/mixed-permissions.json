@@ -1,0 +1,12 @@
+{
+  "permission": {
+    "bash": {
+      "git *": "allow",
+      "rm *": "deny"
+    },
+    "task": {
+      "explore": "allow"
+    },
+    "edit": "deny"
+  }
+}

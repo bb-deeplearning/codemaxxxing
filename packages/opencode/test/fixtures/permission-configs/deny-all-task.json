@@ -1,0 +1,7 @@
+{
+  "permission": {
+    "task": {
+      "*": "deny"
+    }
+  }
+}

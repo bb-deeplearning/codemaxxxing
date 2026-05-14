@@ -1,0 +1,14 @@
+{
+  "requests": [
+    {
+      "permission": "external_directory",
+      "patterns": [
+        "/home/*"
+      ],
+      "always": [
+        "/home/*"
+      ],
+      "metadata": {}
+    }
+  ]
+}

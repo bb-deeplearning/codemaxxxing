@@ -1,0 +1,14 @@
+{
+  "permission": "exec_command",
+  "patterns": [
+    "git status"
+  ],
+  "always": [
+    "pid:<N>"
+  ],
+  "metadata": {
+    "cmd": "git status",
+    "workdir": "/Users/rohan/Documents/Personal/codemaxxxing",
+    "tty": false
+  }
+}

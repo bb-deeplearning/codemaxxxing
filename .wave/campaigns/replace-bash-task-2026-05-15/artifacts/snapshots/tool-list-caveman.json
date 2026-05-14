@@ -1,0 +1,94 @@
+[
+  {
+    "id": "bash",
+    "descriptionTokens": 9936
+  },
+  {
+    "id": "close_agent",
+    "descriptionTokens": 1135
+  },
+  {
+    "id": "edit",
+    "descriptionTokens": 1369
+  },
+  {
+    "id": "exec_command",
+    "descriptionTokens": 6053
+  },
+  {
+    "id": "followup_task",
+    "descriptionTokens": 1739
+  },
+  {
+    "id": "github-pr-search",
+    "descriptionTokens": 362
+  },
+  {
+    "id": "github-triage",
+    "descriptionTokens": 160
+  },
+  {
+    "id": "glob",
+    "descriptionTokens": 545
+  },
+  {
+    "id": "grep",
+    "descriptionTokens": 689
+  },
+  {
+    "id": "invalid",
+    "descriptionTokens": 10
+  },
+  {
+    "id": "list_agents",
+    "descriptionTokens": 1253
+  },
+  {
+    "id": "question",
+    "descriptionTokens": 657
+  },
+  {
+    "id": "read",
+    "descriptionTokens": 1158
+  },
+  {
+    "id": "send_message",
+    "descriptionTokens": 1493
+  },
+  {
+    "id": "skill",
+    "descriptionTokens": 1878
+  },
+  {
+    "id": "spawn_agent",
+    "descriptionTokens": 5853
+  },
+  {
+    "id": "task",
+    "descriptionTokens": 7316
+  },
+  {
+    "id": "todowrite",
+    "descriptionTokens": 8845
+  },
+  {
+    "id": "wait_agent",
+    "descriptionTokens": 2246
+  },
+  {
+    "id": "webfetch",
+    "descriptionTokens": 750
+  },
+  {
+    "id": "websearch",
+    "descriptionTokens": 972
+  },
+  {
+    "id": "write",
+    "descriptionTokens": 623
+  },
+  {
+    "id": "write_stdin",
+    "descriptionTokens": 4913
+  }
+]

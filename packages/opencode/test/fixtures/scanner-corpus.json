@@ -1,0 +1,482 @@
+[
+  {
+    "cmd": "",
+    "expected_patterns": [],
+    "expected_always": [],
+    "expected_dirs": []
+  },
+  {
+    "cmd": " ",
+    "expected_patterns": [],
+    "expected_always": [],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "NODE_ENV=production npm start",
+    "expected_patterns": [
+      "NODE_ENV=production npm start"
+    ],
+    "expected_always": [
+      "npm start *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "bash -c \"echo hello\"",
+    "expected_patterns": [
+      "bash -c \"echo hello\""
+    ],
+    "expected_always": [
+      "bash *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "bun run dev --port 3000",
+    "expected_patterns": [
+      "bun run dev --port 3000"
+    ],
+    "expected_always": [
+      "bun run dev *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "cargo build --release",
+    "expected_patterns": [
+      "cargo build --release"
+    ],
+    "expected_always": [
+      "cargo build *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "cargo check ; cargo test",
+    "expected_patterns": [
+      "cargo check",
+      "cargo test"
+    ],
+    "expected_always": [
+      "cargo check *",
+      "cargo test *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "cat <<EOF\nhello\nEOF",
+    "expected_patterns": [
+      "cat <<EOF\nhello\nEOF"
+    ],
+    "expected_always": [
+      "cat *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "cat file.txt | wc -l",
+    "expected_patterns": [
+      "cat file.txt",
+      "wc -l"
+    ],
+    "expected_always": [
+      "cat *",
+      "wc *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "cd \"$HOME\"",
+    "expected_patterns": [],
+    "expected_always": [],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "cd /home/user",
+    "expected_patterns": [],
+    "expected_always": [],
+    "expected_dirs": [
+      "/home"
+    ]
+  },
+  {
+    "cmd": "cd ~/Documents",
+    "expected_patterns": [],
+    "expected_always": [],
+    "expected_dirs": [
+      "/Users/rohan/Documents"
+    ]
+  },
+  {
+    "cmd": "chmod 755 /usr/local/bin/script",
+    "expected_patterns": [],
+    "expected_always": [],
+    "expected_dirs": [
+      "/usr/local/bin"
+    ]
+  },
+  {
+    "cmd": "cp src/foo.ts dst/",
+    "expected_patterns": [
+      "cp src/foo.ts dst/"
+    ],
+    "expected_always": [
+      "cp *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "cp ~/Downloads/file .",
+    "expected_patterns": [],
+    "expected_always": [],
+    "expected_dirs": [
+      "/Users/rohan/Downloads"
+    ]
+  },
+  {
+    "cmd": "curl https://example.com",
+    "expected_patterns": [
+      "curl https://example.com"
+    ],
+    "expected_always": [
+      "curl *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "docker ps -a",
+    "expected_patterns": [
+      "docker ps -a"
+    ],
+    "expected_always": [
+      "docker ps *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "echo \"héllo\"",
+    "expected_patterns": [
+      "echo \"héllo\""
+    ],
+    "expected_always": [
+      "echo *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "expected_patterns": [
+      "echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "expected_always": [
+      "echo *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "export PATH=/usr/local/bin:$PATH",
+    "expected_patterns": [],
+    "expected_always": [],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "find . -name \"*.json\"",
+    "expected_patterns": [
+      "find . -name \"*.json\""
+    ],
+    "expected_always": [
+      "find *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "git log --grep='foo bar'",
+    "expected_patterns": [
+      "git log --grep='foo bar'"
+    ],
+    "expected_always": [
+      "git log *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "git pull || echo failed",
+    "expected_patterns": [
+      "echo failed",
+      "git pull"
+    ],
+    "expected_always": [
+      "echo *",
+      "git pull *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "git status",
+    "expected_patterns": [
+      "git status"
+    ],
+    "expected_always": [
+      "git status *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "git status -s",
+    "expected_patterns": [
+      "git status -s"
+    ],
+    "expected_always": [
+      "git status *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "git status | grep modified",
+    "expected_patterns": [
+      "git status",
+      "grep modified"
+    ],
+    "expected_always": [
+      "git status *",
+      "grep *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "go test ./...",
+    "expected_patterns": [
+      "go test ./..."
+    ],
+    "expected_always": [
+      "go test *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "kubectl get pods",
+    "expected_patterns": [
+      "kubectl get pods"
+    ],
+    "expected_always": [
+      "kubectl get *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "ls",
+    "expected_patterns": [
+      "ls"
+    ],
+    "expected_always": [
+      "ls *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "ls *.{ts,tsx}",
+    "expected_patterns": [
+      "ls *.{ts,tsx}"
+    ],
+    "expected_always": [
+      "ls *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "ls -la | head -10",
+    "expected_patterns": [
+      "head -10",
+      "ls -la"
+    ],
+    "expected_always": [
+      "head *",
+      "ls *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "make build",
+    "expected_patterns": [
+      "make build"
+    ],
+    "expected_always": [
+      "make build *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "mkdir -p dist",
+    "expected_patterns": [
+      "mkdir -p dist"
+    ],
+    "expected_always": [
+      "mkdir *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "mkdir /var/log/myapp",
+    "expected_patterns": [],
+    "expected_always": [],
+    "expected_dirs": [
+      "/var/log"
+    ]
+  },
+  {
+    "cmd": "mkdir foo && cd foo",
+    "expected_patterns": [
+      "mkdir foo"
+    ],
+    "expected_always": [
+      "mkdir *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "mv old.json new.json",
+    "expected_patterns": [
+      "mv old.json new.json"
+    ],
+    "expected_always": [
+      "mv *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "node --version",
+    "expected_patterns": [
+      "node --version"
+    ],
+    "expected_always": [
+      "node *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "npm install --save-dev",
+    "expected_patterns": [
+      "npm install --save-dev"
+    ],
+    "expected_always": [
+      "npm install *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "npm test && npm run build",
+    "expected_patterns": [
+      "npm run build",
+      "npm test"
+    ],
+    "expected_always": [
+      "npm run build *",
+      "npm test *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "ps aux | grep node",
+    "expected_patterns": [
+      "grep node",
+      "ps aux"
+    ],
+    "expected_always": [
+      "grep *",
+      "ps *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "pushd ../other",
+    "expected_patterns": [],
+    "expected_always": [],
+    "expected_dirs": [
+      "/private/var/folders/n7/ffc4xm556dx2q5fm9qxf2d3r0000gn/T"
+    ]
+  },
+  {
+    "cmd": "pwd",
+    "expected_patterns": [
+      "pwd"
+    ],
+    "expected_always": [
+      "pwd *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "python -c 'print(\"x\")'",
+    "expected_patterns": [
+      "python -c 'print(\"x\")'"
+    ],
+    "expected_always": [
+      "python -c *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "rm ./tmp.txt",
+    "expected_patterns": [
+      "rm ./tmp.txt"
+    ],
+    "expected_always": [
+      "rm *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "rm /tmp/foo",
+    "expected_patterns": [],
+    "expected_always": [],
+    "expected_dirs": [
+      "/tmp"
+    ]
+  },
+  {
+    "cmd": "tar -czf out.tar.gz src/",
+    "expected_patterns": [
+      "tar -czf out.tar.gz src/"
+    ],
+    "expected_always": [
+      "tar *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "touch ./newfile",
+    "expected_patterns": [
+      "touch ./newfile"
+    ],
+    "expected_always": [
+      "touch *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "unset DEBUG",
+    "expected_patterns": [],
+    "expected_always": [],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "whoami",
+    "expected_patterns": [
+      "whoami"
+    ],
+    "expected_always": [
+      "whoami *"
+    ],
+    "expected_dirs": []
+  },
+  {
+    "cmd": "x",
+    "expected_patterns": [
+      "x"
+    ],
+    "expected_always": [
+      "x *"
+    ],
+    "expected_dirs": []
+  }
+]

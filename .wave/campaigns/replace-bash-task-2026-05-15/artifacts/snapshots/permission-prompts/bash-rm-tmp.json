@@ -1,0 +1,24 @@
+{
+  "requests": [
+    {
+      "permission": "external_directory",
+      "patterns": [
+        "/tmp/*"
+      ],
+      "always": [
+        "/tmp/*"
+      ],
+      "metadata": {}
+    },
+    {
+      "permission": "bash",
+      "patterns": [
+        "rm /tmp/foo"
+      ],
+      "always": [
+        "rm *"
+      ],
+      "metadata": {}
+    }
+  ]
+}

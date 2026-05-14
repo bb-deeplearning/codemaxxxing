@@ -1,0 +1,55 @@
+Spawn a command in a persistent PTY session and return its initial output. Different from `bash`: that tool is one-shot — you fire a command, it runs to completion, output comes back, the process is gone. `exec_command` keeps the child alive after the call returns, hands you back a `session_id`, and lets you re-enter via `write_stdin` to send more input or poll for new output.
+
+Use this tool for processes that hold state between interactions or run indefinitely:
+
+- REPLs — `python`, `ipython`, `node`, `bun repl`, `psql`, `redis-cli`, `ghci`, `iex`. The interpreter loads its imports, parses your file, builds whatever in-memory state you need; subsequent `write_stdin` calls reuse that state without re-paying the boot cost.
+- Dev servers — `next dev`, `vite`, `cargo run`, `bun run dev`. Spawn once, then poll with empty `write_stdin` to read fresh log lines as the server reacts to file edits you make in parallel.
+- File watchers — `tsc --watch`, `cargo watch`, `vitest --watch`. Same pattern: spawn once, poll for new diagnostics.
+- ssh / docker exec / interactive db shells — anything where the connection setup is expensive and you'll send multiple commands.
+- Long-running observables — `tail -f`, `kubectl logs -f`, `journalctl -f`.
+
+Use `bash` instead for single commands that exit on their own. `ls`, `git status`, `npm install`, one-shot scripts — none of these benefit from persistence and `bash` is purpose-built for them with shorter setup, integrated permission scanning, and faster output truncation.
+
+# Parameters
+
+- `cmd` (required) — the shell command. Treated as a string passed to your default shell; quoting and globbing follow shell rules.
+- `workdir` — directory to run in. Defaults to the turn's cwd. Pass an absolute path or a path relative to the turn cwd.
+- `shell` — override the shell binary. Defaults to your configured shell. Most use cases shouldn't touch this.
+- `tty` (default `false`) — allocate a TTY. **Required if you intend to send stdin later via `write_stdin`.** Without `tty: true`, the connection is one-way: you can poll for output but cannot write input. REPLs need `tty: true`. Dev servers usually do too (some emit colored TTY output). File watchers usually don't.
+- `yield_time_ms` (default `10000`) — how long to wait for output before returning. The call returns either when this elapses or when the process exits, whichever first. Clamped to [250, 30000]. For REPL prompts, 1000-3000 is responsive. For dev server cold-start, 5000-10000. For one-shot commands you expect to finish, 30000.
+- `max_output_tokens` — cap returned output length. Excess truncates head+tail (you see prologue and tail with the middle elided). Default budget is set by the configured truncation policy; raise this if you specifically need more context.
+
+# Return shape
+
+```
+{
+  output: string                    // command output, possibly head/tail-truncated
+  wall_time_seconds: number         // elapsed wait time
+  session_id?: number               // present iff process is still running
+  exit_code?: number                // present iff process exited during this call
+  chunk_id?: string                 // present iff partial output (still running)
+  original_token_count?: number     // approx tokens before truncation
+}
+```
+
+`session_id` is the discriminator: present means the process is alive and you can call `write_stdin` against it. Absent means the process exited (check `exit_code`). Either field is present per call, never both.
+
+# Operational discipline
+
+- **`session_id` is per-instance and per-spawn.** It does NOT survive `opencode` restart. If you previously had a session and `opencode` was restarted, that `session_id` is gone — re-spawn with a fresh `exec_command`. Same for sessions that hit the LRU cap (64 concurrent processes; oldest non-recent ones get pruned).
+- **First spawn requires permission. Subsequent `write_stdin` against the same `session_id` does not.** When you approve "always" for the first `exec_command`, the per-PID pattern `pid:<session_id>` registers as allowed; `write_stdin` finds it and skips the prompt. This holds for the life of the process, not the session_id string.
+- **Output is head/tail-truncated, not tail-only.** If the process emits more bytes than `max_output_tokens` allows, you see a prefix (the prologue, often the most informative for "did it start cleanly") and a suffix (the tail, with the most recent activity). The middle is dropped. When interpreting long output, remember the gap is real.
+- **Pool cap is 64.** When you spawn the 65th, the LRU pruner kills the oldest non-recent one. The 8 most-recently-used are protected; among the rest, exited entries die first, then alive ones in LRU order. If you run a lot of `exec_command` with quick exit, those exited shells get reaped first — you don't have to manage them.
+- **A 60-process warning fires when you cross that threshold.** Treat it as a signal to consolidate or close work, not a hard limit. The 64-cap pruning happens silently.
+- **`ctx.abort` (user Cmd-C) terminates the spawned process** and surfaces "User aborted the command" in metadata. Output collected so far still returns.
+
+# Failure modes
+
+- Permission denied → the call returns an error and the spawned process is torn down before output collection.
+- Spawn failure (binary not found, cwd doesn't exist) → error message names the cause; no `session_id` returned.
+- Process exits during initial yield → `exit_code` returned, no `session_id`. Treat as a one-shot result.
+- `cwd` resolves outside the workspace → permission system asks for `external_directory` (separate prompt) before spawning.
+
+# Cost model
+
+Each persistent process holds a slot in the 64-cap pool, a PTY (real OS resource), and a 1 MiB head/tail output buffer. Cheap enough to spawn liberally; expensive enough to not fire-and-forget thousands. If you spawned a process speculatively and don't need its output anymore, there's no explicit close — the LRU pruner reclaims it once you've spawned enough other things, or it dies with the project instance.

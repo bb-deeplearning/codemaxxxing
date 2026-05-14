@@ -1,0 +1,8 @@
+{
+  "permission": {
+    "task": {
+      "explore": "deny",
+      "general": "allow"
+    }
+  }
+}

@@ -1,0 +1,141 @@
+{
+  "captured_at": "2026-05-14T19:40:53.154Z",
+  "git_sha": "cf193911e",
+  "bun_version": "1.3.13",
+  "metrics": {
+    "scan.cmd_short": {
+      "label": "scan.cmd_short",
+      "samples": 500,
+      "p50": 70667,
+      "p95": 555042,
+      "p99": 2852959,
+      "min": 41834,
+      "max": 5563083,
+      "mean": 193502.294
+    },
+    "scan.cmd_pipe": {
+      "label": "scan.cmd_pipe",
+      "samples": 500,
+      "p50": 53667,
+      "p95": 212208,
+      "p99": 1634500,
+      "min": 43375,
+      "max": 4327000,
+      "mean": 105485.056
+    },
+    "scan.cmd_chain": {
+      "label": "scan.cmd_chain",
+      "samples": 500,
+      "p50": 47000,
+      "p95": 67833,
+      "p99": 159500,
+      "min": 39792,
+      "max": 4590750,
+      "mean": 71383.902
+    },
+    "scan.cmd_long": {
+      "label": "scan.cmd_long",
+      "samples": 500,
+      "p50": 47292,
+      "p95": 75125,
+      "p99": 334167,
+      "min": 39500,
+      "max": 627167,
+      "mean": 57229.692
+    },
+    "shell.exec": {
+      "label": "shell.exec",
+      "samples": 20,
+      "p50": 25153334,
+      "p95": 45625084,
+      "p99": 125722750,
+      "min": 20386500,
+      "max": 125722750,
+      "mean": 32575604.25
+    },
+    "exec_command.exec": {
+      "label": "exec_command.exec",
+      "samples": 20,
+      "p50": 71402000,
+      "p95": 88006041,
+      "p99": 96118625,
+      "min": 63453583,
+      "max": 96118625,
+      "mean": 73408302.1
+    },
+    "spawn_agent.spawn": {
+      "label": "spawn_agent.spawn",
+      "samples": 10,
+      "p50": 1032292,
+      "p95": 1498875,
+      "p99": 1498875,
+      "min": 928125,
+      "max": 1498875,
+      "mean": 1094466.6
+    },
+    "task.spawn": {
+      "label": "task.spawn",
+      "samples": 10,
+      "p50": 31542,
+      "p95": 48625,
+      "p99": 48625,
+      "min": 23208,
+      "max": 48625,
+      "mean": 34599.9
+    },
+    "registry.tools": {
+      "label": "registry.tools",
+      "samples": 500,
+      "p50": 348958,
+      "p95": 409583,
+      "p99": 502292,
+      "min": 304250,
+      "max": 784250,
+      "mean": 355363.054
+    },
+    "permission.disabled": {
+      "label": "permission.disabled",
+      "samples": 500,
+      "p50": 75333,
+      "p95": 85000,
+      "p99": 106750,
+      "min": 68083,
+      "max": 7966792,
+      "mean": 92698.722
+    },
+    "permission.evaluate": {
+      "label": "permission.evaluate",
+      "samples": 500,
+      "p50": 10875,
+      "p95": 14417,
+      "p99": 24333,
+      "min": 9583,
+      "max": 28958,
+      "mean": 11362.448
+    },
+    "prompt.render.exec_command": {
+      "label": "prompt.render.exec_command",
+      "samples": 1,
+      "p50": 0,
+      "p95": 0,
+      "p99": 0,
+      "min": 0,
+      "max": 0,
+      "mean": 0,
+      "bytes": 6053,
+      "tokens": 6053
+    },
+    "prompt.render.spawn_agent": {
+      "label": "prompt.render.spawn_agent",
+      "samples": 1,
+      "p50": 0,
+      "p95": 0,
+      "p99": 0,
+      "min": 0,
+      "max": 0,
+      "mean": 0,
+      "bytes": 5811,
+      "tokens": 5811
+    }
+  }
+}

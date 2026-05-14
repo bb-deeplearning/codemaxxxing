@@ -1,0 +1,117 @@
+Spawn a sub-agent to run concurrently in its own fiber. Returns immediately
+with the child's canonical task name and nickname; the child runs in
+parallel while you keep working. The child can spawn its own children, send
+you messages via send_message / followup_task, and reach a final status that
+you observe via wait_agent or list_agents.
+
+## Mental model
+
+Spawning is asynchronous and non-blocking. The call returns as soon as the
+child is registered and its run-loop fiber is forked — usually a few
+milliseconds. The child then makes its own LLM calls, runs its own tools,
+and may spawn its own children. Treat sibling agents as separate workers,
+not as function calls. You and they make progress in parallel.
+
+## Naming and addressing
+
+`task_name` is the leaf of the new agent's canonical path. Lowercase
+letters, digits, and underscores only — `worker_1`, `parser_review`, `db`.
+If your path is `/root/explorers` and you spawn with `task_name: "worker_a"`,
+the child's canonical path is `/root/explorers/worker_a`. From your
+perspective you can refer to the child as `worker_a` (relative) or
+`/root/explorers/worker_a` (canonical). A sibling at `/root/builders` can
+only refer to it by the canonical form. Pick names that mean something —
+they show up in `list_agents` and in every cross-agent message.
+
+## Inheritance
+
+The child inherits your model, reasoning effort, workspace, tool set, and
+permission ruleset by default. Leave `model` and `reasoning_effort` unset
+unless the user explicitly asks for an override or the task clearly demands
+one. `agent_type` selects which subagent definition to spawn — see the
+Subagents section below.
+
+## When to delegate
+
+- Bounded sidecar work that can run in parallel with your immediate next
+  step. Prefer delegating concrete, well-scoped tasks.
+- Multiple independent research questions — fan out N `explore` agents,
+  integrate results when they return.
+- Code edits with disjoint write sets — split the work, spawn one agent
+  per slice, do not let two agents touch the same files.
+- Debate / design review — spawn two agents with different framings and
+  let them followup_task each other.
+- Observer/worker — one agent watches outputs of N siblings via wait_agent
+  and integrates the results.
+
+## When NOT to delegate
+
+- Your immediate next blocking step. If you need the answer to make the
+  next decision, do it locally — don't hand it off and then sit on
+  wait_agent.
+- Tightly-coupled work that touches the same files or state another agent
+  is already working on.
+- Tasks too vague to scope cleanly. A delegated task with unclear output
+  produces unclear results. Sharpen the ask first or do it yourself.
+- The same question you already delegated. If a previous spawn's answer
+  was unsatisfactory, refine the prompt and use followup_task on the
+  existing agent instead of spawning a duplicate.
+
+## Scoping a delegated task
+
+Every spawn should have a concrete deliverable. "Look into X" is bad;
+"return the file paths and line numbers where Y is implemented, and the
+function signatures involved" is good. For code-edit work, name the files
+the child owns and forbid edits outside that set. For research work, name
+the questions and the format you expect back.
+
+## After you delegate
+
+Do useful local work. Don't reflexively call wait_agent — that just blocks
+your fiber while the child is still running. Check in with list_agents
+when you need a status snapshot, or wait_agent only when you're genuinely
+blocked on a result for your next step. Read drained messages in your
+mailbox — siblings push results to you via send_message and they appear at
+the start of your next turn.
+
+## Subagents
+
+`agent_type` names which subagent to spawn — pick from the agent types
+listed below this description (the registry templates the live list per
+turn so it always reflects what's actually available).
+
+Pick the subagent that matches the work. Match the description to the
+task; if no listed subagent is a clean fit, do the work locally instead
+of forcing one in.
+
+## Cost
+
+Every spawned agent makes its own LLM calls and consumes context budget.
+Cost is multiplicative — five concurrent agents is roughly five times the
+token spend per turn. Don't spawn for trivia. A grep, a glob, or a quick
+read is cheaper than spawning an explorer. Spawn when the work is
+substantial enough that running it in parallel actually saves wall-clock
+time.
+
+## Limits
+
+- Spawn depth is capped at 4 levels under `/root` — `/root/a/b/c/d` is the
+  deepest legal path. A 5th level is rejected with a depth error.
+- The session may also impose a max concurrent thread cap. If you exceed
+  it the spawn errors — close finished agents with `close_agent` to free
+  slots.
+
+## fork_turns
+
+Controls how much of your conversation history the child inherits.
+- `"all"` (default): full history. Use when the child needs your full
+  context to make sense of the task.
+- `"none"`: no history. Use for fully self-contained tasks where the
+  initial message is enough.
+- A positive integer string (e.g. `"3"`): the most recent N turns. Use
+  when only recent context matters.
+
+Available agent types and the tools they have access to:
+- docs: ALWAYS use this when writing docs
+- explore: Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.
+- general: General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.

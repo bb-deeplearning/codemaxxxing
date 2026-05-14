@@ -1,0 +1,14 @@
+{
+  "permission": "spawn_agent",
+  "patterns": [
+    "snap"
+  ],
+  "always": [
+    "*"
+  ],
+  "metadata": {
+    "task_name": "snap",
+    "agent_type": "explore",
+    "parent_path": "/root"
+  }
+}

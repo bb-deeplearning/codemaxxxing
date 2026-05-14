@@ -27,7 +27,7 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | You're doing... | Read entries |
 |---|---|
 | Adding a new file that must reach 100% line coverage | `bun-coverage-line1-quirk`, `bun-coverage-line1-schema-class-only`, `schema-class-function-coverage` |
-| Writing a `*.bench.ts` or `*.bench.tsx` file | `bun-test-bench-file-path`, `bench-file-pattern-split`, `bench-managed-runtime-needs-effect-scoped` |
+| Writing a `*.bench.ts` or `*.bench.tsx` file | `bun-test-bench-file-path`, `bench-file-pattern-split`, `bench-managed-runtime-needs-effect-scoped`, `bench-tool-yield-loses-transitive-deps` |
 | Verifying per-file coverage with `bun test --coverage` | `bun-test-coverage-source-file-arg-runs-zero-tests`, `bun-coverage-aggregation-flake` |
 | Spot-checking with `bun test test/` | `bun-test-test-dir-runs-baseline-orchestrator` |
 | Touching the TUI render hot path | `tui-flex-row-with-tall-text`, `opentui-multi-text-node-vs-single-baseline-cap` |
@@ -39,10 +39,10 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | Defining a new tool with `Tool.define` | `tool-define-inner-effect-gen-closing-brace`, `tool-execute-needs-explicit-result-type-disjoint-metadata`, `tool-context-ask-typed-as-void` |
 | Adding a new dep to `ToolRegistry`'s layer | `agentcontrol-required-by-toolregistry-existing-test-layers` |
 | Spawning model PTYs (`origin: "model"`) | `pty-onexit-auto-remove-tui-only`, `pty-create-term-override-tui-only` |
-| Adding a wave bench against the frozen baseline | `pty-bench-baseline-vs-new-work`, `runloop-bench-vs-baseline-methodology-mismatch`, `opentui-render-bench-noise-needs-best-of-n` |
+| Adding a wave bench against the frozen baseline | `pty-bench-baseline-vs-new-work`, `runloop-bench-vs-baseline-methodology-mismatch`, `opentui-render-bench-noise-needs-best-of-n`, `bench-tool-yield-loses-transitive-deps` |
 | Writing e2e perf invariants | `e2e-perf-sibling-fanout-needs-median-of-n` |
 | Verifying a clamp's timing on a TTY-mode process | `tty-line-discipline-echo-defeats-clamp-timing-tests` |
-| Converting typed-error Effects to assertable values | `effect-v4-either-renamed-to-result` |
+| Converting typed-error Effects to assertable values | `effect-v4-either-renamed-to-result`, `effect-v4-catchall-renamed-to-catch` |
 | Subscribing to a `SubscriptionRef`'s changes | `subscriptionref-changes-is-top-level` |
 | Polling Instance-bound state from inside async callbacks | `bench-effect-runpromise-loses-instance-in-async-callback` |
 | Loading JSON fixtures with branded IDs | `session-id-descending-not-make-for-fixture-string-coercion` |
@@ -52,74 +52,82 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | Porting concepts from another codebase (Codex/etc.) | `codex-role-vocabulary-imported-verbatim` |
 | Adding a domain event consumed by both sourced log + bus | `eventv2-and-bus-dual-emission-with-parallel-type-prefixes` |
 | Cleaning up resources in tools when permission is rejected | `tool-context-ask-typed-as-void` |
+| Writing a standalone Bun script with `ManagedRuntime` | `managed-runtime-script-needs-process-exit` |
+| Capturing `ctx.ask` payloads from a multi-ask tool flow | `multi-ask-capture-needs-counter` |
 
 ## By category — slugs with one-line summaries and line offsets
 
 Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offset=N limit=30` to load just one entry. If an entry has shifted, fall back to `grep` for the slug.
 
 ### Coverage / test infrastructure
-- L277 `bun-coverage-line1-quirk` — line 1 imports can report 0 hits in lcov.
-- L288 `bun-coverage-line1-schema-class-only` — variant of the above for `Schema.Class`-only files.
-- L706 `schema-class-function-coverage` — `Schema.TaggedErrorClass` keeps function% < 100% even at 100% lines.
-- L312 `bun-test-bench-file-path` — `bun test foo.bench.ts` matches no files; prefix with `./`.
-- L208 `bench-file-pattern-split` — two valid `.bench.ts` shapes; pick the embedded `test()` form per wave.
-- L266 `bun-coverage-aggregation-flake` — `bun test --coverage <dir>/` can drop hits that single-file runs cover.
-- L322 `bun-test-coverage-source-file-arg-runs-zero-tests` — passing a source path silently runs zero tests, exit 0.
-- L345 `bun-test-test-dir-runs-baseline-orchestrator` — `bun test test/` reruns and overwrites frozen baseline JSON.
+- L310 `bun-coverage-line1-quirk` — line 1 imports can report 0 hits in lcov.
+- L321 `bun-coverage-line1-schema-class-only` — variant of the above for `Schema.Class`-only files.
+- L808 `schema-class-function-coverage` — `Schema.TaggedErrorClass` keeps function% < 100% even at 100% lines.
+- L345 `bun-test-bench-file-path` — `bun test foo.bench.ts` matches no files; prefix with `./`.
+- L216 `bench-file-pattern-split` — two valid `.bench.ts` shapes; pick the embedded `test()` form per wave.
+- L299 `bun-coverage-aggregation-flake` — `bun test --coverage <dir>/` can drop hits that single-file runs cover.
+- L355 `bun-test-coverage-source-file-arg-runs-zero-tests` — passing a source path silently runs zero tests, exit 0.
+- L378 `bun-test-test-dir-runs-baseline-orchestrator` — `bun test test/` reruns and overwrites frozen baseline JSON.
 
 ### Effect v4 specifics
-- L465 `effect-v4-either-renamed-to-result` — `Either` → `Result`; `Effect.either` → `Effect.result`; `right`/`left` → `success`/`failure`.
-- L743 `subscriptionref-changes-is-top-level` — `SubscriptionRef.changes(ref)`, not `ref.changes`.
-- L223 `bench-managed-runtime-needs-effect-scoped` — `provideTmpdirInstance` needs explicit `Effect.scoped` under `ManagedRuntime`.
-- L184 `bench-effect-runpromise-loses-instance-in-async-callback` — `Effect.runPromise` inside `Effect.promise` loses the Instance ALS binding.
+- L517 `effect-v4-either-renamed-to-result` — `Either` → `Result`; `Effect.either` → `Effect.result`; `right`/`left` → `success`/`failure`.
+- L498 `effect-v4-catchall-renamed-to-catch` — `Effect.catchAll` → `Effect.catch`; `catchAllDefect` → `catchDefect`; `catchAllCause` → `catchCause`.
+- L845 `subscriptionref-changes-is-top-level` — `SubscriptionRef.changes(ref)`, not `ref.changes`.
+- L231 `bench-managed-runtime-needs-effect-scoped` — `provideTmpdirInstance` needs explicit `Effect.scoped` under `ManagedRuntime`.
+- L192 `bench-effect-runpromise-loses-instance-in-async-callback` — `Effect.runPromise` inside `Effect.promise` loses the Instance ALS binding.
 
 ### Bus / Instance state
-- L365 `bus-subscribe-helper-vs-service-method-cross-runtime-mismatch` — top-level vs in-effect subscribe target different PubSubs in `testEffect`.
-- L386 `bus-subscriber-needs-instance-state-fork-and-instance-ref` — long-lived subscribers must fork inside `InstanceState.make` AND re-inject `InstanceRef`.
-- L785 `syncevent-publish-uses-top-level-bus-runtime` — events from `SyncEvent.run` land on the top-level Bus runtime, not your test layer's.
-- L766 `syncevent-publish-uses-helper-bus-not-test-layer-bus` — same root cause from the other side: subscribe via top-level `Bus.subscribe` from inside `InstanceState.make`.
-- L130 `agentcontrol-providerref-must-live-in-layer-not-instancestate` — single-value, instance-agnostic state belongs at layer scope, not in `InstanceState`.
+- L398 `bus-subscribe-helper-vs-service-method-cross-runtime-mismatch` — top-level vs in-effect subscribe target different PubSubs in `testEffect`.
+- L419 `bus-subscriber-needs-instance-state-fork-and-instance-ref` — long-lived subscribers must fork inside `InstanceState.make` AND re-inject `InstanceRef`.
+- L887 `syncevent-publish-uses-top-level-bus-runtime` — events from `SyncEvent.run` land on the top-level Bus runtime, not your test layer's.
+- L868 `syncevent-publish-uses-helper-bus-not-test-layer-bus` — same root cause from the other side: subscribe via top-level `Bus.subscribe` from inside `InstanceState.make`.
+- L138 `agentcontrol-providerref-must-live-in-layer-not-instancestate` — single-value, instance-agnostic state belongs at layer scope, not in `InstanceState`.
 
 ### Sourced events
-- L499 `eventv2-and-bus-dual-emission-with-parallel-type-prefixes` — keep EventV2 (`session.next.<domain>.…`) and BusEvent (`<domain>.…`) under different type prefixes; emit both with the same payload.
+- L551 `eventv2-and-bus-dual-emission-with-parallel-type-prefixes` — keep EventV2 (`session.next.<domain>.…`) and BusEvent (`<domain>.…`) under different type prefixes; emit both with the same payload.
 
 ### Tool definitions
-- L850 `tool-define-inner-effect-gen-closing-brace` — wrapping the spec in an inner `Effect.gen` leaves a `})` line at 0 hits.
-- L879 `tool-execute-needs-explicit-result-type-disjoint-metadata` — multi-branch `execute` with disjoint metadata needs `Effect.Effect<Tool.ExecuteResult>` annotation.
-- L816 `tool-context-ask-typed-as-void` — `ctx.ask` is typed `Effect<void>` but raises at runtime; use `Effect.acquireUseRelease` for cleanup.
-- L164 `agentcontrol-required-by-toolregistry-existing-test-layers` — adding a new dep to `ToolRegistry.layer` silently breaks every custom test layer.
+- L952 `tool-define-inner-effect-gen-closing-brace` — wrapping the spec in an inner `Effect.gen` leaves a `})` line at 0 hits.
+- L981 `tool-execute-needs-explicit-result-type-disjoint-metadata` — multi-branch `execute` with disjoint metadata needs `Effect.Effect<Tool.ExecuteResult>` annotation.
+- L918 `tool-context-ask-typed-as-void` — `ctx.ask` is typed `Effect<void>` but raises at runtime; use `Effect.acquireUseRelease` for cleanup.
+- L172 `agentcontrol-required-by-toolregistry-existing-test-layers` — adding a new dep to `ToolRegistry.layer` silently breaks every custom test layer.
+- L257 `bench-tool-yield-loses-transitive-deps` — yielding a tool factory directly skips transitive deps; route through `ToolRegistry.tools(...)`.
+- L613 `multi-ask-capture-needs-counter` — capture helpers that throw on the first `ctx.ask` truncate multi-ask tool flows; gate the throw on a counter.
 
 ### PTY
-- L668 `pty-onexit-auto-remove-tui-only` — `proc.onExit` auto-removal must gate on `origin === "tui"` so model PTYs survive for post-exit drain.
-- L646 `pty-create-term-override-tui-only` — `Pty.create`'s `TERM=xterm-256color` overlay must gate on `origin === "tui"`.
-- L629 `pty-bench-baseline-vs-new-work` — combining new work into an existing baseline metric is apples-to-oranges; split metrics.
-- L911 `tty-line-discipline-echo-defeats-clamp-timing-tests` — TTY echo wakes `Pty.read` early; verify clamps at the unit level.
+- L770 `pty-onexit-auto-remove-tui-only` — `proc.onExit` auto-removal must gate on `origin === "tui"` so model PTYs survive for post-exit drain.
+- L748 `pty-create-term-override-tui-only` — `Pty.create`'s `TERM=xterm-256color` overlay must gate on `origin === "tui"`.
+- L731 `pty-bench-baseline-vs-new-work` — combining new work into an existing baseline metric is apples-to-oranges; split metrics.
+- L1013 `tty-line-discipline-echo-defeats-clamp-timing-tests` — TTY echo wakes `Pty.read` early; verify clamps at the unit level.
 
 ### Bench methodology
-- L561 `opentui-render-bench-noise-needs-best-of-n` — opentui `renderOnce` benches need best-of-3 to suppress noise.
-- L535 `opentui-multi-text-node-vs-single-baseline-cap` — N separate `<text>` nodes inherently exceed a single-text baseline by ~1.5×; use `<text><span/>...<span/></text>`.
-- L690 `runloop-bench-vs-baseline-methodology-mismatch` — in-`Effect.gen` microbenches and per-sample-`runPromise` baselines measure different things.
-- L435 `e2e-perf-sibling-fanout-needs-median-of-n` — single-iteration timing flakes under a noisy suite; median-of-5 minimum.
-- L586 `opentui-testRender-leak` — `testRender` allocates native resources; always `handle.renderer.destroy()`.
+- L663 `opentui-render-bench-noise-needs-best-of-n` — opentui `renderOnce` benches need best-of-3 to suppress noise.
+- L637 `opentui-multi-text-node-vs-single-baseline-cap` — N separate `<text>` nodes inherently exceed a single-text baseline by ~1.5×; use `<text><span/>...<span/></text>`.
+- L792 `runloop-bench-vs-baseline-methodology-mismatch` — in-`Effect.gen` microbenches and per-sample-`runPromise` baselines measure different things.
+- L468 `e2e-perf-sibling-fanout-needs-median-of-n` — single-iteration timing flakes under a noisy suite; median-of-5 minimum.
+- L688 `opentui-testRender-leak` — `testRender` allocates native resources; always `handle.renderer.destroy()`.
 
 ### TUI rendering
-- L957 `tui-flex-row-with-tall-text` — `<box flexDirection="row">` containing a tall `<text>` child silently freezes opentui paint.
-- L933 `tui-component-coverage-needs-mount-split` — split hooks-using TUI components into helpers+view + wrapper to reach 100% line cov.
+- L1059 `tui-flex-row-with-tall-text` — `<box flexDirection="row">` containing a tall `<text>` child silently freezes opentui paint.
+- L1035 `tui-component-coverage-needs-mount-split` — split hooks-using TUI components into helpers+view + wrapper to reach 100% line cov.
 
 ### Permission / tool routing
-- L606 `permission-disabled-removes-tool-from-active-set` — wildcard `permission: deny` strips the tool entirely; the `ctx.ask` path never fires.
+- L708 `permission-disabled-removes-tool-from-active-set` — wildcard `permission: deny` strips the tool entirely; the `ctx.ask` path never fires.
 
 ### ID brand coercion
-- L716 `session-id-descending-not-make-for-fixture-string-coercion` — use `<ID>.descending(string)` / `.ascending(string)`, not `.make(string)`, when wrapping plain fixture strings.
+- L818 `session-id-descending-not-make-for-fixture-string-coercion` — use `<ID>.descending(string)` / `.ascending(string)`, not `.make(string)`, when wrapping plain fixture strings.
 
 ### Asserting on prose
-- L978 `word-boundary-regex-vs-prose-collisions` — `\bword\b` matches every English usage; scope assertions to the structured section, not the whole concatenated description.
+- L1080 `word-boundary-regex-vs-prose-collisions` — `\bword\b` matches every English usage; scope assertions to the structured section, not the whole concatenated description.
 
 ### Schema maintenance
-- L249 `bug-3-fix-left-test-files-with-stale-required-shape` — tightening optional → required can leave dependent tests broken in ways `bun typecheck` won't catch through type-erased call sites.
+- L282 `bug-3-fix-left-test-files-with-stale-required-shape` — tightening optional → required can leave dependent tests broken in ways `bun typecheck` won't catch through type-erased call sites.
 
 ### Cross-codebase porting
-- L419 `codex-role-vocabulary-imported-verbatim` — when porting concepts from a reference codebase, map them to host primitives; never invent new vocabulary that conflicts. Tests must assert real behavior, not just propagation.
+- L452 `codex-role-vocabulary-imported-verbatim` — when porting concepts from a reference codebase, map them to host primitives; never invent new vocabulary that conflicts. Tests must assert real behavior, not just propagation.
+
+### Scripts / runtime lifecycle
+- L587 `managed-runtime-script-needs-process-exit` — Bun scripts using `ManagedRuntime` hang after `dispose()`; explicit `process.exit(0)` required.
 
 ---
 
@@ -243,6 +251,31 @@ const runWithInstance = <A, E, R>(self: Effect.Effect<A, E, R>) => {
 
 **Why:** `provideTmpdirInstance` uses `Effect.addFinalizer`, which requires a Scope. `it.instance(...)` already wraps bodies in `Effect.scoped`; `ManagedRuntime.make(layer)` does NOT provide a default scope.
 **See:** `packages/opencode/test/perf/agent-control.bench.ts`, `packages/opencode/test/fixture/fixture.ts:166-187`.
+
+---
+
+### `bench-tool-yield-loses-transitive-deps`
+
+**Severity:** DX-trap
+**When:** Benching a tool by yielding it directly inside `Effect.gen` (e.g. `const tool = yield* ShellTool; const def = yield* tool.init()`).
+**Symptom:** Code typechecks. At runtime, crashes with `Service not found: @opencode/FileSystem` (or `@opencode/Pty`, `ChildProcessSpawner`, etc.) the moment the tool's `execute` body runs. The layer composition for the bench file LOOKS correct (`ToolRegistry.defaultLayer` is provided) but transitive deps the tool grabs lazily aren't satisfied.
+**Fix:** Route every tool resolution through `ToolRegistry.tools({...})`, which materializes the full registry (including transitive deps) and hands back the resolved `Tool.Def[]`:
+
+```ts
+// Bad — typechecks, crashes at runtime when execute() touches AppFileSystem
+const tool = yield* ShellTool
+const def = yield* tool.init()
+const out = yield* def.execute(params, ctx)
+
+// Good — registry materializes everything; def is fully wired
+const registry = yield* ToolRegistry.Service
+const defs = yield* registry.tools({ providerID, modelID, agent })
+const def = defs.find((d) => d.id === ShellID.ToolID)!
+const out = yield* def.execute(params, ctx)
+```
+
+**Why:** `ShellTool` (and friends) are `Tool.Init` factories. Yielding them resolves the factory but DOESN'T materialize the layer's transitive deps. `ToolRegistry.tools()` does — it pulls in `Pty`, `AppFileSystem`, `ChildProcessSpawner`, `Permission`, etc. The factory pattern is intentional (testability), but bench files routinely trip over it.
+**See:** `packages/opencode/test/perf/baseline.bench.ts`, `packages/opencode/test/snapshots/capture-baseline.ts`.
 
 ---
 
@@ -462,6 +495,25 @@ Median-of-5 is stable across runs where single-iteration ratios flake. Bump to m
 
 ---
 
+### `effect-v4-catchall-renamed-to-catch`
+
+**Severity:** DX-trap
+**When:** Porting Effect v3 code, copy/pasting from older docs, or reaching for `Effect.catchAll` / `Effect.catchAllDefect` from muscle memory.
+**Symptom:** `error: Property 'catchAll' does not exist on type 'typeof import("effect/Effect")'`. Or `'catchAllDefect'` for the defect variant. Typecheck only — runtime never gets a chance.
+**Fix:** Use the v4 names:
+
+| v3 | v4 beta |
+|---|---|
+| `Effect.catchAll(handler)` | `Effect.catch(handler)` |
+| `Effect.catchAllDefect(handler)` | `Effect.catchDefect(handler)` |
+| `Effect.catchAllCause(handler)` | `Effect.catchCause(handler)` |
+
+The "catch both typed errors AND defects in one handler" combinator is `Effect.catchCause`. The shorter `Effect.catch` handles typed errors only; defects still propagate.
+**Why:** Effect v4 dropped the `All` suffix from the catch family for symmetry with `try`/`catch` semantics in JS — there's no "catch one error" vs "catch all" distinction in v4 because every handler subsumes its narrower form.
+**See also:** `effect-v4-either-renamed-to-result` (sibling rename).
+
+---
+
 ### `effect-v4-either-renamed-to-result`
 
 **Severity:** DX-trap
@@ -529,6 +581,56 @@ yield* bus.subscribe(Inbound.StepStarted).pipe(Stream.runForEach(...))
 
 **Why:** `SyncEvent.init` walks the EventV2 registry and calls `BusEvent.define(def.type, def.properties)`. The returned Definition is discarded — there's no exported handle. Co-locating both under the same type creates fragility (cross-runtime mismatches, last-one-wins SDK gen).
 **See:** `packages/opencode/src/agent/control.ts` `Event` and `Inbound` consts.
+
+---
+
+### `managed-runtime-script-needs-process-exit`
+
+**Severity:** DX-trap
+**When:** Writing a standalone Bun script (run via `bun run script.ts`, not `bun test`) that uses `ManagedRuntime.make(...)` + `runtime.runPromise(...)` + `runtime.dispose()`.
+**Symptom:** Script logic completes, output writes correctly, but the process hangs forever after the last `runtime.dispose()`. Ctrl-C is the only way out. Subsequent `git add` etc. blocks until you abort.
+**Fix:** Add `process.exit(0)` (or `process.exit(code)`) at the end of the script after `runtime.dispose()`:
+
+```ts
+async function main() {
+  const runtime = ManagedRuntime.make(layer)
+  try {
+    await runtime.runPromise(work)
+  } finally {
+    await runtime.dispose()
+  }
+}
+
+await main()
+process.exit(0)   // required — see below
+```
+
+**Why:** `ManagedRuntime.dispose()` releases the layer's scoped resources, but several services (file watcher, plugin loader, bus subscriptions, OpenTelemetry exporter) keep background fibers / handles that the Bun event loop counts as live. Without an explicit exit, Node/Bun waits for them to drain — they never do. `bun test` papers over this because the test runner forces process exit on suite completion.
+**See:** `packages/opencode/test/fixtures/generate-corpus.ts`, `packages/opencode/test/snapshots/capture-baseline.ts`.
+
+---
+
+### `multi-ask-capture-needs-counter`
+
+**Severity:** DX-trap
+**When:** Recording `ctx.ask` payloads from a tool that fires more than one ask per execution (e.g. `bash` for paths-outside-cwd fires `external_directory` THEN `bash`).
+**Symptom:** Capture helper short-circuits via `throw stop` after the first ask. Test only sees one entry, misses the second. Or worse: the test's snapshot oracle records only the first ask shape, hiding the second's existence from later diff tests.
+**Fix:** Parameterize the capture's stop trigger with a count threshold:
+
+```ts
+const captureCtx = (requests, expectedAskCount = 1, stop) => ({
+  ...ctx,
+  ask: (req) =>
+    Effect.sync(() => {
+      requests.push(req)
+      if (stop && requests.length >= expectedAskCount) throw stop
+    }),
+})
+```
+
+Caller passes `expectedAskCount: 2` for `bash` against `rm /tmp/foo` (external_directory + bash). For commands that produce no asks (empty / whitespace, due to `shell.ts:281`'s early-return on `scan.patterns.size === 0`), no throw fires — wrap the runPromise in a `try`/`catch` that absorbs the sentinel AND treats the no-throw outcome as `requests.length === 0`.
+**Why:** Throwing on the first ask is convenient for single-ask tools but silently truncates multi-ask flows. The first ask order in `shell.ts`'s `ask` fn is `external_directory` THEN `bash`; the second carries the patterns Wave 2's diff target needs. Missing it makes the snapshot a lying oracle.
+**See:** `packages/opencode/test/snapshots/capture-baseline.ts` `captureCtx` helper, `packages/opencode/test/fixtures/generate-corpus.ts` (production-style use).
 
 ---
 

@@ -1,0 +1,10 @@
+{
+  "permission": "bash",
+  "patterns": [
+    "git status"
+  ],
+  "always": [
+    "git status *"
+  ],
+  "metadata": {}
+}
