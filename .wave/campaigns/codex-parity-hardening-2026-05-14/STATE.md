@@ -30,6 +30,6 @@ last_updated: 2026-05-14
 | 0 | complete | ses_1dab5d497ffeqTcXWqL9ALEVZV | 18932fbcd | scaffold + bug-3 audit (B+X applied: enum-scoped regex + agent_type fixes); 2 new GOTCHAS |
 | 1 | complete | ses_1da9a4a82ffeiCmmC0ugEVon1i | f3b932663 | bug 1 — per-root scoping landed (3 invariants GREEN, 100% line cov, perf within budget; 1 new GOTCHA) |
 | 2 | complete | ses_1da6ca331ffeXZnhNR0OsSb3l2 | 09a3a7759 | bug 2 — completion watcher landed (3 invariants GREEN, 100% line cov, perf within all 9 budgets; root now has mailbox; spawn p99 +14.86% near edge of +15% budget — best-of-N analysis in NOTES) |
-| 3 | complete | ses_1da44cc62ffehyxp7HT6BKXob6 | fedb0fb62 | audit pass — 3 invariants GREEN against existing impl (no production change); locked-in cascade + concurrent-mailbox + pty-cleanup integration tests |
+| 3 | complete | ses_1da44cc62ffehyxp7HT6BKXob6 | 1b9379518 | audit pass — 3 invariants GREEN against existing impl (no production change); locked-in cascade + concurrent-mailbox + pty-cleanup integration tests |
 | 4 | pending  | — | — | backward compat verification + perf audit + final report |
 | 5 | pending  | — | — | spec doc at specs/codex-parity-hardening.md |
