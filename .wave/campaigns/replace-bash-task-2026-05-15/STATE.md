@@ -27,7 +27,7 @@ last_updated: 2026-05-15
 
 | Wave | Status   | Session | Commit | Notes |
 |------|----------|---------|--------|-------|
-| 0 | complete | ses_1d816765cffetHaX40einkd5VR | (filled) | Survey + invariant seed + behavioral baseline + integration test scaffold + 4 GOTCHAS appended |
+| 0 | complete | ses_1d816765cffetHaX40einkd5VR | d27484e73 | Survey + invariant seed + behavioral baseline + integration test scaffold + 4 GOTCHAS appended |
 | 1 | pending  | — | — | Extract bash scanner to `tool/shell/scan.ts` (pure refactor) |
 | 2 | pending  | — | — | Wire scanner into `exec_command`, align permission key to `bash`, add SHELL_TOOLS category |
 | 3 | pending  | — | — | Align spawn_agent + 5 friends permission gating to `task`, add MULTI_AGENT_TOOLS category |
