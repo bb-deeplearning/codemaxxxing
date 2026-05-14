@@ -89,6 +89,7 @@ import { Sidebar } from "./sidebar"
 import { SubagentFooter } from "./subagent-footer-mount.tsx"
 import { isMailboxPart, MailboxMessage } from "./mailbox-message"
 import { Process, ProcessWriteStdin } from "./process-tool"
+import { AgentToolMount, isAgentTool } from "./agent-tool-mount"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import parsers from "../../../../../../parsers-config.ts"
@@ -2052,6 +2053,14 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         </Match>
         <Match when={props.part.tool === "write_stdin"}>
           <ProcessWriteStdin {...toolprops} theme={theme} />
+        </Match>
+        {/* Wave-8 multi-agent v2 tool dispatch. AgentToolMount internally
+            routes to the right view (SpawnView, WaitView, SendView,
+            FollowupView, ListView, CloseView). One Match here keeps the
+            top-level switch readable; per-tool dispatch + memoization
+            lives in agent-tool-mount.tsx. */}
+        <Match when={isAgentTool(props.part.tool)}>
+          <AgentToolMount {...toolprops} />
         </Match>
         <Match when={true}>
           <GenericTool {...toolprops} />
