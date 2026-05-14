@@ -8,17 +8,17 @@ plan_source: specs/codex-parity-handoff.html
 executor_agent: caveman
 executor_model: ""
 executor_variant: ""
-current_wave: 12
+current_wave: 13
 wave_status: pending
 failure_kind: ""
 retry_count: 0
 verify_count: 0
 user_question: ""
 loop_state: armed
-active_session_id: ses_1dc4f7beeffeQVk1kqm9V8DUPf
+active_session_id: ses_1dc2c9350ffe0wFF7JqqvODXfB
 active_session_kind: executor
 total_waves: 16
-session_count: 12
+session_count: 13
 created: 2026-05-13
 last_updated: 2026-05-14
 ```
@@ -39,7 +39,7 @@ Six multi-agent v2 tools (spawn/send/followup/wait/list/close) + shared currentA
 | 9 | complete | ses_1dcbb89d3ffe0EQ4B6do4NnUYx | 12aa8deaf | runLoop integration: SubtaskPart `protocol: "v2"` marker, AgentControl.registerRunLoop + drainMailbox + hasPendingTriggerTurn + cancelChildrenOf, parent cancel cascades to children, mailbox drained at top of every iteration, 7 new prompt-test scenarios cover legacy/v2/drain/empty/cancel/spawn-fail/trigger-defer + slugify, control.ts 100% line, perf p50 8.5µs (baseline 19.5µs) within budget |
 | 10 | complete | ses_1dc85d4b8ffeEurxIqQy062Fjn | 9bb594a3e | EventV2 + Bus events for agent lifecycle (Spawn.Started/Ended, Closed, Wait.Started/Ended, Message.Sent), status derivation from Step.Started/Ended, onSpawnEvent removed, 100% line coverage on touched files |
 | 11 | complete | ses_1dc4f7beeffeQVk1kqm9V8DUPf | 79b832071 | TUI subagent enhancements: subagent-status helper, SubagentFooterView (with status display), MailboxMessage component, dialog-subagent close action, all four touched files at 100% line coverage; multi-agent-render bench p50 4-sibling 1.30× single (cap 1.5×); helper+view / wrapper file split documented in GOTCHAS
-| 12 | pending  | — | — | Permission integration + agent system prompt fragments |
+| 12 | complete | ses_1dc2c9350ffe0wFF7JqqvODXfB | PENDING_SHA | Permission integration + agent system prompt fragments: per-built-in overrides for all 7 new keys (build/general allow, plan/compaction/title/summary deny, explore allows coordination subset and denies destructive); SystemPrompt.capabilityHints helper gated on agent mode + permission, three new fragments (persistent-processes, multi-agent-root, multi-agent-subagent) injected post-skills; 100% line coverage on wave-touched code in agent.ts + system.ts; backward-compat test asserts compaction/title/summary receive zero hints |
 | 13 | pending  | — | — | Backward compat verification (legacy snapshot, task tool, pty consumer) |
 | 14 | pending  | — | — | E2E integration tests + final perf audit |
 | 15 | pending  | — | — | Spec doc at specs/codex-parity.md |

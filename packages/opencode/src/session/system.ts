@@ -11,6 +11,11 @@ import PROMPT_KIMI from "./prompt/kimi.txt"
 
 import PROMPT_CODEX from "./prompt/codex.txt"
 import PROMPT_TRINITY from "./prompt/trinity.txt"
+
+import PROMPT_PERSISTENT_PROCESSES from "@/agent/prompt/persistent-processes.txt"
+import PROMPT_MULTI_AGENT_ROOT from "@/agent/prompt/multi-agent-root.txt"
+import PROMPT_MULTI_AGENT_SUBAGENT from "@/agent/prompt/multi-agent-subagent.txt"
+
 import type { Provider } from "@/provider/provider"
 import type { Agent } from "@/agent/agent"
 import { Permission } from "@/permission"
@@ -35,9 +40,26 @@ export function provider(model: Provider.Model) {
 export interface Interface {
   readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
   readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
+  readonly capabilityHints: (agent: Agent.Info) => Effect.Effect<string[]>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SystemPrompt") {}
+
+// Wave 12 — capability hint dispatcher. Each fragment is gated on the agent's
+// effective permission for the relevant tool key. Mirrors codex's
+// `multi_agent_v2.{root_agent,subagent}_usage_hint_text` injection in
+// `core/src/session/multi_agents.rs`. We additionally gate the persistent-
+// process fragment on `exec_command` permission so an agent that has the
+// tools surfaced gets the operational manual.
+//
+// "has the permission" = effective wildcard action is not "deny". An "ask"
+// action still triggers injection: the user is prompted at call time but the
+// model needs to know when the tool is appropriate. Denied agents (compaction
+// / title / summary; user opt-outs) get an empty fragment list — the legacy
+// system prompt assembly is unchanged for them.
+function permitted(agent: Agent.Info, key: string): boolean {
+  return Permission.evaluate(key, "*", agent.permission).action !== "deny"
+}
 
 export const layer = Layer.effect(
   Service,
@@ -74,6 +96,23 @@ export const layer = Layer.effect(
           // version of them here and a less verbose version in tool description, rather than vice versa.
           Skill.fmt(list, { verbose: true }),
         ].join("\n")
+      }),
+
+      capabilityHints: Effect.fn("SystemPrompt.capabilityHints")(function* (agent: Agent.Info) {
+        const hints: string[] = []
+        if (permitted(agent, "exec_command")) hints.push(PROMPT_PERSISTENT_PROCESSES)
+        // Root-agent guidance only fires for agents that can hold the user-
+        // facing root role (primary or all) AND can spawn. Subagents see the
+        // subagent fragment instead even when they happen to also have spawn
+        // permission (a depth-2 subagent that spawns its own children still
+        // operates under "you are a subagent" rules).
+        if (agent.mode !== "subagent" && permitted(agent, "spawn_agent")) hints.push(PROMPT_MULTI_AGENT_ROOT)
+        // Subagent guidance fires when the agent can communicate back to the
+        // tree (send or wait). An agent with neither has no coordination
+        // surface and doesn't need the subagent operational manual.
+        if (agent.mode === "subagent" && (permitted(agent, "send_message") || permitted(agent, "wait_agent")))
+          hints.push(PROMPT_MULTI_AGENT_SUBAGENT)
+        return hints
       }),
     })
   }),

@@ -136,6 +136,18 @@ export const layer = Layer.effect(
               Permission.fromConfig({
                 question: "allow",
                 plan_enter: "allow",
+                // Wave 12 (codex parity): build is the default user-facing
+                // primary agent. It gets full access to unified_exec + every
+                // multi-agent v2 surface so spawning, messaging, and process
+                // management all work without per-call prompts (the user can
+                // narrow this via the `permission` config block).
+                exec_command: "allow",
+                spawn_agent: "allow",
+                send_message: "allow",
+                followup_task: "allow",
+                wait_agent: "allow",
+                list_agents: "allow",
+                close_agent: "allow",
               }),
               user,
             ),
@@ -159,6 +171,20 @@ export const layer = Layer.effect(
                   [path.join(".opencode", "plans", "*.md")]: "allow",
                   [path.relative(ctx.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]: "allow",
                 },
+                // Wave 12 (codex parity): plan is read-only thinking mode. It
+                // already denies edit tools wildcard-wise; deny unified_exec
+                // (no persistent processes during planning) and every
+                // multi-agent v2 key. Plan continues to use the legacy `task`
+                // tool to spawn explorers in phase 1; switching plan to v2
+                // spawn is intentionally deferred to a future campaign per
+                // WAVE.md note 3.
+                exec_command: "deny",
+                spawn_agent: "deny",
+                send_message: "deny",
+                followup_task: "deny",
+                wait_agent: "deny",
+                list_agents: "deny",
+                close_agent: "deny",
               }),
               user,
             ),
@@ -172,6 +198,16 @@ export const layer = Layer.effect(
               defaults,
               Permission.fromConfig({
                 todowrite: "deny",
+                // Wave 12 (codex parity): general is the parallel-fan-out
+                // workhorse. Same blanket allow as build for unified_exec +
+                // multi-agent v2.
+                exec_command: "allow",
+                spawn_agent: "allow",
+                send_message: "allow",
+                followup_task: "allow",
+                wait_agent: "allow",
+                list_agents: "allow",
+                close_agent: "allow",
               }),
               user,
             ),
@@ -196,6 +232,18 @@ export const layer = Layer.effect(
                   "*": "ask",
                   ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),
                 },
+                // Wave 12 (codex parity): explore is read-only research. Deny
+                // exec_command (no persistent processes), spawn_agent (no
+                // recursion — explorers don't spawn), and close_agent (cannot
+                // tear down peers). Allow the coordination subset so an
+                // explorer can send context to siblings (`send_message`),
+                // hand off follow-up work back to its spawner
+                // (`followup_task`), wait on a peer's result (`wait_agent`),
+                // and inspect the agent tree (`list_agents`).
+                send_message: "allow",
+                followup_task: "allow",
+                wait_agent: "allow",
+                list_agents: "allow",
               }),
               user,
             ),

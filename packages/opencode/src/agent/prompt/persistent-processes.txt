@@ -1,0 +1,34 @@
+# Persistent processes (`exec_command` + `write_stdin`)
+
+Two related tools live alongside `bash`. Pick the right surface for the work — they are not interchangeable.
+
+- `bash` is one-shot. You fire a command, it runs to completion, output comes back, the process is gone. Use it for `ls`, `git status`, `npm install`, scripts, builds, anything that exits on its own.
+- `exec_command` keeps the spawned child alive after the call returns and hands you a `session_id`. `write_stdin` re-enters that session to send more input, poll for new output, or both. Use these for processes that hold state between interactions or run indefinitely.
+
+## When to reach for persistent processes
+
+- REPLs — `python`, `ipython`, `node`, `bun repl`, `psql`, `redis-cli`, `ghci`, `iex`. The interpreter loads its imports, parses your file, builds whatever in-memory state you need; subsequent `write_stdin` calls reuse that state without re-paying the boot cost.
+- Dev servers — `next dev`, `vite`, `cargo run`, `bun run dev`. Spawn once, then poll with empty `write_stdin` to read fresh log lines as the server reacts to file edits you make in parallel.
+- File watchers — `tsc --watch`, `cargo watch`, `vitest --watch`. Same shape: spawn once, poll for new diagnostics.
+- Interactive shells over slow setup — `ssh`, `docker exec -it`, interactive db shells. The connection cost is paid once.
+- Long-running observables — `tail -f`, `kubectl logs -f`, `journalctl -f`.
+
+## When to stick with `bash`
+
+- Single commands that exit. `bash` has shorter setup, integrated permission scanning, and faster output truncation. Don't `exec_command` what you can `bash`.
+- Scripts that produce all their output before exiting. The persistence buys nothing.
+- One-off file system operations. `mkdir`, `rm`, `cp`, `mv` — `bash` is purpose-built.
+
+## Hygiene
+
+- **`tty: true` is required if you intend to send stdin later.** Without it the connection is one-way: you can poll for output but cannot write input. REPLs need it. Dev servers usually too. File watchers usually don't.
+- **`session_id` does NOT survive `opencode` restart.** If a session disappears between turns or after a restart, re-spawn with a fresh `exec_command`. Same for sessions evicted by the 64-process LRU cap.
+- **Pure-poll discipline.** When polling a long-running process for new output, pass `chars: ""` and a sensible `yield_time_ms`. The empty-poll floor is 5 seconds — you cannot poll faster than that. Don't loop tighter than the floor; you'll just burn a turn waiting for the same clamp.
+- **Track `session_id` across turns.** It's the only handle you have to a running process. Lose it and the process becomes invisible until the LRU pruner reaps it.
+- **First spawn requires permission. Subsequent `write_stdin` against the same `session_id` does not.** Approving "always" registers a per-PID allow rule; `write_stdin` finds it and skips the prompt for the life of the process.
+- **Output is head/tail-truncated, not tail-only.** Long output returns a prefix and a suffix with the middle elided. The gap is real — when interpreting, remember it.
+- **Pool cap is 64.** A 60-process warning fires when you cross that threshold. Treat it as a signal to consolidate or close work — not a hard limit. The 64-cap pruning happens silently, exited entries first.
+
+## Cost
+
+Each persistent process holds a slot in the 64-cap pool, a real PTY, and a 1 MiB head/tail output buffer. Cheap enough to spawn liberally; expensive enough to not fire-and-forget thousands. There is no explicit close — the LRU pruner reclaims slots as you spawn more, and everything dies with the project instance.

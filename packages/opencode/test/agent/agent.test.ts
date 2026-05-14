@@ -741,3 +741,110 @@ test("defaultAgent throws when all primary agents are disabled", async () => {
     },
   })
 })
+
+// Wave 12 — codex-parity per-built-in permission overrides for unified_exec
+// + multi-agent v2 tool keys. Table from `waves/wave_12/WAVE.md` § "Permission
+// audit per built-in". Each test asserts effective action via the wildcard
+// pattern. Build / general get blanket allow on the new keys; explore allows
+// the coordination subset and denies destructive ones; plan denies all v2
+// keys (it stays on legacy task per the wave note); compaction/title/summary
+// inherit `*: deny` and need no per-key entry.
+
+const NEW_PERMISSION_KEYS = [
+  "exec_command",
+  "spawn_agent",
+  "send_message",
+  "followup_task",
+  "wait_agent",
+  "list_agents",
+  "close_agent",
+] as const
+
+test("build agent allows every new wave-12 permission", async () => {
+  await using tmp = await tmpdir()
+  await WithInstance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const build = await load(tmp.path, (svc) => svc.get("build"))
+      for (const key of NEW_PERMISSION_KEYS) {
+        expect(evalPerm(build, key)).toBe("allow")
+      }
+    },
+  })
+})
+
+test("general agent allows every new wave-12 permission", async () => {
+  await using tmp = await tmpdir()
+  await WithInstance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const general = await load(tmp.path, (svc) => svc.get("general"))
+      for (const key of NEW_PERMISSION_KEYS) {
+        expect(evalPerm(general, key)).toBe("allow")
+      }
+    },
+  })
+})
+
+test("explore agent denies exec_command, spawn_agent, close_agent and allows the coordination subset", async () => {
+  await using tmp = await tmpdir()
+  await WithInstance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const explore = await load(tmp.path, (svc) => svc.get("explore"))
+      expect(evalPerm(explore, "exec_command")).toBe("deny")
+      expect(evalPerm(explore, "spawn_agent")).toBe("deny")
+      expect(evalPerm(explore, "close_agent")).toBe("deny")
+      expect(evalPerm(explore, "send_message")).toBe("allow")
+      expect(evalPerm(explore, "followup_task")).toBe("allow")
+      expect(evalPerm(explore, "wait_agent")).toBe("allow")
+      expect(evalPerm(explore, "list_agents")).toBe("allow")
+    },
+  })
+})
+
+test("plan agent denies every new wave-12 permission (stays on legacy task surface)", async () => {
+  await using tmp = await tmpdir()
+  await WithInstance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const plan = await load(tmp.path, (svc) => svc.get("plan"))
+      for (const key of NEW_PERMISSION_KEYS) {
+        expect(evalPerm(plan, key)).toBe("deny")
+      }
+    },
+  })
+})
+
+test("compaction/title/summary inherit `*: deny` and reject every new wave-12 permission", async () => {
+  await using tmp = await tmpdir()
+  await WithInstance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      for (const name of ["compaction", "title", "summary"] as const) {
+        const agent = await load(tmp.path, (svc) => svc.get(name))
+        for (const key of NEW_PERMISSION_KEYS) {
+          expect(evalPerm(agent, key)).toBe("deny")
+        }
+      }
+    },
+  })
+})
+
+test("user permission config can override per-built-in wave-12 defaults", async () => {
+  await using tmp = await tmpdir({
+    config: {
+      agent: {
+        explore: { permission: { spawn_agent: "allow", exec_command: "allow" } },
+      },
+    },
+  })
+  await WithInstance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const explore = await load(tmp.path, (svc) => svc.get("explore"))
+      expect(evalPerm(explore, "spawn_agent")).toBe("allow")
+      expect(evalPerm(explore, "exec_command")).toBe("allow")
+    },
+  })
+})

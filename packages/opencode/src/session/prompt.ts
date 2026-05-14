@@ -1763,13 +1763,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
             yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
-            const [skills, env, instructions, modelMsgs] = yield* Effect.all([
+            const [skills, env, instructions, modelMsgs, hints] = yield* Effect.all([
               sys.skills(agent),
               sys.environment(model),
               instruction.system().pipe(Effect.orDie),
               MessageV2.toModelMessagesEffect(msgs, model),
+              sys.capabilityHints(agent),
             ])
-            const system = [...env, ...instructions, ...(skills ? [skills] : [])]
+            // Wave 12 — capability hints append AFTER skills. Pre-wave-12
+            // assembly was `[...env, ...instructions, ...(skills ? [skills]
+            // : [])]`; for agents whose new permissions are denied,
+            // capabilityHints returns [] and the assembly is byte-identical
+            // to the legacy shape (verified by
+            // `test/session/system-backward-compat.test.ts`).
+            const system = [...env, ...instructions, ...(skills ? [skills] : []), ...hints]
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
             const result = yield* handle.process({
