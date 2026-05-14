@@ -11,13 +11,14 @@
 // `cross-root-send-rejection`, etc.
 
 import { afterEach, describe, expect } from "bun:test"
-import { Effect, Layer, Result } from "effect"
+import { Effect, Fiber, Layer, Result, SubscriptionRef } from "effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Agent } from "@/agent/agent"
 import { AgentControl, AgentNotFoundError } from "@/agent/control"
 import { AgentPath } from "@/agent/agent-path"
 import { InterAgentCommunication } from "@/agent/inter-agent-communication"
 import { Config } from "@/config/config"
+import { Pty } from "@/pty"
 import { Session } from "@/session/session"
 import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
@@ -43,6 +44,7 @@ const it = testEffect(
     AgentControl.defaultLayer,
     Config.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
+    Pty.defaultLayer,
     Session.defaultLayer,
     Truncate.defaultLayer,
     ToolRegistry.defaultLayer,
@@ -335,9 +337,64 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
   )
 
   // TODO(wave_3): audit — already passes, assert it stays true after wave 1.
-  it.instance.skip("parent-close-cascades-to-children", () =>
+  it.instance("parent-close-cascades-to-children", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+
+      // Tree: root → workerA → workerB. workerB is spawned from workerA's
+      // session id (subagent → sub-subagent), which exercises the per-root
+      // sessionToRoot indexing landed in Wave 1.
+      const workerA = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "worker_a",
+        initial_message: "init A",
+      })
+      const workerAPath = workerA.metadata.agent_path ?? AgentPath.root()
+      const workerB = yield* control.spawnAgent({
+        parentID: workerA.thread_id,
+        parentPath: workerAPath,
+        task_name: "worker_b",
+        initial_message: "init B",
+      })
+
+      // Sanity — both children show up in the registry before the cascade.
+      const before = yield* control.listAgents(AgentPath.root(), root.id)
+      const beforeNames = before.map((l) => l.agent_name).sort()
+      expect(beforeNames).toEqual(["/root", "/root/worker_a", "/root/worker_a/worker_b"])
+
+      // Close workerA from root — closeAgent's descendants walk
+      // (control.ts:842-855) shuts every agent whose path starts with
+      // workerA's path + "/" before workerA itself. Leaves-first.
+      const closeResult = yield* control.closeAgent(workerA.thread_id)
+      expect(closeResult.previous_status).not.toBe("shutdown")
+
+      // Both descendants reach "shutdown". subscribeStatus retains the
+      // SubscriptionRef post-shutdown (shutdownOne flips status before
+      // releasing meta from the registry); reading it returns "shutdown".
+      const refA = yield* control.subscribeStatus(workerA.thread_id)
+      const refB = yield* control.subscribeStatus(workerB.thread_id)
+      expect(yield* SubscriptionRef.get(refA)).toBe("shutdown")
+      expect(yield* SubscriptionRef.get(refB)).toBe("shutdown")
+
+      // Idempotency — re-close returns previous_status: "shutdown" without
+      // erroring (the registry has released meta but the SubscriptionRef
+      // and sessionToRoot entry remain, so slotFor still resolves).
+      const second = yield* control.closeAgent(workerA.thread_id)
+      expect(second.previous_status).toBe("shutdown")
+
+      // listAgents from root: workerA and workerB are gone (registry
+      // released them via shutdownOne → releaseSpawnedThread).
+      const after = yield* control.listAgents(AgentPath.root(), root.id)
+      const afterNames = after.map((l) => l.agent_name)
+      expect(afterNames).not.toContain("/root/worker_a")
+      expect(afterNames).not.toContain("/root/worker_a/worker_b")
+      expect(afterNames).toContain("/root")
     }),
   )
 
@@ -389,16 +446,129 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
   )
 
   // TODO(wave_3): audit — assert under concurrent send pressure.
-  it.instance.skip("mailbox-drain-at-runloop-boundary-with-concurrent-sends", () =>
+  it.instance("mailbox-drain-at-runloop-boundary-with-concurrent-sends", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "worker",
+        initial_message: "seed",
+      })
+      const childPath = child.metadata.agent_path ?? AgentPath.root()
+      // Drain the spawn-seed message so the union math below is exact.
+      yield* control.drainMailbox(child.thread_id)
+
+      const N = 10
+
+      // Fork N concurrent sends. Each carries a unique payload so we can
+      // detect duplicates. Each fork yields the Fiber back so we can join
+      // it after the racing drain. The send goes through
+      // sendInterAgentCommunication (root resolution + Mailbox.send), which
+      // is the path Bug 1's per-root refactor changed; the union assertion
+      // proves no message is lost across the routed path under fan-in.
+      const sendFibers = yield* Effect.forEach(
+        Array.from({ length: N }, (_, i) => i),
+        (i) =>
+          Effect.forkScoped(
+            control.sendInterAgentCommunication(
+              child.thread_id,
+              new InterAgentCommunication({
+                author: AgentPath.root(),
+                recipient: childPath,
+                content: `msg-${i}`,
+                trigger_turn: false,
+                sent_at: i + 1,
+              }),
+              root.id,
+            ),
+          ),
+      )
+
+      // First drain races the in-flight sends — captures whatever the
+      // Mailbox's atomic Ref.modify exposed by now. The atomic seq + append
+      // (mailbox.ts:48-55) guarantees no torn state: every concurrent send
+      // either fully landed or hasn't started, never half-applied.
+      const drain1 = yield* control.drainMailbox(child.thread_id)
+
+      // Wait for every send to fully land. Fiber.join only returns once the
+      // forked effect has completed, so after this every send has either
+      // appeared in drain1 or remains queued for drain2.
+      yield* Effect.forEach(sendFibers, (f) => Fiber.join(f), { discard: true })
+
+      // Second drain catches everything drain1 missed.
+      const drain2 = yield* control.drainMailbox(child.thread_id)
+
+      const all = [...drain1, ...drain2]
+      const contents = all.map((c) => c.content).sort()
+      const expected = Array.from({ length: N }, (_, i) => `msg-${i}`).sort()
+      // Union has all N unique payloads; nothing lost across the
+      // drain/send race; nothing duplicated.
+      expect(contents).toEqual(expected)
+      expect(new Set(contents).size).toBe(N)
     }),
   )
 
   // TODO(wave_3): audit — assert PTY cleanup under multi-agent cancellation.
-  it.instance.skip("pty-cleanup-on-parent-abort", () =>
+  it.instance("pty-cleanup-on-parent-abort", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const pty = yield* Pty.Service
+
+      // Stub run-loop spawns a model-origin PTY inside acquireUseRelease.
+      // origin: "model" disables Pty's auto-remove-on-exit gating per
+      // GOTCHAS pty-onexit-auto-remove-tui-only — the assertion is that the
+      // multi-agent cancellation cascade triggers explicit cleanup, not
+      // that the PTY exits on its own. The setInterval keeps the bun child
+      // alive for 5s so the PTY stays in Pty.list until cleanup fires.
+      yield* control.registerRunLoop(() =>
+        Effect.acquireUseRelease(
+          pty.create({
+            command: "bun",
+            args: ["-e", "setInterval(()=>{},5000)"],
+            origin: "model",
+          }),
+          () => Effect.never,
+          (info) => pty.remove(info.id),
+        ),
+      )
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "exec",
+        initial_message: "go",
+      })
+
+      // Let the run-loop body register its PTY.
+      yield* Effect.sleep("100 millis")
+      const before = yield* pty.list()
+      expect(before.length).toBeGreaterThanOrEqual(1)
+
+      // cancelChildrenOf walks /root descendants and closeAgent's each one.
+      // Each closeAgent → shutdownOne → Fiber.interrupt(runLoopFiber) →
+      // run-loop's acquireUseRelease release fires → pty.remove → PTY
+      // killed and unregistered. The forkIn(parentScope) chain in
+      // AgentControl wires the run-loop into a scope reachable by the
+      // shutdown, which is the whole composability claim this test makes.
+      yield* control.cancelChildrenOf(root.id)
+
+      // Cascade settles. Fiber.interrupt awaits exit before returning so
+      // most of the cleanup is sync; the small sleep covers any residual
+      // bridge.fork plumbing inside the Pty layer.
+      yield* Effect.sleep("100 millis")
+
+      const after = yield* pty.list()
+      expect(after.length).toBe(0)
     }),
   )
 
