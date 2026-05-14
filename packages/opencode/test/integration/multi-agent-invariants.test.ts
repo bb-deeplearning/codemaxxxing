@@ -20,11 +20,14 @@ import { InterAgentCommunication } from "@/agent/inter-agent-communication"
 import { Config } from "@/config/config"
 import { Pty } from "@/pty"
 import { Session } from "@/session/session"
+import { MessageV2 } from "@/session/message-v2"
+import type { SessionPrompt } from "@/session/prompt"
 import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
 import { AgentWaitTool } from "@/tool/agent-wait/agent-wait"
+import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { ProviderID, ModelID } from "@/provider/schema"
-import { MessageID, SessionID } from "@/session/schema"
+import { MessageID, PartID, SessionID } from "@/session/schema"
 import type * as Tool from "@/tool/tool"
 import { disposeAllInstances } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -76,6 +79,79 @@ const makeCtx = (sessionID: SessionID): Tool.Context => ({
   messages: [],
   metadata: () => Effect.void,
   ask: () => Effect.void,
+})
+
+// Seed a parent session with the user + assistant message TaskTool requires
+// per task.ts:103 (msg.info.role !== "assistant" → fail). Returns the
+// assistant message id so callers can pass it as ctx.messageID.
+const seedAssistantMessage = Effect.fn("multi-agent-invariants.seedAssistantMessage")(function* (
+  parentID: SessionID,
+) {
+  const sessions = yield* Session.Service
+  const user = yield* sessions.updateMessage({
+    id: MessageID.ascending(),
+    role: "user",
+    sessionID: parentID,
+    agent: "build",
+    model: ref,
+    time: { created: Date.now() },
+  })
+  const assistant: MessageV2.Assistant = {
+    id: MessageID.ascending(),
+    role: "assistant",
+    parentID: user.id,
+    sessionID: parentID,
+    mode: "build",
+    agent: "build",
+    cost: 0,
+    path: { cwd: "/tmp", root: "/tmp" },
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    modelID: ref.modelID,
+    providerID: ref.providerID,
+    time: { created: Date.now() },
+  }
+  yield* sessions.updateMessage(assistant)
+  return assistant
+})
+
+// Stub the legacy task tool's `promptOps` so the child runLoop completes
+// synchronously with a single text part. Mirrors the shape used by
+// test/backward-compat/legacy-task-tool.test.ts:103-109. The text appears
+// inside the `<task_result>` envelope per task.ts:158-163.
+const stubPromptOps = (text: string): TaskPromptOps => ({
+  cancel() {},
+  resolvePromptParts: (template) =>
+    Effect.succeed([{ type: "text" as const, text: template }]),
+  prompt: (input: SessionPrompt.PromptInput) =>
+    Effect.sync(() => {
+      const id = MessageID.ascending()
+      return {
+        info: {
+          id,
+          role: "assistant",
+          parentID: input.messageID ?? MessageID.ascending(),
+          sessionID: input.sessionID,
+          mode: input.agent ?? "general",
+          agent: input.agent ?? "general",
+          cost: 0,
+          path: { cwd: "/tmp", root: "/tmp" },
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: input.model?.modelID ?? ref.modelID,
+          providerID: input.model?.providerID ?? ref.providerID,
+          time: { created: Date.now() },
+          finish: "stop",
+        },
+        parts: [
+          {
+            id: PartID.ascending(),
+            messageID: id,
+            sessionID: input.sessionID,
+            type: "text",
+            text,
+          },
+        ],
+      }
+    }),
 })
 
 describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
@@ -572,10 +648,84 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
     }),
   )
 
-  // TODO(wave_4): backward-compat verification.
-  it.instance.skip("legacy-task-tool-coexists-with-v2", () =>
+  // wave_4: backward-compat verification — the legacy `task` tool path
+  // (sessions.create({parentID}) directly, no AgentControl) must keep
+  // working unchanged after Wave 1's per-root refactor and Wave 2's
+  // completion watcher.
+  it.instance("legacy-task-tool-coexists-with-v2", () =>
     Effect.gen(function* () {
-      yield* Effect.void
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      // Two roots in the same project — the campaign's defining scenario.
+      // Root B is a separate "chat" we'll assert remains untouched after
+      // root A drives a legacy-task call.
+      const rootA = yield* sessions.create({ title: "chatA" })
+      const rootB = yield* sessions.create({ title: "chatB" })
+      yield* control.registerSessionRoot(rootA.id)
+      yield* control.registerSessionRoot(rootB.id)
+
+      // task.ts:103 reads MessageV2.get({sessionID, messageID}) and fails if
+      // role !== "assistant". Seed root A with a (user, assistant) pair so
+      // the assistant id is what we pass as ctx.messageID.
+      const assistantA = yield* seedAssistantMessage(rootA.id)
+
+      // Resolve the legacy TaskTool to its Def for direct .execute(args, ctx).
+      // task.ts exports the Tool.Info via the `Tool.define` factory.
+      const taskInfo = yield* TaskTool
+      const taskDef = yield* taskInfo.init()
+
+      // Drive the legacy task call exactly as a model would: description +
+      // prompt + subagent_type, with promptOps stubbed in ctx.extra so the
+      // child runLoop completes synchronously without a real model.
+      const result = yield* taskDef.execute(
+        {
+          description: "audit",
+          prompt: "find foo",
+          subagent_type: "explore",
+        },
+        {
+          sessionID: rootA.id,
+          messageID: assistantA.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: stubPromptOps("task complete: found foo") },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      // 1) The `<task_result>` envelope shape is unchanged (task.ts:158-163).
+      // The model parses this verbatim — drift here breaks every plugin /
+      // SDK consumer that reads the envelope.
+      expect(result.output).toContain("<task_result>")
+      expect(result.output).toContain("</task_result>")
+      expect(result.output).toContain("task complete: found foo")
+      expect(result.title).toBe("audit")
+
+      // 2) The legacy task path created a child session of root A via
+      // sessions.create({parentID: ctx.sessionID}) at task.ts:70. This is
+      // the path that has NO AgentControl involvement — assert it still
+      // works after the per-root refactor by reading the parent's
+      // children directly through Session.Service.
+      const childrenOfA = yield* sessions.children(rootA.id)
+      expect(childrenOfA).toHaveLength(1)
+      expect(childrenOfA[0]?.id).toBe(result.metadata.sessionId)
+
+      // 3) Root B is fully unaffected — its listAgents shows just root B
+      // itself, no leakage of root A's task-spawned child. Catches the
+      // failure mode where the legacy path coupled to per-root state in
+      // a way that crossed the root boundary.
+      const listB = yield* control.listAgents(AgentPath.root(), rootB.id)
+      expect(listB.map((l) => l.agent_name)).toEqual(["/root"])
+
+      // 4) Root B has no task-tool children either (the legacy path used
+      // the SAME sessions.create / parentID mechanism — assert the parent
+      // index is properly per-root).
+      const childrenOfB = yield* sessions.children(rootB.id)
+      expect(childrenOfB).toHaveLength(0)
     }),
   )
 })

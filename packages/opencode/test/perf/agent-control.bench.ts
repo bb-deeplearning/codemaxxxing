@@ -34,7 +34,7 @@ const wavePerfFile = path.resolve(
   "codex-parity-hardening-2026-05-14",
   "artifacts",
   "perf",
-  "wave_2.json",
+  "wave_4.json",
 )
 
 function gitSha(): string {
