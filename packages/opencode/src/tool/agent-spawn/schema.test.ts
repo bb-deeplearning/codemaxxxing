@@ -11,9 +11,14 @@ const parse = <S extends Schema.Decoder<unknown>>(schema: S, input: unknown): S[
   Schema.decodeUnknownSync(schema)(input)
 
 describe("spawn_agent parameters", () => {
-  test("required = message + task_name", () => {
+  test("required = agent_type + message + task_name", () => {
+    // Bug 3 fix (commit c86c58f94) made agent_type required so the model
+    // must explicitly pick a real subagent name from describeSpawnAgent's
+    // appended enumeration. Pre-fix it was optional with a description that
+    // listed codex role names (`default`/`explorer`/`worker`) that did not
+    // map to opencode primitives.
     const json = toJsonSchema(Parameters)
-    expect((json.required ?? []).slice().sort()).toEqual(["message", "task_name"])
+    expect((json.required ?? []).slice().sort()).toEqual(["agent_type", "message", "task_name"])
   })
 
   test("each parameter has a non-empty description annotation", () => {
@@ -24,10 +29,11 @@ describe("spawn_agent parameters", () => {
     }
   })
 
-  test("accepts message + task_name only", () => {
-    expect(parse(Parameters, { message: "do x", task_name: "worker" })).toEqual({
+  test("accepts message + task_name + agent_type (the new required minimum)", () => {
+    expect(parse(Parameters, { message: "do x", task_name: "worker", agent_type: "explore" })).toEqual({
       message: "do x",
       task_name: "worker",
+      agent_type: "explore",
     })
   })
 
@@ -47,19 +53,23 @@ describe("spawn_agent parameters", () => {
   })
 
   test("rejects missing message", () => {
-    expect(accepts(Parameters, { task_name: "worker" })).toBe(false)
+    expect(accepts(Parameters, { task_name: "worker", agent_type: "explore" })).toBe(false)
   })
 
   test("rejects missing task_name", () => {
-    expect(accepts(Parameters, { message: "do x" })).toBe(false)
+    expect(accepts(Parameters, { message: "do x", agent_type: "explore" })).toBe(false)
+  })
+
+  test("rejects missing agent_type (bug 3 fix made it required)", () => {
+    expect(accepts(Parameters, { message: "do x", task_name: "worker" })).toBe(false)
   })
 
   test("rejects non-string message", () => {
-    expect(accepts(Parameters, { message: 42, task_name: "worker" })).toBe(false)
+    expect(accepts(Parameters, { message: 42, task_name: "worker", agent_type: "explore" })).toBe(false)
   })
 
   test("rejects non-string task_name", () => {
-    expect(accepts(Parameters, { message: "do x", task_name: 42 })).toBe(false)
+    expect(accepts(Parameters, { message: "do x", task_name: 42, agent_type: "explore" })).toBe(false)
   })
 })
 

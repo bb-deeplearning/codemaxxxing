@@ -142,21 +142,42 @@ describe("bug 3 audit — agent_type role-vocabulary fix is intact", () => {
       const tools = yield* registry.tools({ ...ref, agent: build })
       const spawn = tools.find((t) => t.id === "spawn_agent")
       if (!spawn) throw new Error("spawn_agent not registered")
-      // describeSpawnAgent appends a templated list of valid agent types to
-      // the tool's description. Built-ins are `explore` and `general`. Codex
-      // role names (`explorer`, `worker`, `default`) must NOT appear as
-      // standalone agent types.
+      // describeSpawnAgent (registry.ts:326-339) appends a templated list of
+      // valid agent types to the tool's description, prefixed by the header
+      // line "Available agent types and the tools they have access to:". Each
+      // eligible subagent appears as a "- <name>: <description>" bullet under
+      // that header. Built-ins yield `explore` and `general` only. Codex role
+      // names (`explorer`, `worker`, `default`) must NOT appear as bullet
+      // entries here.
       //
-      // We use word-boundary regex (not toContain) because the prose in
-      // agent-spawn.txt legitimately mentions "/root/explorers", "worker_a",
-      // "worker_1", "workers" as illustrative path/name examples — those are
-      // copy in the doc, not codex role names. The spec must reject only
-      // the standalone words.
-      expect(spawn.description).toMatch(/\bexplore\b/)
-      expect(spawn.description).toMatch(/\bgeneral\b/)
-      expect(spawn.description).not.toMatch(/\bexplorer\b/)
-      expect(spawn.description).not.toMatch(/\bworker\b/)
-      expect(spawn.description).not.toMatch(/\bdefault\b/)
+      // The assertion scope is the APPENDED ENUMERATION ONLY — not the full
+      // description. The agent-spawn.txt prose legitimately uses the
+      // substrings "an explorer", "Observer/worker", "by default", and
+      // "(default)" as illustrative copy. Those collide with `\bword\b` regex
+      // (every neighbor is a non-word char → boundaries present), so a
+      // whole-description regex would false-positive on prose. The bug-3 fix
+      // operates on the registry's enumeration, not on the prose, so scoping
+      // to the enumeration matches the fix's actual surface.
+      const ENUM_HEADER = "Available agent types and the tools they have access to:"
+      const headerIdx = spawn.description.indexOf(ENUM_HEADER)
+      if (headerIdx < 0) {
+        throw new Error(
+          `spawn_agent description is missing the enumeration header "${ENUM_HEADER}". ` +
+            "describeSpawnAgent (registry.ts) may have been removed or renamed.",
+        )
+      }
+      const enumeration = spawn.description.slice(headerIdx)
+      // Eligible subagent names appear as "- <name>:" bullets, anchored to
+      // the start of a line (multiline regex). The two built-ins are
+      // explore + general.
+      expect(enumeration).toMatch(/^- explore:/m)
+      expect(enumeration).toMatch(/^- general:/m)
+      // Codex role names must NOT appear as bullet-pointed agent type
+      // entries. The bullet anchor (`^-`) and trailing colon ensure we only
+      // catch agent-type bullets, never prose mentions.
+      expect(enumeration).not.toMatch(/^- explorer:/m)
+      expect(enumeration).not.toMatch(/^- worker:/m)
+      expect(enumeration).not.toMatch(/^- default:/m)
     }),
   )
 

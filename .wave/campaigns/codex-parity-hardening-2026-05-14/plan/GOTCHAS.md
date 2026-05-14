@@ -120,6 +120,89 @@ When you discover something new during a wave, append a new entry at the BOTTOM 
 
 (Empty at campaign start. Each wave's executor that discovers a new sharp edge appends an entry here following the format used in the previous campaign's file.)
 
+## [word-boundary-regex-vs-prose-collisions] `\bword\b` matches common English words in tool description prose
+
+**Discovered in:** wave_0
+**Date:** 2026-05-14
+**Surfaces affected:** any test that asserts "forbidden word X must not appear" against a tool's full description string when the description is a concat of prose (`*.txt`) + structured enumeration (registry-appended bullets)
+**Severity:** DX-trap
+
+### Symptom
+
+Wave 0 spec test 1 of the bug-3 audit asserted `expect(spawn.description).not.toMatch(/\bworker\b/)` (and `/\bexplorer\b/`, `/\bdefault\b/`) to verify the codex role names did not appear as agent types. Spec gotcha 4a explicitly claimed the word-boundary regex was safe against the prose. Test failed at runtime: `\bexplorer\b` matched "an explorer." (line 92 of agent-spawn.txt), `\bworker\b` matched "Observer/worker —" (line 44), `\bdefault\b` matched "by default." (line 29) and "(default):" (line 107).
+
+### Root cause
+
+Word boundaries `\b` match between a word character (`[A-Za-z0-9_]`) and a non-word character. In prose, EVERY occurrence of a common English word in a sentence is bounded by spaces, punctuation, parentheses, or em-dashes — all non-word chars. So `\bword\b` matches every English usage of the word. The spec author conflated "underscore-suffixed" cases (`worker_a`, `worker_1` — `_` is a word char so `\bworker\b` doesn't match) with all prose mentions; the latter ARE matched.
+
+The deeper issue: the description is a CONCAT of two distinct surfaces — the prose from `agent-spawn.txt` (illustrative, narrative) and the registry's appended enumeration (`describeSpawnAgent` output, structured `- name: description` bullets). The bug-3 fix operates on the enumeration only. A whole-string assertion conflates the two.
+
+### Fix pattern
+
+When asserting "forbidden-word X must not appear AS A STRUCTURED ENTRY", scope the regex to the structured section. Pattern: locate the enumeration header, slice from there, then anchor the regex to bullet starts:
+
+```ts
+const ENUM_HEADER = "Available agent types and the tools they have access to:"
+const headerIdx = spawn.description.indexOf(ENUM_HEADER)
+if (headerIdx < 0) throw new Error("enumeration header missing — describer changed?")
+const enumeration = spawn.description.slice(headerIdx)
+expect(enumeration).not.toMatch(/^- explorer:/m)   // matches only bullet entries
+```
+
+The anchor `^- name:` (multiline regex) catches enumeration entries while ignoring prose mentions. The header-existence guard catches the case where `describeSpawnAgent` is renamed/removed.
+
+For tests that need to verify "this word does not appear ANYWHERE", use the underlying SOURCE (the registry method's return value, not the rendered tool description) so prose and enumeration stay separable.
+
+### Reference
+
+- `packages/opencode/test/integration/multi-agent-invariants.test.ts:140-179` — the corrected test scoping the assertion to the enumeration only.
+- `packages/opencode/src/tool/registry.ts:326-339` — `describeSpawnAgent` builds the enumeration; the `"Available agent types and the tools they have access to:"` header is the stable anchor.
+- `.wave/campaigns/codex-parity-hardening-2026-05-14/waves/wave_0/NOTES.md` — full empirical story.
+
+---
+
+## [bug-3-fix-left-test-files-with-stale-required-shape] making a Schema field required without updating dependent tests breaks runtime + typecheck silently
+
+**Discovered in:** wave_0
+**Date:** 2026-05-14
+**Surfaces affected:** `Schema.Struct` field that was previously `Schema.optional` and is changed to required; tests that build inputs without supplying the new required field
+**Severity:** DX-trap
+
+### Symptom
+
+Bug-3 fix (`c86c58f94`) made `agent_type` required on `spawn_agent`'s `Parameters` (was `Schema.optional`). The fix updated production code (validation logic + description) but did NOT update dependent test files. Result: 21 typecheck errors in `agent-spawn.test.ts` (20) and `schema.test.ts` (1), plus 14 + 2 runtime test failures the typechecker missed where `Tool.Def`-cast call sites erased Parameters typing. The errors slept on the `codex-parity` branch from the fix commit until wave 0 surfaced them.
+
+Additionally, `schema.test.ts` had two BEHAVIORAL assertions that became factually wrong:
+- `expect((json.required ?? []).slice().sort()).toEqual(["message", "task_name"])` — should now include `"agent_type"`.
+- `test("accepts message + task_name only", ...)` — schema no longer accepts that input shape; agent_type is required.
+
+These were latent bugs on the branch, not flagged by `bun test` because nobody was running the schema/agent-spawn unit tests as part of routine verification. Wave 0's tooling-touch work surfaced them.
+
+### Root cause
+
+When changing `Schema.optional(...)` → required (`Schema.String.annotate(...)`) on a field, every call site that built the input WITHOUT that field becomes an error — but only at the call site where the type is concretely known. Sites that pass the input through a generic `Tool.Def`-typed handle erase the Parameters type, so the typechecker doesn't flag them. The runtime schema validator catches them as `SchemaError(Missing key)`.
+
+Combined with the team practice of running `bun typecheck` separately from per-file `bun test` runs, a schema tightening can quietly accumulate test debt that's invisible until someone hits the affected file.
+
+### Fix pattern
+
+When tightening a Schema field's optionality:
+
+1. `bun typecheck` immediately and fix every flagged call site in the same commit.
+2. `git grep "<field-name>"` across `*.test.ts` to find sites that route through type-erased handles.
+3. Run the affected test files (`bun test path/to/affected/file.test.ts`) to surface runtime SchemaError missing-key failures.
+4. Audit any test asserting on the schema's `required` list / `accepts` happy path — these encode the OLD shape and become stale.
+
+For tool tests specifically: prefer typed `Tool.Def<typeof Parameters, ...>` over plain `Tool.Def` cast where possible, so future schema changes flag at the call site.
+
+### Reference
+
+- Commit `c86c58f94` — the fix that landed the required tightening without updating dependents.
+- Commits `45d2fbaf9` + the wave-0-resume commit — the cleanup.
+- Affected files: `packages/opencode/src/tool/agent-spawn/agent-spawn.test.ts`, `packages/opencode/src/tool/agent-spawn/schema.test.ts`, `packages/opencode/test/integration/multi-agent-tools.test.ts`.
+
+---
+
 <!--
 Entry format reminder:
 

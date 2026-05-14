@@ -103,7 +103,10 @@ describe("tool.spawn_agent", () => {
         const def = yield* initTool()
         const { ctx, record } = makeCtx(root.id)
 
-        const result = yield* def.execute({ message: "do x", task_name: "worker" }, ctx)
+        const result = yield* def.execute(
+          { message: "do x", task_name: "worker", agent_type: "explore" },
+          ctx,
+        )
 
         expect(result.metadata.task_name).toBe("/root/worker")
         expect(typeof result.metadata.nickname).toBe("string")
@@ -134,12 +137,12 @@ describe("tool.spawn_agent", () => {
         const def = yield* initTool()
 
         const first = yield* def.execute(
-          { message: "first", task_name: "worker" },
+          { message: "first", task_name: "worker", agent_type: "explore" },
           makeCtx(root.id).ctx,
         )
         const childSessionID = first.metadata.child_session_id as SessionID
         const second = yield* def.execute(
-          { message: "second", task_name: "sub" },
+          { message: "second", task_name: "sub", agent_type: "explore" },
           makeCtx(childSessionID).ctx,
         )
         expect(second.metadata.task_name).toBe("/root/worker/sub")
@@ -156,7 +159,7 @@ describe("tool.spawn_agent", () => {
         const def = yield* initTool()
         const { ctx } = makeCtx(root.id)
 
-        const result = yield* def.execute({ message: "do x", task_name: "BadName" }, ctx)
+        const result = yield* def.execute({ message: "do x", task_name: "BadName", agent_type: "explore" }, ctx)
         expect(typeof result.output).toBe("string")
         expect(result.output.toLowerCase()).toMatch(/invalid|segment|lowercase|reserved|underscore/)
         expect(result.metadata.error).toBeDefined()
@@ -173,7 +176,7 @@ describe("tool.spawn_agent", () => {
         const def = yield* initTool()
         const { ctx } = makeCtx(root.id)
 
-        const result = yield* def.execute({ message: "do x", task_name: "" }, ctx)
+        const result = yield* def.execute({ message: "do x", task_name: "", agent_type: "explore" }, ctx)
         expect(result.metadata.error).toBeDefined()
       }),
     ),
@@ -188,7 +191,7 @@ describe("tool.spawn_agent", () => {
         const def = yield* initTool()
         const { ctx } = makeCtx(root.id)
 
-        const result = yield* def.execute({ message: "do x", task_name: "a/b" }, ctx)
+        const result = yield* def.execute({ message: "do x", task_name: "a/b", agent_type: "explore" }, ctx)
         expect(result.metadata.error).toBeDefined()
       }),
     ),
@@ -203,7 +206,7 @@ describe("tool.spawn_agent", () => {
         const def = yield* initTool()
         const { ctx } = makeCtx(root.id)
 
-        const result = yield* def.execute({ message: "do x", task_name: "." }, ctx)
+        const result = yield* def.execute({ message: "do x", task_name: ".", agent_type: "explore" }, ctx)
         expect(result.metadata.error).toBeDefined()
       }),
     ),
@@ -217,10 +220,10 @@ describe("tool.spawn_agent", () => {
         const root = yield* sessions.create({ title: "root" })
         const def = yield* initTool()
 
-        const first = yield* def.execute({ message: "first", task_name: "dup" }, makeCtx(root.id).ctx)
+        const first = yield* def.execute({ message: "first", task_name: "dup", agent_type: "explore" }, makeCtx(root.id).ctx)
         expect(first.metadata.task_name).toBe("/root/dup")
 
-        const second = yield* def.execute({ message: "second", task_name: "dup" }, makeCtx(root.id).ctx)
+        const second = yield* def.execute({ message: "second", task_name: "dup", agent_type: "explore" }, makeCtx(root.id).ctx)
         expect(second.metadata.error).toBeDefined()
         expect(second.output.toLowerCase()).toMatch(/already|exists/)
       }),
@@ -235,24 +238,24 @@ describe("tool.spawn_agent", () => {
         const root = yield* sessions.create({ title: "root" })
         const def = yield* initTool()
 
-        const lvl1 = yield* def.execute({ message: ".", task_name: "l1" }, makeCtx(root.id).ctx)
+        const lvl1 = yield* def.execute({ message: ".", task_name: "l1", agent_type: "explore" }, makeCtx(root.id).ctx)
         expect(lvl1.metadata.task_name).toBe("/root/l1")
         const lvl2 = yield* def.execute(
-          { message: ".", task_name: "l2" },
+          { message: ".", task_name: "l2", agent_type: "explore" },
           makeCtx(lvl1.metadata.child_session_id as SessionID).ctx,
         )
         const lvl3 = yield* def.execute(
-          { message: ".", task_name: "l3" },
+          { message: ".", task_name: "l3", agent_type: "explore" },
           makeCtx(lvl2.metadata.child_session_id as SessionID).ctx,
         )
         const lvl4 = yield* def.execute(
-          { message: ".", task_name: "l4" },
+          { message: ".", task_name: "l4", agent_type: "explore" },
           makeCtx(lvl3.metadata.child_session_id as SessionID).ctx,
         )
         expect(lvl4.metadata.task_name).toBe("/root/l1/l2/l3/l4")
 
         const lvl5 = yield* def.execute(
-          { message: ".", task_name: "l5" },
+          { message: ".", task_name: "l5", agent_type: "explore" },
           makeCtx(lvl4.metadata.child_session_id as SessionID).ctx,
         )
         expect(lvl5.metadata.error).toBeDefined()
@@ -292,7 +295,7 @@ describe("tool.spawn_agent", () => {
         const { ctx } = makeCtx(root.id)
 
         const result = yield* def.execute(
-          { message: "x", task_name: "fn1", fork_turns: "none" },
+          { message: "x", task_name: "fn1", fork_turns: "none", agent_type: "explore" },
           ctx,
         )
         expect(result.metadata.task_name).toBe("/root/fn1")
@@ -311,7 +314,7 @@ describe("tool.spawn_agent", () => {
         const { ctx } = makeCtx(root.id)
 
         const result = yield* def.execute(
-          { message: "x", task_name: "fa", fork_turns: "all" },
+          { message: "x", task_name: "fa", fork_turns: "all", agent_type: "explore" },
           ctx,
         )
         expect(result.metadata.task_name).toBe("/root/fa")
@@ -330,7 +333,7 @@ describe("tool.spawn_agent", () => {
         const { ctx } = makeCtx(root.id)
 
         const result = yield* def.execute(
-          { message: "x", task_name: "f3", fork_turns: "3" },
+          { message: "x", task_name: "f3", fork_turns: "3", agent_type: "explore" },
           ctx,
         )
         expect(result.metadata.task_name).toBe("/root/f3")
@@ -349,7 +352,7 @@ describe("tool.spawn_agent", () => {
         const { ctx } = makeCtx(root.id)
 
         const result = yield* def.execute(
-          { message: "x", task_name: "f0", fork_turns: "0" },
+          { message: "x", task_name: "f0", fork_turns: "0", agent_type: "explore" },
           ctx,
         )
         expect(result.metadata.error).toBeDefined()
@@ -368,7 +371,7 @@ describe("tool.spawn_agent", () => {
         const { ctx } = makeCtx(root.id)
 
         const result = yield* def.execute(
-          { message: "x", task_name: "fbad", fork_turns: "abc" },
+          { message: "x", task_name: "fbad", fork_turns: "abc", agent_type: "explore" },
           ctx,
         )
         expect(result.metadata.error).toBeDefined()
@@ -386,7 +389,7 @@ describe("tool.spawn_agent", () => {
         const def = yield* initTool()
         const { ctx } = makeCtx(root.id)
 
-        const result = yield* def.execute({ message: "x", task_name: "shape" }, ctx)
+        const result = yield* def.execute({ message: "x", task_name: "shape", agent_type: "explore" }, ctx)
         const parsed = JSON.parse(result.output) as { task_name: string; nickname?: string }
         expect(parsed.task_name).toBe("/root/shape")
         expect(typeof parsed.nickname).toBe("string")

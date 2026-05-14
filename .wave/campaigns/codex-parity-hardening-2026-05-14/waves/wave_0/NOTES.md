@@ -161,3 +161,73 @@ If user picks **A** I will edit agent-spawn.txt as specified above (or per their
 wording) — that IS a production change but a tiny cosmetic one.
 
 ---
+
+## Attempt 2 — complete
+
+**Session:** ses_1dab5d497ffeqTcXWqL9ALEVZV (resumed via user reply)
+**Commit:** TBD
+**Date:** 2026-05-14
+**Decision on entry:** continue (resumed after USER QUESTION; user picked B + X)
+
+### What happened
+
+User clarified concern was about the visual closeness of `explore` (real subagent) and
+`explorer` (codex role rejected by bug 3). After confirming `agent_type: "explore"` is the
+correct real-subagent name, user picked B + X. Executed both:
+
+**B — narrow test 1 of bug 3 audit to the appended enumeration only.**
+The corrected test extracts the `"Available agent types and the tools they have access to:"`
+substring from `spawn.description` (per `describeSpawnAgent` in `registry.ts:326-339`) and
+asserts on bullet anchors `^- explore:` / `^- general:` (positive) and `^- explorer:` /
+`^- worker:` / `^- default:` (negative). Multiline `/m` regex catches enumeration entries
+while ignoring prose mentions like "an explorer.", "Observer/worker —", "by default.".
+
+**X — added `agent_type: "explore"` to all broken sites.**
+Scope expanded beyond the original 21 typecheck errors after empirically running the affected
+files (`bun test ./src/tool/agent-spawn/{schema,agent-spawn}.test.ts`):
+
+| File | Sites fixed | Reason |
+|------|-------------|--------|
+| `src/tool/agent-spawn/agent-spawn.test.ts` | 20 | Typecheck errors (missing required field) — same fix also clears 14 runtime SchemaError failures |
+| `src/tool/agent-spawn/schema.test.ts` | 1 typecheck + 2 stale behavioral tests | Line 28 typecheck; lines 14-17 ("required = message + task_name") + lines 27-32 ("accepts message + task_name only") encoded pre-fix shape |
+| `test/integration/multi-agent-tools.test.ts` | 1 | Runtime-only failure typechecker missed because `Tool.Def` cast erases Parameters typing |
+
+Also added one new test in `schema.test.ts`: "rejects missing agent_type (bug 3 fix made it
+required)" — explicitly defends the requiredness invariant going forward.
+
+Renamed schema.test.ts assertions from "required = message + task_name" → "required =
+agent_type + message + task_name" and "accepts message + task_name only" →
+"accepts message + task_name + agent_type (the new required minimum)" so the test names
+reflect post-fix reality.
+
+Two new GOTCHAS appended to `plan/GOTCHAS.md`:
+1. `word-boundary-regex-vs-prose-collisions` — `\bword\b` matches every prose mention; scope
+   regex assertions to structured sections.
+2. `bug-3-fix-left-test-files-with-stale-required-shape` — schema-tightening migration
+   checklist (typecheck → grep → run-affected-tests → audit `required`-list assertions).
+
+### What passed
+
+```
+bun typecheck             → 0 errors
+bun lint                  → 0 errors (3010 pre-existing warnings unchanged; touched files: 0 errors / 12 warnings, all pre-existing patterns)
+bun test ./test/integration/multi-agent-invariants.test.ts → 3 pass / 10 skip / 0 fail (matches WAVE.md expected outcome)
+bun test (touched files combined: 4 files)                  → 47 pass / 10 skip / 0 fail
+```
+
+No perf bench for wave 0 (no production code touched).
+
+### Diagnosis
+
+Both spec defects from attempt 1 resolved per user choice. Test 1's intent (verify
+enumeration omits codex roles) is preserved with stricter scoping. Pre-existing typecheck +
+runtime test debt cleared mechanically.
+
+### Recommendation
+
+Wave 1 can proceed. Integration test scaffold is in place at
+`packages/opencode/test/integration/multi-agent-invariants.test.ts` with all 10 invariant
+slugs as `.skip` stubs ready for unskip + implementation. Bug 3 audit (3 non-skipped tests)
+defends the existing fix against regression. Two new GOTCHAS captured for future waves.
+
+---

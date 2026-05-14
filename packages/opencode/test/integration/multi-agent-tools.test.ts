@@ -121,7 +121,7 @@ describe("integration: multi-agent v2 tools (spawn/send/list/wait/followup/close
 
         // 1. spawn_agent: root spawns child "worker_a"
         const spawnRes = yield* spawn.execute(
-          { message: "do work", task_name: "worker_a" },
+          { message: "do work", task_name: "worker_a", agent_type: "explore" },
           rootCtx,
         )
         expect(rootRecord.asks.at(-1)?.permission).toBe("spawn_agent")
