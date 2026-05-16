@@ -91,7 +91,16 @@ export const AgentCloseTool = Tool.define(
               // with AgentNotFoundError (resolve already proved otherwise) or
               // root rejection (handled above), so it can't fail here. Fold
               // the impossible typed error into a defect via Effect.orDie.
-              const { previous_status } = yield* control.closeAgent(targetID).pipe(Effect.orDie)
+              //
+              // Pass `ctx.sessionID` as the caller so the completion watcher
+              // only suppresses its notification when the caller is the
+              // target's strict ancestor. A self-close (caller === target) or
+              // a sibling-/descendant-close therefore wakes the target's
+              // parent's wait_agent instead of leaving it to time out — the
+              // bug demoed at ses_1ce9356abffep1L0TvDbD80uUO.
+              const { previous_status } = yield* control
+                .closeAgent(targetID, ctx.sessionID)
+                .pipe(Effect.orDie)
               return {
                 title: `close_agent ${params.target}`,
                 metadata: {

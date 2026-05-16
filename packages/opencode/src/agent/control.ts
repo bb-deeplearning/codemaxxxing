@@ -249,6 +249,7 @@ export interface Interface {
   ) => Effect.Effect<void, AgentNotFoundError>
   readonly closeAgent: (
     id: SessionID,
+    callerID?: SessionID,
   ) => Effect.Effect<{ readonly previous_status: AgentStatus }, AgentNotFoundError>
   readonly listAgents: (
     currentPath: AgentPath,
@@ -301,6 +302,16 @@ interface PerRootData {
   readonly mailboxes: Map<SessionID, Mailbox.Interface>
   readonly statuses: Map<SessionID, SubscriptionRef.SubscriptionRef<AgentStatus>>
   readonly fibers: Map<SessionID, Fiber.Fiber<unknown, unknown>>
+  // Sessions whose impending status="shutdown" transition the completion
+  // watcher MUST swallow without firing a parent notification. Populated by
+  // closeAgent BEFORE setting status, so the watcher's async stream handler
+  // sees the entry by the time it processes the change. Entries are cleared
+  // alongside the rest of the slot on per-root teardown / instance disposal.
+  // See "Skip rule: closeAgent-triggered shutdown" in MESSAGE_SHAPES.md —
+  // legacy behavior was an unconditional skip on every shutdown, which
+  // stranded `wait_agent` whenever a child self-closed (the parent never
+  // learned about the close and timed out).
+  readonly skipCompletionNotification: Set<SessionID>
 }
 
 interface InternalState {
@@ -403,6 +414,7 @@ export const layer = Layer.effect(
           slot.fibers.clear()
           slot.mailboxes.clear()
           slot.statuses.clear()
+          slot.skipCompletionNotification.clear()
           perRoot.delete(deletedID)
           for (const [sid, rid] of sessionToRoot.entries()) {
             if (rid === deletedID) sessionToRoot.delete(sid)
@@ -424,6 +436,7 @@ export const layer = Layer.effect(
               data.fibers.clear()
               data.mailboxes.clear()
               data.statuses.clear()
+              data.skipCompletionNotification.clear()
             }
             perRoot.clear()
             sessionToRoot.clear()
@@ -459,6 +472,7 @@ export const layer = Layer.effect(
           mailboxes: new Map([[id, mailbox]]),
           statuses: new Map([[id, status]]),
           fibers: new Map(),
+          skipCompletionNotification: new Set(),
         }
         data.perRoot.set(id, slot)
         data.sessionToRoot.set(id, id)
@@ -658,10 +672,18 @@ export const layer = Layer.effect(
             // to send_message before going idle. Falls back to status-only
             // when no finished assistant message exists (early failure, etc).
             //
-            // Skip on shutdown: closeAgent is the only path that sets status
-            // to "shutdown"; the parent invoked the close itself, so a
-            // notification here would be confusing. See MESSAGE_SHAPES.md
-            // § "Skip rule: closeAgent-triggered shutdown".
+            // Skip rule on shutdown: closeAgent is the only path that sets
+            // status to "shutdown". The watcher skips the notification only
+            // when the parent already KNOWS about the close — detected via
+            // `slot.skipCompletionNotification` (populated by closeAgent when
+            // the caller is the target's strict ancestor, or when callerID
+            // was not provided — legacy behavior). A self-close or a
+            // sibling-/descendant-initiated close on a child SHOULD wake
+            // the parent's wait_agent, so the notification fires normally
+            // (with the "shutdown" label so the parent can tell it apart
+            // from a natural exit). Was previously an unconditional skip —
+            // see MESSAGE_SHAPES.md § "Skip rule: closeAgent-triggered
+            // shutdown" and the original bug demo at ses_1ce9356abffep1L0TvDbD80uUO.
             //
             // Race rule (do NOT drop(1) the changes stream): a fast-failing
             // runLoop (e.g. Effect.die before any sleep) can flip status to
@@ -675,9 +697,13 @@ export const layer = Layer.effect(
               (next) =>
                 Effect.gen(function* () {
                   if (!AgentStatus.isFinal(next)) return
-                  if (next === "shutdown") return yield* Effect.interrupt
-                  const label =
-                    typeof next === "object" && "completed" in next
+                  const isShutdown = next === "shutdown"
+                  if (isShutdown && slot.skipCompletionNotification.has(child.id)) {
+                    return yield* Effect.interrupt
+                  }
+                  const label = isShutdown
+                    ? "shutdown"
+                    : typeof next === "object" && "completed" in next
                       ? "completed"
                       : "errored"
                   const finalAssistant = yield* sessions
@@ -714,16 +740,24 @@ export const layer = Layer.effect(
                     }),
                     child.id,
                   ).pipe(Effect.catch(() => Effect.void))
-                  // Do NOT interrupt here. The watcher must keep listening
-                  // because Bug 3's revival path (sendInterAgentCommunication
-                  // restarting the runLoop fiber on trigger_turn) drives the
-                  // status from {completed: null} → "running" → next terminal
-                  // value. A self-interrupt after the first notification
-                  // means subsequent revival cycles complete silently —
-                  // the parent's wait_agent then times out forever. The
-                  // watcher dies on its own when:
-                  //   - status flips to "shutdown" (closeAgent path), or
-                  //   - data.scope is destroyed (root deletion).
+                  // Shutdown is terminal — the fiber is gone, the mailbox
+                  // (and therefore any revival possibility) is gone. Interrupt
+                  // the watcher so it doesn't sit forever on a defunct status
+                  // ref. For natural completion (`{completed: null}`) we keep
+                  // watching: Bug 3's revival path can restart the runLoop
+                  // fiber on a trigger_turn message, driving status through
+                  // running → next terminal value, and the second cycle MUST
+                  // still produce its own notification.
+                  if (isShutdown) return yield* Effect.interrupt
+                  // Non-shutdown terminal (completed / errored): do NOT
+                  // interrupt. The revival path (sendInterAgentCommunication
+                  // restarting the runLoop fiber on a trigger_turn message)
+                  // drives status from {completed: null} → "running" → next
+                  // terminal value. A self-interrupt here means subsequent
+                  // revival cycles complete silently and the parent's
+                  // wait_agent times out forever. The watcher dies on its
+                  // own when status flips to "shutdown" (above) or when
+                  // data.scope is destroyed (root deletion).
                 }),
             ).pipe(Effect.forkIn(data.scope))
 
@@ -899,7 +933,25 @@ export const layer = Layer.effect(
         return yield* slot.registry.agentIdForPath(path)
       })
 
-    const closeAgent = Effect.fn("AgentControl.closeAgent")(function* (id: SessionID) {
+    // Strict-ancestor predicate over canonical AgentPaths. Returns true when
+    // `ancestor` is a proper prefix of `descendant` ("/root" is a strict
+    // ancestor of every non-root path; nothing is a strict ancestor of
+    // itself). Used by closeAgent to decide whether the caller of a close
+    // already KNOWS about it — if so, the completion watcher skips the
+    // parent notification (the legacy behavior for ALL closes); otherwise
+    // it fires so the watching parent's wait_agent wakes.
+    const isStrictAncestor = (ancestor: AgentPath, descendant: AgentPath): boolean => {
+      const a = ancestor as string
+      const d = descendant as string
+      if (a === d) return false
+      if (a === "/root") return d.startsWith("/root/")
+      return d.startsWith(a + "/")
+    }
+
+    const closeAgent = Effect.fn("AgentControl.closeAgent")(function* (
+      id: SessionID,
+      callerID?: SessionID,
+    ) {
       const data = yield* InstanceState.get(state)
       const slot = slotFor(data, id)
       if (!slot) return yield* new AgentNotFoundError({ session: id })
@@ -937,6 +989,39 @@ export const layer = Layer.effect(
               ((m.agent_path as string).startsWith((targetPath as string) + "/")),
           )
         : []
+
+      // Determine which sessions (target + descendants) the completion
+      // watcher should swallow without notifying. Three cases:
+      //
+      //   - callerID undefined → preserve the pre-fix semantics (skip every
+      //     shutdown). Tests that drive closeAgent without a caller, and
+      //     the original integration spec at MESSAGE_SHAPES.md § "Skip
+      //     rule", rely on this. Production callers always supply a caller.
+      //   - callerID is a strict ancestor of the target's path → the
+      //     ancestor itself drove the close (directly or via cascade) and
+      //     therefore already knows. Skip the notification.
+      //   - any other caller (self-close, sibling-close, descendant-close)
+      //     → the parent does NOT know. The notification MUST fire so the
+      //     parent's wait_agent wakes instead of running its full timeout.
+      //
+      // The skip flag is set BEFORE shutdownOne flips status to "shutdown"
+      // because the watcher reads the set on the status change.
+      const callerPath = callerID !== undefined
+        ? (yield* slot.registry.agentMetadataForThread(callerID))?.agent_path ??
+          (callerID === slot.rootID ? AgentPath.root() : undefined)
+        : undefined
+      const shouldSkip = (descendantPath: AgentPath | undefined): boolean => {
+        if (callerID === undefined) return true
+        if (!descendantPath || !callerPath) return false
+        return isStrictAncestor(callerPath, descendantPath)
+      }
+
+      if (shouldSkip(targetPath)) slot.skipCompletionNotification.add(id)
+      for (const desc of descendants) {
+        if (desc.agent_id && shouldSkip(desc.agent_path)) {
+          slot.skipCompletionNotification.add(desc.agent_id)
+        }
+      }
 
       for (const desc of descendants) {
         if (desc.agent_id) yield* shutdownOne(slot, desc.agent_id, desc.agent_path)
@@ -1142,7 +1227,11 @@ export const layer = Layer.effect(
 
       for (const child of descendants) {
         if (!child.agent_id) continue
-        yield* closeAgent(child.agent_id).pipe(Effect.catch(() => Effect.void))
+        // Pass parentID so closeAgent's caller-aware skip rule recognises
+        // this as an ancestor-driven cascade and suppresses the per-child
+        // completion notifications — the parent is the one tearing them
+        // down, so the notification would just race the cancel itself.
+        yield* closeAgent(child.agent_id, parentID).pipe(Effect.catch(() => Effect.void))
       }
     })
 

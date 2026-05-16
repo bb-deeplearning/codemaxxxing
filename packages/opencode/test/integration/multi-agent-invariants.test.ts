@@ -494,18 +494,23 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
 
       // Schedule the close 100ms in. Effect.forkScoped binds the helper
       // fiber to the test's scope so it never leaks past this test.
+      // Pass `root.id` as the caller — that's what the close_agent tool
+      // would pass when root is the agent invoking the close, and it's
+      // also what cancelChildrenOf passes on a user cancel cascade. With
+      // a strict-ancestor caller, the watcher MUST skip the notification.
       yield* Effect.forkScoped(
         Effect.gen(function* () {
           yield* Effect.sleep("100 millis")
-          yield* control.closeAgent(child.thread_id)
+          yield* control.closeAgent(child.thread_id, root.id)
         }),
       )
 
       // wait_agent timeout floors to MIN_WAIT_TIMEOUT_MS=1000 (the smallest
-      // possible wall-clock the timeout branch can return on). The watcher
-      // MUST skip the notification when status reaches "shutdown" (per the
-      // MESSAGE_SHAPES.md § "Skip rule"). With no notification fired, the
-      // wait runs out the timeout → timed_out=true.
+      // possible wall-clock the timeout branch can return on). With root
+      // (a strict ancestor of `longrun`) as the closer, the watcher's
+      // skip rule (see MESSAGE_SHAPES.md § "Skip rule" and the inline
+      // comment in control.ts's spawn watcher) suppresses the parent
+      // notification. The wait runs out the timeout → timed_out=true.
       const def = yield* initWaitTool
       const t0 = Date.now()
       const result = yield* def.execute({ timeout_ms: 1000 }, makeCtx(root.id))
@@ -518,6 +523,105 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
       // No notification was sent — the parent's mailbox is empty.
       const drained = yield* control.drainMailbox(root.id)
       expect(drained).toHaveLength(0)
+    }),
+  )
+
+  // Regression for ses_1ce9356abffep1L0TvDbD80uUO — a grandchild was told
+  // to "respond then close yourself", invoked close_agent on itself, and
+  // the legacy unconditional skip-on-shutdown rule swallowed the parent
+  // notification. wait_agent timed out at the full 60s even though the
+  // grandchild had finished in seconds. With caller-aware skipping, a
+  // self-close (caller === target, NOT a strict ancestor) fires the
+  // notification so wait_agent wakes near-instantly.
+  it.instance("self-close-wakes-parent-wait", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "selfcloser",
+        initial_message: "go",
+      })
+      // Drain the spawn-seed `initial_message` so the post-wait mailbox
+      // assertion below is exact (only the completion notification, not
+      // the seed echo).
+      yield* control.drainMailbox(root.id)
+
+      // Child closes itself 100ms in. callerID === child.thread_id, which
+      // is NOT a strict ancestor of itself, so the watcher MUST notify.
+      yield* Effect.forkScoped(
+        Effect.gen(function* () {
+          yield* Effect.sleep("100 millis")
+          yield* control.closeAgent(child.thread_id, child.thread_id)
+        }),
+      )
+
+      const def = yield* initWaitTool
+      const t0 = Date.now()
+      const result = yield* def.execute({ timeout_ms: 10_000 }, makeCtx(root.id))
+      const elapsed = Date.now() - t0
+
+      // Wait wakes on the notification, not the timeout.
+      expect(result.metadata.timed_out).toBe(false)
+      // Far less than the 10s timeout — single-digit seconds at most.
+      expect(elapsed).toBeLessThan(5_000)
+
+      // Mailbox holds exactly the completion notification. Body uses the
+      // "shutdown" label so the parent can tell a self-close apart from
+      // a natural exit (where the label is "completed").
+      const drained = yield* control.drainMailbox(root.id)
+      expect(drained).toHaveLength(1)
+      expect(drained[0].content).toContain("reached status: shutdown")
+      expect(drained[0].trigger_turn).toBe(false)
+    }),
+  )
+
+  // Sibling-initiated close — A and B share a parent. A closes B. B's
+  // parent never invoked the close itself, so the watcher MUST notify
+  // (parent learns about B going away instead of polling status).
+  it.instance("sibling-close-notifies-parent", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+
+      const a = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "a",
+        initial_message: "go",
+      })
+      const b = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "b",
+        initial_message: "go",
+      })
+      yield* control.drainMailbox(root.id)
+
+      // A closes B. Caller=A, target=B. A is not B's ancestor → notify.
+      yield* control.closeAgent(b.thread_id, a.thread_id)
+
+      // Allow the watcher's async send to land in root's mailbox.
+      yield* Effect.sleep("50 millis")
+
+      const drained = yield* control.drainMailbox(root.id)
+      expect(drained).toHaveLength(1)
+      expect(drained[0].content).toContain("reached status: shutdown")
+      // Author is the closed agent (b), recipient is root.
+      expect(drained[0].author as string).toBe("/root/b")
+      // Sanity — A is still alive (sibling close shouldn't touch A).
+      const aStatus = yield* control.subscribeStatus(a.thread_id)
+      expect(yield* SubscriptionRef.get(aStatus)).not.toBe("shutdown")
     }),
   )
 
