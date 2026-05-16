@@ -183,13 +183,27 @@ export function Session() {
   const { theme } = useTheme()
   const promptRef = usePromptRef()
   const session = createMemo(() => sync.session.get(route.sessionID))
-  // Upstream `children()` (root + direct children sorted) — single walk
-  // over sync.data.session. Used for the prompt/permission rollup. Most
-  // sessions have no subagents, in which case this is the entire chain.
+  // Direct children of the CURRENT session (not the root). Single walk
+  // over sync.data.session. Used by `session_child_first` so users can
+  // drill into a subagent's own subagents at any nesting level — earlier
+  // this resolved to "root + root's direct children", which silently
+  // capped descent at depth 1 regardless of where you were in the tree.
   const children = createMemo(() => {
-    const parentID = session()?.parentID ?? session()?.id
+    const id = session()?.id
+    if (!id) return EMPTY_SESSIONS
     return sync.data.session
-      .filter((x) => x.parentID === parentID || x.id === parentID)
+      .filter((x) => x.parentID === id)
+      .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+  })
+  // Sessions sharing the current session's parent (i.e. its siblings).
+  // Used by `session_child_cycle` / _reverse so left/right cycling works
+  // at every depth, not just at depth 1 where "siblings of a depth-1
+  // subagent" happened to equal "root's direct children".
+  const siblings = createMemo(() => {
+    const parentID = session()?.parentID
+    if (!parentID) return EMPTY_SESSIONS
+    return sync.data.session
+      .filter((x) => x.parentID === parentID)
       .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   })
   // codemaxxxing addition: nested-subagent (>1 level deep) descendants for
@@ -586,30 +600,28 @@ export function Session() {
   const local = useLocal()
 
   function moveFirstChild() {
-    if (children().length === 1) return
-    const next = children().find((x) => !!x.parentID)
-    if (next) {
-      navigate({
-        type: "session",
-        sessionID: next.id,
-      })
-    }
+    const list = children()
+    if (list.length === 0) return
+    navigate({
+      type: "session",
+      sessionID: list[0].id,
+    })
   }
 
   function moveChild(direction: number) {
-    if (children().length === 1) return
-
-    const sessions = children().filter((x) => !!x.parentID)
-    let next = sessions.findIndex((x) => x.id === session()?.id) - direction
-
-    if (next >= sessions.length) next = 0
-    if (next < 0) next = sessions.length - 1
-    if (sessions[next]) {
-      navigate({
-        type: "session",
-        sessionID: sessions[next].id,
-      })
-    }
+    const list = siblings()
+    if (list.length <= 1) return
+    const idx = list.findIndex((x) => x.id === session()?.id)
+    if (idx === -1) return
+    // direction semantic preserved from upstream (commit aa2d753e7e):
+    // session_child_cycle = +1 = previous-index, session_child_cycle_reverse = -1 = next-index.
+    let next = idx - direction
+    if (next >= list.length) next = 0
+    if (next < 0) next = list.length - 1
+    navigate({
+      type: "session",
+      sessionID: list[next].id,
+    })
   }
 
   function childSessionHandler(func: (dialog: DialogContext) => void) {
