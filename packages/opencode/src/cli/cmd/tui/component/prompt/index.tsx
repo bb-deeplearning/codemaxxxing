@@ -216,6 +216,29 @@ export function Prompt(props: PromptProps) {
   const dialog = useDialog()
   const toast = useToast()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
+  // Queued user messages: any user msg whose id is greater than the currently-
+  // streaming assistant's id. Mirrors the `queued` derivation rendered next to
+  // each user message in `routes/session/index.tsx` (~ line 1524). Drives the
+  // `session.flush_queued` command's enabled state.
+  const queuedCount = createMemo(() => {
+    const sessionID = props.sessionID
+    if (!sessionID) return 0
+    const list = sync.data.message[sessionID]
+    if (!list || list.length === 0) return 0
+    let pending: string | undefined
+    for (let i = list.length - 1; i >= 0; i--) {
+      const m = list[i]
+      if (m.role !== "assistant") continue
+      pending = (m as AssistantMessage).time.completed ? undefined : m.id
+      break
+    }
+    if (!pending) return 0
+    let count = 0
+    for (const m of list) {
+      if (m.role === "user" && m.id > pending) count++
+    }
+    return count
+  })
   const history = usePromptHistory()
   const stash = usePromptStash()
   const command = useCommandDialog()
@@ -531,6 +554,30 @@ export function Prompt(props: PromptProps) {
             setStore("interruptAt", 0)
           }
           dialog.clear()
+        },
+      },
+      {
+        title: "Flush queued messages",
+        value: "session.flush_queued",
+        keybind: "session_flush_queued",
+        category: "Session",
+        hidden: true,
+        enabled: status().type !== "idle" && queuedCount() > 0,
+        onSelect: async (dialog) => {
+          dialog.clear()
+          if (!props.sessionID) return
+          if (status().type === "idle") return
+          if (queuedCount() === 0) return
+          log.info("flush queued messages", {
+            sessionID: props.sessionID,
+            queuedCount: queuedCount(),
+          })
+          try {
+            await sdk.client.session.abort({ sessionID: props.sessionID })
+            await sdk.client.session.loop({ sessionID: props.sessionID })
+          } catch (err) {
+            log.error("flush queued failed", { sessionID: props.sessionID, error: err })
+          }
         },
       },
       {
@@ -1671,6 +1718,15 @@ export function Prompt(props: PromptProps) {
                   {store.interrupt > 0 ? " again to interrupt" : " interrupt"}
                 </span>
               </text>
+              <Show when={queuedCount() > 0}>
+                <text fg={theme.textMuted}>·</text>
+                <text>
+                  <span style={{ fg: theme.text }}>{keybind.print("session_flush_queued")}</span>
+                  <span style={{ fg: theme.textMuted }}>
+                    {queuedCount() === 1 ? " flush queued" : ` flush ${queuedCount()} queued`}
+                  </span>
+                </text>
+              </Show>
             </box>
           </Show>
           <box flexDirection="row" gap={2} alignItems="center" flexShrink={0}>

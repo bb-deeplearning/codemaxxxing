@@ -1520,6 +1520,8 @@ function UserMessage(props: {
   // input; here we surface them via the dedicated MailboxMessage chrome.
   const mail = createMemo(() => props.parts.filter((x) => isMailboxPart(x as TextPart)) as TextPart[])
   const { theme } = useTheme()
+  const keybind = useKeybind()
+  const flushKey = createMemo(() => keybind.print("session_flush_queued"))
   const [hover, setHover] = createSignal(false)
   const queued = createMemo(() => props.pending && props.message.id > props.pending)
   const color = createMemo(() => local.agent.color(props.message.agent))
@@ -1629,7 +1631,12 @@ function UserMessage(props: {
             </For>
           </Show>
           <Show when={queued()}>
-            <box flexDirection="row" justifyContent="flex-end">
+            <box flexDirection="row" justifyContent="flex-end" gap={1}>
+              <Show when={flushKey()}>
+                <text flexShrink={0} fg={theme.textMuted}>
+                  {flushKey()} to flush
+                </text>
+              </Show>
               <text flexShrink={0}>
                 <span style={{ bg: color(), fg: queuedFg(), bold: true }}> queued </span>
               </text>

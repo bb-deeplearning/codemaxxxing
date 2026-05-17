@@ -615,6 +615,47 @@ export const SessionRoutes = lazy(() =>
           return true
         }),
     )
+    .post(
+      "/:sessionID/loop",
+      describeRoute({
+        summary: "Restart session loop",
+        description:
+          "Restart the assistant loop on a session without inserting a new user message. Use after `abort` to process queued user messages that were inserted while a previous turn was running.",
+        operationId: "session.loop",
+        responses: {
+          200: {
+            description: "Loop restarted",
+            content: {
+              "application/json": {
+                schema: resolver(z.boolean()),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        void runRequest(
+          "SessionRoutes.loop",
+          c,
+          SessionPrompt.Service.use((svc) => svc.loop({ sessionID })),
+        ).catch((err) => {
+          log.error("loop failed", { sessionID, error: err })
+          void Bus.publish(Session.Event.Error, {
+            sessionID,
+            error: new NamedError.Unknown({ message: err instanceof Error ? err.message : String(err) }).toObject(),
+          })
+        })
+        return c.json(true)
+      },
+    )
     .get(
       "/:sessionID/message",
       describeRoute({

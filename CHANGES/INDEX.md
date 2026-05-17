@@ -37,6 +37,7 @@ Injected by `SystemPrompt.capabilityHints(agent)` at session bootstrap based on 
 | `packages/opencode/src/session/prompt.ts`       | Modified | [multi-agent-and-tool-overhaul](2026-05-13-multi-agent-and-tool-overhaul.md): mailbox drain + v2 dispatch branch                                                                                                              |
 | `packages/opencode/src/permission/index.ts`     | Modified | [multi-agent-and-tool-overhaul](2026-05-13-multi-agent-and-tool-overhaul.md): `SHELL_TOOLS`, `MULTI_AGENT_TOOLS`, group `disabled()` arms                                                                                     |
 | `packages/opencode/src/project/bootstrap.ts`    | Modified | [wave-system](2026-05-06-wave-system-and-tui-overhaul.md)                                                                                                                                                                     |
+| `packages/opencode/src/config/keybinds.ts`      | Modified | [flush-queued](2026-05-18-flush-queued.md): `session_flush_queued`                                                                                                                                                            |
 
 ## Source code: multi-agent v2 (NEW subsystem)
 
@@ -85,6 +86,9 @@ Pure refactor extracted from `shell.ts` during campaign 3. All [multi-agent-and-
 | `packages/opencode/src/wave/state.ts`                                       | New    | [wave-system](2026-05-06-wave-system-and-tui-overhaul.md) |
 | `packages/opencode/src/server/routes/instance/httpapi/handlers/wave.ts`     | New    | [wave-system](2026-05-06-wave-system-and-tui-overhaul.md) |
 | `packages/opencode/src/server/routes/instance/httpapi/groups/wave.ts`       | New    | [wave-system](2026-05-06-wave-system-and-tui-overhaul.md) |
+| `packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts`  | Modified | [flush-queued](2026-05-18-flush-queued.md): `loop` handler                                              |
+| `packages/opencode/src/server/routes/instance/httpapi/groups/session.ts`    | Modified | [flush-queued](2026-05-18-flush-queued.md): `SessionPaths.loop` + `HttpApiEndpoint.post("loop", ...)`   |
+| `packages/opencode/src/server/routes/instance/session.ts`                   | Modified | [flush-queued](2026-05-18-flush-queued.md): legacy Hono `POST /:sessionID/loop` for parity              |
 | `packages/opencode/src/cli/cmd/tui/routes/wave/index.tsx`                   | New    | [wave-system](2026-05-06-wave-system-and-tui-overhaul.md) |
 | `packages/opencode/src/cli/cmd/tui/context/wave.tsx`                        | New    | [wave-system](2026-05-06-wave-system-and-tui-overhaul.md) |
 | `packages/opencode/test/wave/wave.test.ts`                                  | New    | [wave-system](2026-05-06-wave-system-and-tui-overhaul.md) |
@@ -97,7 +101,7 @@ Pure refactor extracted from `shell.ts` during campaign 3. All [multi-agent-and-
 | `packages/opencode/src/cli/logo.ts`                                                   | Modified | [initial-fork](2026-02-15-initial-fork.md), [wave-system](2026-05-06-wave-system-and-tui-overhaul.md)                                                                       |
 | `packages/opencode/src/cli/cmd/tui/component/logo.tsx`                                | Modified | [initial-fork](2026-02-15-initial-fork.md), [wave-system](2026-05-06-wave-system-and-tui-overhaul.md)                                                                       |
 | `packages/opencode/src/cli/cmd/tui/routes/session/sidebar.tsx`                        | Modified | [initial-fork](2026-02-15-initial-fork.md), [wave-system](2026-05-06-wave-system-and-tui-overhaul.md)                                                                       |
-| `packages/opencode/src/cli/cmd/tui/routes/session/index.tsx`                          | Modified | [initial-fork](2026-02-15-initial-fork.md), [wave-system](2026-05-06-wave-system-and-tui-overhaul.md), [multi-agent-and-tool-overhaul](2026-05-13-multi-agent-and-tool-overhaul.md) (depth>1 sibling navigation) |
+| `packages/opencode/src/cli/cmd/tui/routes/session/index.tsx`                          | Modified | [initial-fork](2026-02-15-initial-fork.md), [wave-system](2026-05-06-wave-system-and-tui-overhaul.md), [multi-agent-and-tool-overhaul](2026-05-13-multi-agent-and-tool-overhaul.md) (depth>1 sibling navigation), [flush-queued](2026-05-18-flush-queued.md) (inline flush hint next to `queued` badge) |
 | `packages/opencode/src/cli/cmd/tui/app.tsx`                                           | Modified | [initial-fork](2026-02-15-initial-fork.md), [wave-system](2026-05-06-wave-system-and-tui-overhaul.md)                                                                       |
 | `packages/opencode/src/cli/cmd/tui/routes/session/process-tool.tsx` + `.test.tsx`     | New      | [multi-agent-and-tool-overhaul](2026-05-13-multi-agent-and-tool-overhaul.md). Renders `Process` + `ProcessWriteStdin` parts.                                                |
 | `packages/opencode/src/cli/cmd/tui/routes/session/mailbox-message.tsx`                | New      | [multi-agent-and-tool-overhaul](2026-05-13-multi-agent-and-tool-overhaul.md). Cross-agent message rendering.                                                                |
@@ -106,6 +110,7 @@ Pure refactor extracted from `shell.ts` during campaign 3. All [multi-agent-and-
 | `packages/opencode/src/cli/cmd/tui/routes/session/dialog-subagent.tsx` + `-mount.tsx` | New      | [multi-agent-and-tool-overhaul](2026-05-13-multi-agent-and-tool-overhaul.md). `close` action on quick-action dialog.                                                        |
 | `packages/opencode/src/cli/cmd/tui/routes/session/agent-identity.ts` + `.test.ts`     | New      | [multi-agent-and-tool-overhaul](2026-05-13-multi-agent-and-tool-overhaul.md)                                                                                                |
 | `packages/opencode/src/cli/cmd/tui/routes/session/agent-tool.tsx` + `-mount.tsx` + `.test.tsx` | New | [multi-agent-and-tool-overhaul](2026-05-13-multi-agent-and-tool-overhaul.md). Semantic rendering of multi-agent v2 tool calls.                                          |
+| `packages/opencode/src/cli/cmd/tui/component/prompt/index.tsx`                        | Modified | [flush-queued](2026-05-18-flush-queued.md): `queuedCount` memo, `session.flush_queued` command, footer hint when busy + queued |
 
 ## Tests
 

@@ -24,6 +24,17 @@ export type Event =
   | EventSessionStatus
   | EventSessionIdle
   | EventSessionCompacted
+  | EventPtyCreated
+  | EventPtyUpdated
+  | EventPtyExited
+  | EventPtyDeleted
+  | EventPtyPoolWarning
+  | EventAgentSpawnStarted
+  | EventAgentSpawnEnded
+  | EventAgentClosed
+  | EventAgentWaitStarted
+  | EventAgentWaitEnded
+  | EventAgentMessageSent
   | EventTuiPromptAppend
   | EventTuiCommandExecute
   | EventTuiToastShow1
@@ -39,10 +50,6 @@ export type Event =
   | EventWorkspaceStatus
   | EventWorktreeReady
   | EventWorktreeFailed
-  | EventPtyCreated
-  | EventPtyUpdated
-  | EventPtyExited
-  | EventPtyDeleted
   | EventWaveUpdated
   | EventWaveActiveChanged
   | EventMessageUpdated
@@ -77,6 +84,12 @@ export type Event =
   | EventSessionNextCompactionStarted
   | EventSessionNextCompactionDelta
   | EventSessionNextCompactionEnded
+  | EventSessionNextAgentSpawnStarted
+  | EventSessionNextAgentSpawnEnded
+  | EventSessionNextAgentClosed
+  | EventSessionNextAgentWaitStarted
+  | EventSessionNextAgentWaitEnded
+  | EventSessionNextAgentMessageSent
   | EventServerConnected
   | EventGlobalDisposed
 
@@ -274,6 +287,17 @@ export type SessionStatus =
       type: "busy"
     }
 
+export type Pty = {
+  id: string
+  title: string
+  command: string
+  args: Array<string>
+  cwd: string
+  status: "running" | "exited"
+  pid: number
+  origin?: "tui" | "model"
+}
+
 export type EventTuiPromptAppend = {
   id: string
   type: "tui.prompt.append"
@@ -351,16 +375,6 @@ export type Project = {
     initialized?: number
   }
   sandboxes: Array<string>
-}
-
-export type Pty = {
-  id: string
-  title: string
-  command: string
-  args: Array<string>
-  cwd: string
-  status: "running" | "exited"
-  pid: number
 }
 
 export type OutputFormatText = {
@@ -478,6 +492,7 @@ export type SubtaskPart = {
     modelID: string
   }
   command?: string
+  protocol?: "v2"
 }
 
 export type ReasoningPart = {
@@ -791,6 +806,17 @@ export type GlobalEvent = {
     | EventSessionStatus
     | EventSessionIdle
     | EventSessionCompacted
+    | EventPtyCreated
+    | EventPtyUpdated
+    | EventPtyExited
+    | EventPtyDeleted
+    | EventPtyPoolWarning
+    | EventAgentSpawnStarted
+    | EventAgentSpawnEnded
+    | EventAgentClosed
+    | EventAgentWaitStarted
+    | EventAgentWaitEnded
+    | EventAgentMessageSent
     | EventTuiPromptAppend
     | EventTuiCommandExecute
     | EventTuiToastShow
@@ -806,10 +832,6 @@ export type GlobalEvent = {
     | EventWorkspaceStatus
     | EventWorktreeReady
     | EventWorktreeFailed
-    | EventPtyCreated
-    | EventPtyUpdated
-    | EventPtyExited
-    | EventPtyDeleted
     | EventWaveUpdated
     | EventWaveActiveChanged
     | EventMessageUpdated
@@ -844,6 +866,12 @@ export type GlobalEvent = {
     | EventSessionNextCompactionStarted
     | EventSessionNextCompactionDelta
     | EventSessionNextCompactionEnded
+    | EventSessionNextAgentSpawnStarted
+    | EventSessionNextAgentSpawnEnded
+    | EventSessionNextAgentClosed
+    | EventSessionNextAgentWaitStarted
+    | EventSessionNextAgentWaitEnded
+    | EventSessionNextAgentMessageSent
     | EventServerConnected
     | EventGlobalDisposed
     | SyncEventMessageUpdated
@@ -878,6 +906,12 @@ export type GlobalEvent = {
     | SyncEventSessionNextCompactionStarted
     | SyncEventSessionNextCompactionDelta
     | SyncEventSessionNextCompactionEnded
+    | SyncEventSessionNextAgentSpawnStarted
+    | SyncEventSessionNextAgentSpawnEnded
+    | SyncEventSessionNextAgentClosed
+    | SyncEventSessionNextAgentWaitStarted
+    | SyncEventSessionNextAgentWaitEnded
+    | SyncEventSessionNextAgentMessageSent
 }
 
 /**
@@ -1649,6 +1683,7 @@ export type SubtaskPartInput = {
     modelID: string
   }
   command?: string
+  protocol?: "v2"
 }
 
 export type V2SessionsResponse = {
@@ -2292,6 +2327,124 @@ export type SyncEventSessionNextCompactionEnded = {
   }
 }
 
+export type SyncEventSessionNextAgentSpawnStarted = {
+  type: "sync"
+  name: "session.next.agent.spawn.started.1"
+  id: string
+  seq: number
+  aggregateID: "sessionID"
+  data: {
+    timestamp: number
+    sessionID: string
+    call_id: string
+    task_name: string
+    child_path: string
+    agent_type?: string
+    prompt: string
+  }
+}
+
+export type SyncEventSessionNextAgentSpawnEnded = {
+  type: "sync"
+  name: "session.next.agent.spawn.ended.1"
+  id: string
+  seq: number
+  aggregateID: "sessionID"
+  data: {
+    timestamp: number
+    sessionID: string
+    call_id: string
+    task_name: string
+    child_path: string
+    agent_type?: string
+    child_session_id?: string
+    child_nickname?: string
+    status:
+      | "pending_init"
+      | "running"
+      | "interrupted"
+      | "shutdown"
+      | "not_found"
+      | {
+          completed: string
+        }
+      | {
+          errored: string
+        }
+    error?: string
+  }
+}
+
+export type SyncEventSessionNextAgentClosed = {
+  type: "sync"
+  name: "session.next.agent.closed.1"
+  id: string
+  seq: number
+  aggregateID: "sessionID"
+  data: {
+    timestamp: number
+    sessionID: string
+    agent_path: string
+    previous_status:
+      | "pending_init"
+      | "running"
+      | "interrupted"
+      | "shutdown"
+      | "not_found"
+      | {
+          completed: string
+        }
+      | {
+          errored: string
+        }
+  }
+}
+
+export type SyncEventSessionNextAgentWaitStarted = {
+  type: "sync"
+  name: "session.next.agent.wait.started.1"
+  id: string
+  seq: number
+  aggregateID: "sessionID"
+  data: {
+    timestamp: number
+    sessionID: string
+    call_id: string
+    timeout_ms: number
+  }
+}
+
+export type SyncEventSessionNextAgentWaitEnded = {
+  type: "sync"
+  name: "session.next.agent.wait.ended.1"
+  id: string
+  seq: number
+  aggregateID: "sessionID"
+  data: {
+    timestamp: number
+    sessionID: string
+    call_id: string
+    timed_out: boolean
+  }
+}
+
+export type SyncEventSessionNextAgentMessageSent = {
+  type: "sync"
+  name: "session.next.agent.message.sent.1"
+  id: string
+  seq: number
+  aggregateID: "sessionID"
+  data: {
+    timestamp: number
+    sessionID: string
+    sender_path: string
+    target_session_id: string
+    target_path: string
+    message_length: number
+    trigger_turn: boolean
+  }
+}
+
 export type EventServerInstanceDisposed = {
   id: string
   type: "server.instance.disposed"
@@ -2455,6 +2608,148 @@ export type EventSessionCompacted = {
   }
 }
 
+export type EventPtyCreated = {
+  id: string
+  type: "pty.created"
+  properties: {
+    info: Pty
+  }
+}
+
+export type EventPtyUpdated = {
+  id: string
+  type: "pty.updated"
+  properties: {
+    info: Pty
+  }
+}
+
+export type EventPtyExited = {
+  id: string
+  type: "pty.exited"
+  properties: {
+    id: string
+    exitCode: number
+  }
+}
+
+export type EventPtyDeleted = {
+  id: string
+  type: "pty.deleted"
+  properties: {
+    id: string
+  }
+}
+
+export type EventPtyPoolWarning = {
+  id: string
+  type: "pty.pool_warning"
+  properties: {
+    count: number
+    cap: number
+  }
+}
+
+export type EventAgentSpawnStarted = {
+  id: string
+  type: "agent.spawn.started"
+  properties: {
+    sessionID: string
+    timestamp: number
+    call_id: string
+    task_name: string
+    child_path: string
+    agent_type?: string
+    prompt: string
+  }
+}
+
+export type EventAgentSpawnEnded = {
+  id: string
+  type: "agent.spawn.ended"
+  properties: {
+    sessionID: string
+    timestamp: number
+    call_id: string
+    task_name: string
+    child_path: string
+    agent_type?: string
+    child_session_id?: string
+    child_nickname?: string
+    status:
+      | "pending_init"
+      | "running"
+      | "interrupted"
+      | "shutdown"
+      | "not_found"
+      | {
+          completed: string
+        }
+      | {
+          errored: string
+        }
+    error?: string
+  }
+}
+
+export type EventAgentClosed = {
+  id: string
+  type: "agent.closed"
+  properties: {
+    sessionID: string
+    timestamp: number
+    agent_path: string
+    previous_status:
+      | "pending_init"
+      | "running"
+      | "interrupted"
+      | "shutdown"
+      | "not_found"
+      | {
+          completed: string
+        }
+      | {
+          errored: string
+        }
+  }
+}
+
+export type EventAgentWaitStarted = {
+  id: string
+  type: "agent.wait.started"
+  properties: {
+    sessionID: string
+    timestamp: number
+    call_id: string
+    timeout_ms: number
+  }
+}
+
+export type EventAgentWaitEnded = {
+  id: string
+  type: "agent.wait.ended"
+  properties: {
+    sessionID: string
+    timestamp: number
+    call_id: string
+    timed_out: boolean
+  }
+}
+
+export type EventAgentMessageSent = {
+  id: string
+  type: "agent.message.sent"
+  properties: {
+    sessionID: string
+    timestamp: number
+    sender_path: string
+    target_session_id: string
+    target_path: string
+    message_length: number
+    trigger_turn: boolean
+  }
+}
+
 export type EventMcpToolsChanged = {
   id: string
   type: "mcp.tools.changed"
@@ -2547,39 +2842,6 @@ export type EventWorktreeFailed = {
   type: "worktree.failed"
   properties: {
     message: string
-  }
-}
-
-export type EventPtyCreated = {
-  id: string
-  type: "pty.created"
-  properties: {
-    info: Pty
-  }
-}
-
-export type EventPtyUpdated = {
-  id: string
-  type: "pty.updated"
-  properties: {
-    info: Pty
-  }
-}
-
-export type EventPtyExited = {
-  id: string
-  type: "pty.exited"
-  properties: {
-    id: string
-    exitCode: number
-  }
-}
-
-export type EventPtyDeleted = {
-  id: string
-  type: "pty.deleted"
-  properties: {
-    id: string
   }
 }
 
@@ -3016,6 +3278,106 @@ export type EventSessionNextCompactionEnded = {
     sessionID: string
     text: string
     include?: string
+  }
+}
+
+export type EventSessionNextAgentSpawnStarted = {
+  id: string
+  type: "session.next.agent.spawn.started"
+  properties: {
+    timestamp: number
+    sessionID: string
+    call_id: string
+    task_name: string
+    child_path: string
+    agent_type?: string
+    prompt: string
+  }
+}
+
+export type EventSessionNextAgentSpawnEnded = {
+  id: string
+  type: "session.next.agent.spawn.ended"
+  properties: {
+    timestamp: number
+    sessionID: string
+    call_id: string
+    task_name: string
+    child_path: string
+    agent_type?: string
+    child_session_id?: string
+    child_nickname?: string
+    status:
+      | "pending_init"
+      | "running"
+      | "interrupted"
+      | "shutdown"
+      | "not_found"
+      | {
+          completed: string
+        }
+      | {
+          errored: string
+        }
+    error?: string
+  }
+}
+
+export type EventSessionNextAgentClosed = {
+  id: string
+  type: "session.next.agent.closed"
+  properties: {
+    timestamp: number
+    sessionID: string
+    agent_path: string
+    previous_status:
+      | "pending_init"
+      | "running"
+      | "interrupted"
+      | "shutdown"
+      | "not_found"
+      | {
+          completed: string
+        }
+      | {
+          errored: string
+        }
+  }
+}
+
+export type EventSessionNextAgentWaitStarted = {
+  id: string
+  type: "session.next.agent.wait.started"
+  properties: {
+    timestamp: number
+    sessionID: string
+    call_id: string
+    timeout_ms: number
+  }
+}
+
+export type EventSessionNextAgentWaitEnded = {
+  id: string
+  type: "session.next.agent.wait.ended"
+  properties: {
+    timestamp: number
+    sessionID: string
+    call_id: string
+    timed_out: boolean
+  }
+}
+
+export type EventSessionNextAgentMessageSent = {
+  id: string
+  type: "session.next.agent.message.sent"
+  properties: {
+    timestamp: number
+    sessionID: string
+    sender_path: string
+    target_session_id: string
+    target_path: string
+    message_length: number
+    trigger_turn: boolean
   }
 }
 
@@ -4587,6 +4949,7 @@ export type PtyCreateData = {
     env?: {
       [key: string]: string
     }
+    origin?: "tui" | "model"
   }
   path?: never
   query?: {
@@ -5634,6 +5997,40 @@ export type SessionSummarizeResponses = {
 }
 
 export type SessionSummarizeResponse = SessionSummarizeResponses[keyof SessionSummarizeResponses]
+
+export type SessionLoopData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/loop"
+}
+
+export type SessionLoopErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionLoopError = SessionLoopErrors[keyof SessionLoopErrors]
+
+export type SessionLoopResponses = {
+  /**
+   * Loop restarted
+   */
+  200: boolean
+}
+
+export type SessionLoopResponse = SessionLoopResponses[keyof SessionLoopResponses]
 
 export type SessionPromptAsyncData = {
   body?: {

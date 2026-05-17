@@ -135,6 +135,8 @@ import type {
   SessionInitErrors,
   SessionInitResponses,
   SessionListResponses,
+  SessionLoopErrors,
+  SessionLoopResponses,
   SessionMessageErrors,
   SessionMessageResponses,
   SessionMessagesErrors,
@@ -2222,6 +2224,7 @@ export class Pty extends HeyApiClient {
       env?: {
         [key: string]: string
       }
+      origin?: "tui" | "model"
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2237,6 +2240,7 @@ export class Pty extends HeyApiClient {
             { in: "body", key: "cwd" },
             { in: "body", key: "title" },
             { in: "body", key: "env" },
+            { in: "body", key: "origin" },
           ],
         },
       ],
@@ -3491,6 +3495,38 @@ export class Session2 extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    })
+  }
+
+  /**
+   * Restart session loop
+   *
+   * Restart the assistant loop on a session without inserting a new user message. Use after `abort` to process queued user messages that were inserted while a previous turn was running.
+   */
+  public loop<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionLoopResponses, SessionLoopErrors, ThrowOnError>({
+      url: "/session/{sessionID}/loop",
+      ...options,
+      ...params,
     })
   }
 

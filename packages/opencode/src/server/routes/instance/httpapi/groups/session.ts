@@ -84,6 +84,7 @@ export const SessionPaths = {
   share: `${root}/:sessionID/share`,
   init: `${root}/:sessionID/init`,
   summarize: `${root}/:sessionID/summarize`,
+  loop: `${root}/:sessionID/loop`,
   prompt: `${root}/:sessionID/message`,
   promptAsync: `${root}/:sessionID/prompt_async`,
   command: `${root}/:sessionID/command`,
@@ -288,6 +289,18 @@ export const SessionApi = HttpApi.make("session")
             identifier: "session.summarize",
             summary: "Summarize session",
             description: "Generate a concise summary of the session using AI compaction to preserve key information.",
+          }),
+        ),
+        HttpApiEndpoint.post("loop", SessionPaths.loop, {
+          params: { sessionID: SessionID },
+          success: described(Schema.Boolean, "Loop restarted"),
+          error: [HttpApiError.BadRequest, HttpApiError.NotFound],
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "session.loop",
+            summary: "Restart session loop",
+            description:
+              "Restart the assistant loop on a session without inserting a new user message. Use after `abort` to process queued user messages that were inserted while a previous turn was running.",
           }),
         ),
         HttpApiEndpoint.post("prompt", SessionPaths.prompt, {

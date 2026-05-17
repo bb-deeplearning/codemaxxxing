@@ -252,6 +252,11 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       return true
     })
 
+    const loop = Effect.fn("SessionHttpApi.loop")(function* (ctx: { params: { sessionID: SessionID } }) {
+      yield* promptSvc.loop({ sessionID: ctx.params.sessionID }).pipe(Effect.forkIn(scope, { startImmediately: true }))
+      return true
+    })
+
     const prompt = Effect.fn("SessionHttpApi.prompt")(function* (ctx: {
       params: { sessionID: SessionID }
       payload: typeof PromptPayload.Type
@@ -376,6 +381,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       .handle("share", share)
       .handle("unshare", unshare)
       .handle("summarize", summarize)
+      .handle("loop", loop)
       .handle("prompt", prompt)
       .handle("promptAsync", promptAsync)
       .handle("command", command)

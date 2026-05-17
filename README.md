@@ -129,6 +129,7 @@ also:
 - cross-agent mailbox messages render distinct from regular user input, prefixed with `[from <author_path>]`
 - per-session subagent status strip in the footer when concurrent siblings are live (4 fields: total, running, completed, errored)
 - subagent navigation works at any depth, not just direct children of root
+- **flush queued messages on demand.** hit Enter while a turn is running, the message lands in the session log with a ` queued ` badge as today. press `<leader> ⏎` (default `ctrl+x` then `return`) to interrupt the current model stream and process the whole queue immediately. partial assistant text and in-flight tool calls are preserved on the abort so the model sees what it was in the middle of doing, then the queued messages, then responds. footer hint reads `esc interrupt · <leader> ⏎ flush N queued` when applicable. configurable via `keybinds.session_flush_queued`. see [flush-queued change notes](./CHANGES/2026-05-18-flush-queued.md).
 - `/wave` slash command for the wave campaign dashboard
 - `/wave-plan`, `/wave-run`, `/wave-pause`, `/wave-stop`, `/wave-next` slash commands for campaign control
 - wave footer pill on home shows active campaign + status when one exists
