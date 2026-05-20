@@ -1,0 +1,109 @@
+Fan out N subagents under a shared pool_id and return once the chosen
+collect strategy is satisfied. spawn_pool is the first-class fan-out
+primitive — it replaces the "spawn N agents in one message and manage them
+by hand" dance with a single declarative call. Returns a structured result
+containing each deliverable, plus a failures array for members that could
+not be spawned.
+
+## Mental model
+
+spawn_pool wraps `spawn_agent` × N + `wait_agent` + bookkeeping in one
+tool. The runtime forks each worker into its own fiber (parallel to you
+and to every sibling), tracks them under one pool_id, and drains your
+mailbox for messages authored by pool members until the collect strategy
+is satisfied (or timeout fires). Treat the pool as a single unit of work
+with N parallel members — not as N separate spawns you supervise.
+
+Members are spawned eagerly under task names `<task_prefix>_0` …
+`<task_prefix>_{count-1}` (default prefix is `pool`). Spawning is
+non-atomic: if the 3rd member trips the depth or thread cap, the pool
+returns with 2 successful + 1 failure entry rather than aborting the
+whole call. Always check the `failures` array.
+
+## Parameters
+
+- `agent_type` — which subagent definition to spawn for every member.
+  Must be a spawnable subagent (mode in {subagent, all} and not hidden).
+- `count` — number of workers. Must be > 0.
+- `message` — common initial task body broadcast to every member when
+  `per_worker_messages` is not provided.
+- `per_worker_messages` — optional per-member overrides. When provided,
+  length MUST equal `count`; index `i` is the message for member `i`.
+- `collect` — `all` | `first` | `any_n` (see Collect semantics below).
+- `collect_n` — required when `collect = "any_n"`. Must satisfy
+  `1 <= collect_n <= count`.
+- `pool_strategy` — supervision policy (see Pool strategy).
+- `on_failure` — per-member failure policy (forwarded to spawn_agent).
+- `task_prefix` — leaf prefix for member task names. Defaults to `pool`.
+- `timeout_ms` — collect deadline in milliseconds. If omitted the call
+  blocks until the strategy is satisfied. Tests should always pass one.
+- `fork_turns` — `all` (default) | `none` | positive integer string.
+  Controls how much parent history each member inherits.
+
+## Collect semantics
+
+- `all` — wait until every successfully spawned member produces a
+  deliverable. Blocks until N members send_message to you OR until
+  `timeout_ms` fires. Use when you need every answer.
+- `first` — race the members. Return on the first deliverable. The
+  runtime closes every other member for you (their work is wasted —
+  use only when you want the fastest answer of N strategies).
+- `any_n` — return when K members have produced deliverables. The
+  remaining `count - K` members stay alive. Use for quorum patterns.
+
+A deliverable is an explicit `send_message` / `followup_task` body
+authored by a pool member. Completion notifications ("Agent <path>
+reached status: …") are filtered out and do NOT count — only explicit
+member→spawner messages do.
+
+## Partial pools
+
+Pool member spawning is non-atomic. If the K-th spawn trips
+`depth_exceeded` / `limit_reached` / `path_exists` / `no_nickname`, the
+pool returns with the K-1 successful members + the failure metadata for
+the rest. The call does NOT abort the whole pool. Inspect `failures` to
+see what happened — each entry has `task_name`, `error_tag`, `reason`.
+
+If EVERY member fails to spawn (0 successful), spawn_pool returns a
+model-recoverable error with tag `spawn_all_failed` so the caller can
+react instead of silently waiting on a vacant pool.
+
+## Permission
+
+spawn_pool consults permission key `task` — the same group as
+spawn_agent, send_message, followup_task, wait_agent, list_agents,
+close_agent. A saved rule like `permission.task: { explore: allow }`
+transparently allows `spawn_pool(agent_type: "explore", ...)` without
+re-prompting. A wildcard `permission.task: { "*": "deny" }` strips
+spawn_pool from your tool list entirely.
+
+## Pool strategy
+
+`pool_strategy` controls how a failure in one member affects siblings
+(Erlang OTP-style supervision):
+
+- `one_for_one` (default) — failures are isolated; surviving siblings
+  keep running.
+- `one_for_all` — any single member failure tears down the entire pool.
+- `rest_for_one` — any single failure tears down only members spawned
+  AFTER the failing one.
+
+The setting is forwarded to each member's spawn_agent call; the active
+policy lives on the per-member slot.
+
+## Cost
+
+Every pool member is a separate LLM session — total cost scales linearly
+with `count`. Members count against the 64-process concurrent thread
+cap; a spawn_pool with `count = 50` will likely fail several members on
+cap (watch the failures array). Pool size > 10 is almost always wrong —
+prefer fan-out by topic, not by number.
+
+## When NOT to use
+
+- One worker — just call spawn_agent directly.
+- Sequential work — chain followup_task on a single agent instead.
+- Long-running observers — spawn one agent that subscribes to bus
+  events rather than racing N pollers.
+- When you have nothing to do with the result — fan-out without a
+  collect target wastes everyone's tokens.
