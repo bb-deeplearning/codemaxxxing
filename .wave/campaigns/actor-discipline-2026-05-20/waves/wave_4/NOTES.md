@@ -3,6 +3,7 @@
 ## Attempt 2 — success (WAVE COMPLETE)
 
 **Session:** ses_1bb04b0daffeSUR0CnF29k7wGI
+**Settle commit:** 8c16cbc7d
 **Date:** 2026-05-20
 **Decision on entry:** continue
 **Orchestration:** planner-skipped (PLAN.json + CONTRACT.json already authored by attempt 1) + sequential per-task gen+eval for T3 then T4. 0 pivots.
