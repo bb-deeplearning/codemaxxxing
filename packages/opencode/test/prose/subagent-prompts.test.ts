@@ -1,75 +1,106 @@
-import { describe, test, expect } from "bun:test"
-import path from "node:path"
+// Wave 1 — prose grep harness for subagent prompt surfaces.
+//
+// Asserts the post-Wave-1 invariants from PROMPT_SURFACES.md without
+// shelling out: read each prompt .txt as a string and use
+// expect(...).toContain / .not.toContain. Plain bun:test (no Effect)
+// because this is pure text I/O.
+//
+// Targets:
+// - general/anthropic.txt, general/gemini.txt, explore.txt: subagent
+//   base prompts. Must NOT carry "text-is-deliverable" framing
+//   (forbidden phrases), MUST carry a pointer to the delivery contract
+//   capability hint (required phrase).
+// - multi-agent-subagent.txt: subagent capability hint. Delivery
+//   contract section must literally name the tool calls — send_message
+//   and close_agent — so the model has unambiguous instructions.
+// - multi-agent-root.txt: root capability hint. Must carry D7 sibling
+//   coordination doctrine ("unicast") and D8 limits-of-actor-model
+//   doctrine ("no broadcast", "sibling introspection", "idle").
+//
+// Phrase wording is inlined here (not loaded from PROMPT_SURFACES.md)
+// so the test is durable across plan edits: only deliberate prompt
+// changes can break it, and any change to the canonical phrase list
+// requires updating BOTH this file and PROMPT_SURFACES.md.
 
-const PROMPT_DIR = "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt"
+import { describe, expect, test } from "bun:test"
 
-const BASE_PROMPTS = [
-  path.join(PROMPT_DIR, "general/anthropic.txt"),
-  path.join(PROMPT_DIR, "general/gemini.txt"),
-  path.join(PROMPT_DIR, "explore.txt"),
-]
+const anthropicPath = new URL("../../src/agent/prompt/general/anthropic.txt", import.meta.url).pathname
+const geminiPath = new URL("../../src/agent/prompt/general/gemini.txt", import.meta.url).pathname
+const explorePath = new URL("../../src/agent/prompt/explore.txt", import.meta.url).pathname
+const subagentHintPath = new URL("../../src/agent/prompt/multi-agent-subagent.txt", import.meta.url).pathname
+const rootHintPath = new URL("../../src/agent/prompt/multi-agent-root.txt", import.meta.url).pathname
 
-const SUBAGENT_HINT = path.join(PROMPT_DIR, "multi-agent-subagent.txt")
-const ROOT_HINT = path.join(PROMPT_DIR, "multi-agent-root.txt")
-
-const FORBIDDEN = [
+// Forbidden phrases per PROMPT_SURFACES.md § "Forbidden phrases".
+// These imply text-is-deliverable framing that contradicts the
+// delivery contract; the contract is authoritative, base prompts
+// must defer.
+const FORBIDDEN_PHRASES = [
   "your text response IS the deliverable",
   "your response goes to the parent agent",
   "the parent agent reads your output",
-]
+] as const
 
-const REQUIRED = "See the delivery contract in your multi-agent coordination guidance."
+// Required phrase per PROMPT_SURFACES.md § "Required phrases".
+// Every subagent base prompt acknowledges the contract's existence
+// so the model does not ignore the later capability-hint layer.
+const REQUIRED_PHRASE = "See the delivery contract in your multi-agent coordination guidance."
 
-// Literal markers asserted below (kept here as single-quoted source literals for
-// orchestrator rubric grep verification of 'send_message', 'close_agent',
-// 'unicast', 'no broadcast', 'sibling introspection', 'idle').
-const _LITERAL_MARKERS = [
-  'send_message',
-  'close_agent',
-  'unicast',
-  'no broadcast',
-  'sibling introspection',
-  'idle',
-]
+const BASE_PROMPTS = [
+  { name: "general/anthropic.txt", path: anthropicPath },
+  { name: "general/gemini.txt", path: geminiPath },
+  { name: "explore.txt", path: explorePath },
+] as const
 
-describe("base prompts forbid text-is-deliverable framing", () => {
-  for (const file of BASE_PROMPTS) {
-    for (const phrase of FORBIDDEN) {
-      test(`${path.basename(file)} does not contain forbidden: ${phrase}`, async () => {
-        const content = await Bun.file(file).text()
-        expect(content.toLowerCase()).not.toContain(phrase.toLowerCase())
+describe("Wave 1 — subagent base prompts defer to delivery contract", () => {
+  for (const prompt of BASE_PROMPTS) {
+    for (const phrase of FORBIDDEN_PHRASES) {
+      test(`${prompt.name} does NOT contain forbidden phrase: ${phrase}`, async () => {
+        const text = await Bun.file(prompt.path).text()
+        expect(text).not.toContain(phrase)
       })
     }
-  }
-})
 
-describe("base prompts point to delivery contract", () => {
-  for (const file of BASE_PROMPTS) {
-    test(`${path.basename(file)} contains required pointer phrase`, async () => {
-      const content = await Bun.file(file).text()
-      expect(content).toContain(REQUIRED)
+    test(`${prompt.name} contains required delivery-contract pointer`, async () => {
+      const text = await Bun.file(prompt.path).text()
+      expect(text).toContain(REQUIRED_PHRASE)
     })
   }
 })
 
-describe("multi-agent-subagent.txt has literal delivery-contract sequence", () => {
-  test("contains 'send_message' and 'close_agent' literals", async () => {
-    const content = await Bun.file(SUBAGENT_HINT).text()
-    expect(content).toContain('send_message')
-    expect(content).toContain('close_agent')
+describe("Wave 1 — multi-agent-subagent.txt names the delivery contract tools", () => {
+  test("multi-agent-subagent.txt contains literal 'send_message'", async () => {
+    const text = await Bun.file(subagentHintPath).text()
+    expect(text).toContain("send_message")
+  })
+
+  test("multi-agent-subagent.txt contains literal 'close_agent'", async () => {
+    const text = await Bun.file(subagentHintPath).text()
+    expect(text).toContain("close_agent")
   })
 })
 
-describe("multi-agent-root.txt has D7 sibling-coordination + D8 limits doctrine", () => {
-  test("contains 'unicast' and 'no broadcast' (D7)", async () => {
-    const content = await Bun.file(ROOT_HINT).text()
-    expect(content).toContain('unicast')
-    expect(content).toContain('no broadcast')
+describe("Wave 1 — multi-agent-root.txt carries D7 sibling coordination + D8 limits doctrine", () => {
+  // D7: sibling coordination — unicast doctrine. The send primitives
+  // address one target each; reaching N peers requires N calls.
+  test("multi-agent-root.txt contains D7 doctrine: 'unicast'", async () => {
+    const text = await Bun.file(rootHintPath).text()
+    expect(text).toContain("unicast")
   })
 
-  test("contains 'sibling introspection' and 'idle' (D8)", async () => {
-    const content = await Bun.file(ROOT_HINT).text()
-    expect(content).toContain('sibling introspection')
-    expect(content).toContain('idle')
+  // D8: limits of actor model — explicit non-features. Each substring
+  // asserts one of the four "the runtime does NOT do X" guarantees.
+  test("multi-agent-root.txt contains D8 limit: 'no broadcast'", async () => {
+    const text = await Bun.file(rootHintPath).text()
+    expect(text).toContain("no broadcast")
+  })
+
+  test("multi-agent-root.txt contains D8 limit: 'sibling introspection'", async () => {
+    const text = await Bun.file(rootHintPath).text()
+    expect(text).toContain("sibling introspection")
+  })
+
+  test("multi-agent-root.txt contains D8 limit: 'idle'", async () => {
+    const text = await Bun.file(rootHintPath).text()
+    expect(text).toContain("idle")
   })
 })

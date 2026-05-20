@@ -1,1 +1,596 @@
-[]
+[
+  {
+    "task_id": "T1",
+    "signed": true,
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "File contains a 'Delivery contract' (or '## Delivery contract') section heading.",
+        "verify": "grep -E -q '^## Delivery contract' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "weight": 0.12,
+        "status": "passed",
+        "evidence": "verify recipe exited 0 against commit 17f7b1513"
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "Delivery-contract section literally contains both 'send_message' AND 'close_agent' substrings.",
+        "verify": "grep -q -F 'send_message' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -q -F 'close_agent' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "weight": 0.1,
+        "status": "passed",
+        "evidence": "verify recipe exited 0 against commit 17f7b1513"
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "Delivery-contract section literally states a SEPARATE next step for close_agent (substring 'separate next step', case-insensitive).",
+        "verify": "grep -i -q -F 'separate next step' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "weight": 0.08,
+        "status": "passed",
+        "evidence": "verify recipe exited 0 against commit 17f7b1513"
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "Delivery-contract section mentions the canonical-path reminder (substring 'canonical path' appears).",
+        "verify": "grep -i -q -F 'canonical path' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "weight": 0.08,
+        "status": "passed",
+        "evidence": "verify recipe exited 0 against commit 17f7b1513"
+      },
+      {
+        "id": "C5",
+        "category": "correctness",
+        "assertion": "D7-mirror unicast sentence present: file contains substring 'unicast' AND substring 'no broadcast' (or 'not a broadcast' / 'no broadcast primitive').",
+        "verify": "grep -i -q -F 'unicast' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -i -E -q 'no broadcast|not a broadcast|no.*broadcast primitive' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "weight": 0.08,
+        "status": "passed",
+        "evidence": "verify recipe exited 0 against commit 17f7b1513"
+      },
+      {
+        "id": "C6",
+        "category": "correctness",
+        "assertion": "Existing required sections preserved: '## Your context', '## You can spawn too', '## Cross-agent messaging', '## Closing yourself' all present as headings.",
+        "verify": "grep -q -E '^## Your context' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -q -E '^## You can spawn too' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -q -E '^## Cross-agent messaging' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -q -E '^## Closing yourself' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "weight": 0.12,
+        "status": "passed",
+        "evidence": "verify recipe exited 0 against commit 17f7b1513"
+      },
+      {
+        "id": "C7",
+        "category": "correctness",
+        "assertion": "'Final answer' section header REMOVED (since it is replaced by 'Delivery contract').",
+        "verify": "! grep -q -E '^## Final answer' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "verify recipe exited 0 against commit 17f7b1513"
+      },
+      {
+        "id": "C8",
+        "category": "correctness",
+        "assertion": "Forbidden unqualified phrases per PROMPT_SURFACES.md ABSENT from this file: 'your text response IS the deliverable' AND no occurrence of 'your response goes to the parent agent' AND no occurrence of 'the parent agent reads your output'.",
+        "verify": "! grep -q -F 'your text response IS the deliverable' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && ! grep -q -F 'your response goes to the parent agent' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && ! grep -q -F 'the parent agent reads your output' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "weight": 0.08,
+        "status": "passed",
+        "evidence": "verify recipe exited 0 against commit 17f7b1513"
+      },
+      {
+        "id": "C9",
+        "category": "convention",
+        "assertion": "File length between 30 and 100 lines.",
+        "verify": "lines=$(wc -l < /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt); test \"$lines\" -ge 30 && test \"$lines\" -le 100",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "verify recipe exited 0 against commit 17f7b1513"
+      },
+      {
+        "id": "C10",
+        "category": "convention",
+        "assertion": "Mutual-exclusion: file does NOT add a deep D7 'Sibling coordination' section heading or a 'Limits' section heading (ownership belongs to multi-agent-root.txt T2). One inline mirror sentence only.",
+        "verify": "! grep -q -E '^## Sibling coordination' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && ! grep -q -E '^## Limits' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "verify recipe exited 0 against commit 17f7b1513"
+      },
+      {
+        "id": "C11",
+        "category": "correctness",
+        "assertion": "Delivery-contract section explicitly names the spawner as the send_message target (literal substring matching 'target: <?spawner').",
+        "verify": "grep -E -q 'target:[[:space:]]*<?spawner' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "weight": 0.08,
+        "status": "passed",
+        "evidence": "verify recipe exited 0 against commit 17f7b1513"
+      },
+      {
+        "id": "C12",
+        "category": "correctness",
+        "assertion": "Delivery-contract section mentions 'omit target' for self-close semantics (close_agent(self) by omitting target — D3-aligned).",
+        "verify": "grep -i -q -F 'omit target' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "weight": 0.08,
+        "status": "passed",
+        "evidence": "verify recipe exited 0 against commit 17f7b1513"
+      }
+    ]
+  },
+  {
+    "task_id": "T2",
+    "signed": true,
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "File contains a '## Sibling coordination' section heading.",
+        "verify": "grep -E -q '^## Sibling coordination$' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+        "weight": 0.08,
+        "status": "passed",
+        "evidence": "verify recipe exit 0 against sha 168b47c57"
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "Sibling coordination section states unicast doctrine: contains 'unicast', 'no broadcast', and 'only the addressed target' (or 'only the addressed recipient').",
+        "verify": "grep -q -F 'unicast' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt && grep -q -F 'no broadcast' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt && grep -E -q 'only the addressed (target|recipient)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+        "weight": 0.08,
+        "status": "passed",
+        "evidence": "verify recipe exit 0 against sha 168b47c57"
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "Unicast doctrine explicitly addresses per-target sending for N peers (mentions 'per-target' or 'one send per').",
+        "verify": "grep -E -q 'per-target|one send per|explicit per-target send' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "verify recipe exit 0 against sha 168b47c57"
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "Sibling coordination section labels three patterns: CC, Coordinator, followup_task chain.",
+        "verify": "grep -q -F 'CC' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt && grep -q -F 'Coordinator' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt && grep -q -F 'followup_task chain' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+        "weight": 0.08,
+        "status": "passed",
+        "evidence": "verify recipe exit 0 against sha 168b47c57"
+      },
+      {
+        "id": "C5",
+        "category": "correctness",
+        "assertion": "Coordinator pattern description states the coordinator fans out, drains, integrates, and sends ONE consolidated message back.",
+        "verify": "grep -E -q 'one consolidated|ONE consolidated|single consolidated' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+        "weight": 0.05,
+        "status": "passed",
+        "evidence": "verify recipe exit 0 against sha 168b47c57"
+      },
+      {
+        "id": "C6",
+        "category": "correctness",
+        "assertion": "Anti-pattern about wait_agent on misrouted message present with proximity: 'wait_agent' line co-located with 'different sibling'/'routed elsewhere' AND 'never arrive', AND a 'do not'/'don't' negation clause.",
+        "verify": "grep -B1 -A2 -F 'wait_agent' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt | grep -E -q '(different sibling|routed to a different|routed elsewhere)' && grep -B1 -A2 -F 'wait_agent' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt | grep -q -F 'never arrive' && grep -E -q '(do NOT|do not|don'\"'\"'t) (wait_agent|wait for)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+        "weight": 0.07,
+        "status": "passed",
+        "evidence": "verify recipe exit 0 against sha 168b47c57"
+      },
+      {
+        "id": "C7",
+        "category": "correctness",
+        "assertion": "File contains a '## Limits' section heading.",
+        "verify": "grep -E -q '^## Limits$' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+        "weight": 0.07,
+        "status": "passed",
+        "evidence": "verify recipe exit 0 against sha 168b47c57"
+      },
+      {
+        "id": "C8",
+        "category": "correctness",
+        "assertion": "Limits section enumerates all four limits: no broadcast primitive, no sibling introspection, no deadlock detection, idle ≠ alive.",
+        "verify": "grep -q -F 'no broadcast primitive' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt && grep -q -F 'no sibling introspection' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt && grep -q -F 'no deadlock detection' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt && grep -q -F 'idle ≠ alive' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+        "weight": 0.09,
+        "status": "passed",
+        "evidence": "verify recipe exit 0 against sha 168b47c57"
+      },
+      {
+        "id": "C9",
+        "category": "correctness",
+        "assertion": "The 'no sibling introspection' limit explicitly mentions cannot read peer's mailbox or in-flight tool calls.",
+        "verify": "grep -q -F \"peer's mailbox\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt && grep -q -F 'in-flight tool calls' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+        "weight": 0.05,
+        "status": "passed",
+        "evidence": "verify recipe exit 0 against sha 168b47c57"
+      },
+      {
+        "id": "C10",
+        "category": "correctness",
+        "assertion": "The 'idle ≠ alive' bullet tells reader to close_agent done agents: within 3 lines of 'idle ≠ alive', both 'close_agent' and 'done' appear.",
+        "verify": "grep -A3 -F 'idle ≠ alive' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt | grep -q -F 'close_agent' && grep -A3 -F 'idle ≠ alive' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt | grep -E -q '(done|if you are done|when you are done)'",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "verify recipe exit 0 against sha 168b47c57"
+      },
+      {
+        "id": "C11",
+        "category": "convention",
+        "assertion": "All eight existing section headings preserved verbatim: Mental model, Decide BEFORE spawning, When to delegate, When NOT to delegate, Scoping a delegated task, After you delegate, Subagents, Cost.",
+        "verify": "grep -c -E '^## (Mental model|Decide BEFORE spawning|When to delegate|When NOT to delegate|Scoping a delegated task|After you delegate|Subagents|Cost)$' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt | xargs -I{} test {} -eq 8",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "verify recipe exit 0 against sha 168b47c57"
+      },
+      {
+        "id": "C12",
+        "category": "convention",
+        "assertion": "File length within bounds [80, 180] lines.",
+        "verify": "lines=$(wc -l < /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt); test \"$lines\" -ge 80 && test \"$lines\" -le 180",
+        "weight": 0.01,
+        "status": "passed",
+        "evidence": "verify recipe exit 0 against sha 168b47c57"
+      },
+      {
+        "id": "C13",
+        "category": "correctness",
+        "assertion": "Section ordering: '## Sibling coordination' appears before '## Limits' in the file (D7 precedes D8).",
+        "verify": "test $(grep -n -F '## Sibling coordination' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt | head -1 | cut -d: -f1) -lt $(grep -n -F '## Limits' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt | head -1 | cut -d: -f1)",
+        "weight": 0.04,
+        "status": "passed",
+        "evidence": "verify recipe exit 0 against sha 168b47c57"
+      }
+    ]
+  },
+  {
+    "task_id": "T3",
+    "signed": true,
+    "commit_sha": "7f4546ebc",
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "general/anthropic.txt does NOT contain forbidden phrase 'your text response IS the deliverable'.",
+        "verify": "! grep -q -F 'your text response IS the deliverable' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "exit=0 — phrase absent"
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "general/anthropic.txt does NOT contain forbidden phrase 'your response goes to the parent agent'.",
+        "verify": "! grep -q -F 'your response goes to the parent agent' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "exit=0 — phrase absent; line 48 rewritten to 'See the delivery contract in your multi-agent coordination guidance. ...'"
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "general/anthropic.txt does NOT contain forbidden phrase 'the parent agent reads your output'.",
+        "verify": "! grep -q -F 'the parent agent reads your output' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "exit=0 — phrase absent; line 1 'The parent agent — not the user — reads your output' removed"
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "general/anthropic.txt CONTAINS required phrase 'See the delivery contract in your multi-agent coordination guidance.' verbatim.",
+        "verify": "grep -q -F 'See the delivery contract in your multi-agent coordination guidance.' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt",
+        "weight": 0.08,
+        "status": "passed",
+        "evidence": "exit=0 — phrase present in Response format section heading line"
+      },
+      {
+        "id": "C5",
+        "category": "correctness",
+        "assertion": "general/anthropic.txt line 1 uses neutral framing containing 'report results back per the delivery contract'.",
+        "verify": "head -n 1 /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt | grep -q -F 'report results back per the delivery contract'",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "exit=0 — line 1 contains target substring"
+      },
+      {
+        "id": "C6",
+        "category": "convention",
+        "assertion": "general/anthropic.txt preserves '# Caveman output rules' section header.",
+        "verify": "grep -q -F '# Caveman output rules' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt",
+        "weight": 0.04,
+        "status": "passed",
+        "evidence": "exit=0 — Caveman section preserved verbatim (lines 57-106 unchanged per diff)"
+      },
+      {
+        "id": "C7",
+        "category": "convention",
+        "assertion": "general/anthropic.txt preserves '# Code references' section header.",
+        "verify": "grep -q -E '^# Code references' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt",
+        "weight": 0.03,
+        "status": "passed",
+        "evidence": "exit=0 — Code references section preserved (lowercase r)"
+      },
+      {
+        "id": "C7b",
+        "category": "convention",
+        "assertion": "general/gemini.txt preserves '# Code References' section header (uppercase R per baseline).",
+        "verify": "grep -q -E '^# Code References' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt",
+        "weight": 0.03,
+        "status": "passed",
+        "evidence": "exit=0 — Code References section preserved (uppercase R)"
+      },
+      {
+        "id": "C8",
+        "category": "correctness",
+        "assertion": "general/gemini.txt does NOT contain forbidden phrase 'your text response IS the deliverable'.",
+        "verify": "! grep -q -F 'your text response IS the deliverable' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "exit=0 — phrase absent"
+      },
+      {
+        "id": "C9",
+        "category": "correctness",
+        "assertion": "general/gemini.txt does NOT contain forbidden phrase 'your response goes to the parent agent'.",
+        "verify": "! grep -q -F 'your response goes to the parent agent' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "exit=0 — phrase absent; line 110 rewritten"
+      },
+      {
+        "id": "C10",
+        "category": "correctness",
+        "assertion": "general/gemini.txt does NOT contain forbidden phrase 'the parent agent reads your output'.",
+        "verify": "! grep -q -F 'the parent agent reads your output' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "exit=0 — phrase absent; line 1 'The parent agent — not the user — reads your output' removed"
+      },
+      {
+        "id": "C11",
+        "category": "correctness",
+        "assertion": "general/gemini.txt CONTAINS required phrase 'See the delivery contract in your multi-agent coordination guidance.' verbatim (IDENTICAL wording to anthropic.txt).",
+        "verify": "grep -q -F 'See the delivery contract in your multi-agent coordination guidance.' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt",
+        "weight": 0.08,
+        "status": "passed",
+        "evidence": "exit=0 — phrase present in Response Format section heading line"
+      },
+      {
+        "id": "C12",
+        "category": "correctness",
+        "assertion": "general/gemini.txt line 1 contains 'report results back per the delivery contract'.",
+        "verify": "head -n 1 /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt | grep -q -F 'report results back per the delivery contract'",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "exit=0 — line 1 contains target substring"
+      },
+      {
+        "id": "C13",
+        "category": "correctness",
+        "assertion": "Both files have IDENTICAL line-1 neutral-framing sentence (parity: single regex matches both).",
+        "verify": "diff <(head -n 1 /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt | grep -o 'You receive tasks from a parent agent, execute them, and report results back per the delivery contract (see multi-agent coordination guidance in your capability hints).') <(head -n 1 /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt | grep -o 'You receive tasks from a parent agent, execute them, and report results back per the delivery contract (see multi-agent coordination guidance in your capability hints).')",
+        "weight": 0.04,
+        "status": "passed",
+        "evidence": "diff exit=0 — both files contain identical sentence"
+      },
+      {
+        "id": "C14a",
+        "category": "correctness",
+        "assertion": "anthropic.txt Response format section preserves 'No emojis.', 'file_path:line_number', and 'relevant code snippets'.",
+        "verify": "f=/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt; grep -q -F 'No emojis.' $f && grep -q -F 'file_path:line_number' $f && grep -q -F 'relevant code snippets' $f",
+        "weight": 0.02,
+        "status": "passed",
+        "evidence": "exit=0 — all three substrings present"
+      },
+      {
+        "id": "C14b",
+        "category": "correctness",
+        "assertion": "gemini.txt Response Format section preserves 'No emojis.', 'file_path:line_number', and 'relevant code snippets'.",
+        "verify": "f=/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt; grep -q -F 'No emojis.' $f && grep -q -F 'file_path:line_number' $f && grep -q -F 'relevant code snippets' $f",
+        "weight": 0.02,
+        "status": "passed",
+        "evidence": "exit=0 — all three substrings present (verified individually: 'No emojis.' line 117, 'file_path:line_number' line 113, 'relevant code snippets' line 114)"
+      }
+    ]
+  },
+  {
+    "task_id": "T4",
+    "title": "Defer-edit explore.txt (D4): remove text-is-deliverable framing, preserve read-only enforcement",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt"
+    ],
+    "signed_by": [
+      "generator",
+      "evaluator"
+    ],
+    "commit_sha": "7f4546ebc",
+    "criteria": [
+      {
+        "id": "C1",
+        "assertion": "explore.txt does NOT contain forbidden phrase 'your text response IS the deliverable'.",
+        "weight": 0.10,
+        "verify_recipe": "! grep -q -F 'your text response IS the deliverable' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt",
+        "status": "passed",
+        "evidence": "grep returned no match at HEAD 7f4546ebc"
+      },
+      {
+        "id": "C2",
+        "assertion": "explore.txt does NOT contain forbidden phrase 'your response goes to the parent agent'.",
+        "weight": 0.10,
+        "verify_recipe": "! grep -q -F 'your response goes to the parent agent' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt",
+        "status": "passed",
+        "evidence": "grep returned no match at HEAD 7f4546ebc"
+      },
+      {
+        "id": "C3",
+        "assertion": "explore.txt does NOT contain forbidden phrase 'the parent agent reads your output'.",
+        "weight": 0.10,
+        "verify_recipe": "! grep -q -F 'the parent agent reads your output' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt",
+        "status": "passed",
+        "evidence": "grep returned no match at HEAD 7f4546ebc"
+      },
+      {
+        "id": "C4",
+        "assertion": "explore.txt contains the literal required phrase 'See the delivery contract in your multi-agent coordination guidance.' (identical wording to T3 anthropic.txt + gemini.txt).",
+        "weight": 0.15,
+        "verify_recipe": "grep -q -F 'See the delivery contract in your multi-agent coordination guidance.' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt",
+        "status": "passed",
+        "evidence": "match at line 49 in Response Format section lead sentence"
+      },
+      {
+        "id": "C5",
+        "assertion": "explore.txt preserves the CRITICAL: READ-ONLY MODE block verbatim — header + 7 prohibition bullets + 'You do NOT have access...' line all present, AND first bullet is adjacent (within 10 lines) to header.",
+        "weight": 0.20,
+        "verify_recipe": "grep -q -F '=== CRITICAL: READ-ONLY MODE — NO FILE MODIFICATIONS ===' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F -e '- Creating files (no Write, touch, or file creation of any kind)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F -e '- Modifying files (no Edit operations)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F -e '- Deleting files (no rm or deletion)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F -e '- Moving or copying files (no mv or cp)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F -e '- Creating temporary files anywhere, including /tmp' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F -e '- Using redirect operators (>, >>) to write to files' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F -e '- Running ANY command that changes system state' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F 'You do NOT have access to file editing tools. Attempting to use them will fail.' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -A 10 -F '=== CRITICAL: READ-ONLY MODE — NO FILE MODIFICATIONS ===' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt | grep -q -F -e '- Creating files (no Write, touch, or file creation of any kind)'",
+        "status": "passed",
+        "evidence": "READ-ONLY MODE block intact lines 3-14, all 7 bullets verbatim, access-denial line present, first bullet adjacent to header (line 6). Diff for explore.txt at 7f4546ebc shows ZERO changes in this region."
+      },
+      {
+        "id": "C6",
+        "assertion": "explore.txt preserves Caveman output rules block — header + 4 key subsection headers present.",
+        "weight": 0.15,
+        "verify_recipe": "grep -q -F '# Caveman output rules' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F '## What to remove from output' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F '## What to preserve EXACTLY in output (never modify)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F '## How to compress findings' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F '## Output pattern' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt",
+        "status": "passed",
+        "evidence": "Caveman block intact lines 57-105; all 5 headers present; diff at 7f4546ebc shows zero changes in this region."
+      },
+      {
+        "id": "C7",
+        "assertion": "Line 1 uses neutral framing — no 'Your response is consumed by another agent', no 'reports findings to a parent agent, not directly to a user'; must mention 'read-only'.",
+        "weight": 0.10,
+        "verify_recipe": "! head -1 /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt | grep -q -F 'Your response is consumed by another agent' && ! head -1 /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt | grep -q -F 'reports findings to a parent agent, not directly to a user' && head -1 /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt | grep -q -F 'read-only'",
+        "status": "passed",
+        "evidence": "Line 1: 'You are a read-only exploration and research agent for codemaxxxing. You search, read, and analyze codebases, websites, and documentation. You receive tasks from a parent agent, execute them, and report results back per the delivery contract (see multi-agent coordination guidance in your capability hints).' — contains 'read-only', no forbidden phrases."
+      },
+      {
+        "id": "C8",
+        "assertion": "Response Format section lead sentence no longer contains 'Your response is consumed by another agent'; numbered items preserving Absolute paths, Concise snippets, Relevance order, Explicit negatives, No emojis all present.",
+        "weight": 0.10,
+        "verify_recipe": "! grep -q -F 'Your response is consumed by another agent' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F 'Absolute paths' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F 'Concise snippets' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F 'Relevance order' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F 'Explicit negatives' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F 'No emojis' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt",
+        "status": "passed",
+        "evidence": "Lead sentence at line 49 replaced with delivery-contract pointer. Items 1-5 at lines 51-55 preserve Absolute paths, Concise snippets, Relevance order, Explicit negatives, No emojis. Note: old item 5 'Text only' was collapsed into the deferred delivery contract framing — acceptable (no longer needed as base-prompt assertion since contract is authoritative)."
+      }
+    ],
+    "signed": true
+  },
+  {
+    "task_id": "T5",
+    "signed": true,
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "Test file exists at /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts.",
+        "verify": "test -f /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+        "weight": 0.05,
+        "status": "passed"
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "Uses plain Bun test runner — imports from 'bun:test'; reads files via Bun.file().text(); does NOT import effect or testEffect.",
+        "verify": "grep -q -F 'from \"bun:test\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F 'Bun.file(' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && ! grep -q -F 'testEffect' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && ! grep -q -E 'from \"effect\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+        "weight": 0.08,
+        "status": "passed"
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "Test file contains all 3 forbidden phrase literals (so it can assert their absence): 'your text response IS the deliverable', 'your response goes to the parent agent', 'the parent agent reads your output'.",
+        "verify": "grep -q -F 'your text response IS the deliverable' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F 'your response goes to the parent agent' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F 'the parent agent reads your output' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+        "weight": 0.08,
+        "status": "passed"
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "Test file references all 3 base prompts: general/anthropic.txt, general/gemini.txt, explore.txt.",
+        "verify": "grep -q -F 'general/anthropic.txt' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F 'general/gemini.txt' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F 'explore.txt' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+        "weight": 0.06,
+        "status": "passed"
+      },
+      {
+        "id": "C5",
+        "category": "correctness",
+        "assertion": "Test file contains the required-phrase literal 'See the delivery contract in your multi-agent coordination guidance.'",
+        "verify": "grep -q -F 'See the delivery contract in your multi-agent coordination guidance.' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+        "weight": 0.08,
+        "status": "passed"
+      },
+      {
+        "id": "C6",
+        "category": "correctness",
+        "assertion": "Test references multi-agent-subagent.txt and asserts presence of 'send_message' and 'close_agent' literals.",
+        "verify": "grep -q -F 'multi-agent-subagent.txt' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F \"'send_message'\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F \"'close_agent'\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+        "weight": 0.08,
+        "status": "passed"
+      },
+      {
+        "id": "C7",
+        "category": "correctness",
+        "assertion": "Test references multi-agent-root.txt and asserts presence of D7+D8 literals: 'unicast', 'no broadcast', 'sibling introspection', 'idle'.",
+        "verify": "grep -q -F 'multi-agent-root.txt' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F \"'unicast'\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F \"'no broadcast'\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F \"'sibling introspection'\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F \"'idle'\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+        "weight": 0.08,
+        "status": "passed"
+      },
+      {
+        "id": "C8",
+        "category": "correctness",
+        "assertion": "Test does NOT shell out to grep or spawn external processes.",
+        "verify": "! grep -q -E 'Bun\\.(spawn|spawnSync|\\$)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && ! grep -q -F 'import { $ }' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+        "weight": 0.05,
+        "status": "passed"
+      },
+      {
+        "id": "C9",
+        "category": "integration",
+        "assertion": "Test runs green: `cd packages/opencode && bun test ./test/prose/subagent-prompts.test.ts` exits 0 with >= 1 pass and 0 fail.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/prose/subagent-prompts.test.ts 2>&1 | tee /tmp/t5-c9.log && grep -E '[1-9][0-9]* pass' /tmp/t5-c9.log && ! grep -E '[1-9][0-9]* fail' /tmp/t5-c9.log",
+        "weight": 0.30,
+        "status": "passed"
+      },
+      {
+        "id": "C10",
+        "category": "convention",
+        "assertion": "Self-contained — no .wave/campaigns or PROMPT_SURFACES.md references.",
+        "verify": "! grep -q -F '.wave/campaigns' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && ! grep -q -F 'PROMPT_SURFACES.md' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+        "weight": 0.14,
+        "status": "passed"
+      }
+    ]
+  },
+  {
+    "task_id": "T6",
+    "title": "Add INV-D-06 + INV-D-08 to test/integration/multi-agent-invariants.test.ts",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts"
+    ],
+    "status": "green",
+    "commit_sha": "f2cf4c807dc01b464854ff1e21cb9a870842370b",
+    "signed": true,
+    "criteria": [
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "INV-D-06 it.instance block exists with EXACT slug 'INV-D-06-send-message-is-unicast-not-broadcast'.",
+        "weight": 0.05,
+        "status": "passed"
+      },
+      {
+        "id": "C7",
+        "category": "integration",
+        "assertion": "INV-D-06 runs green: >=1 pass, 0 fail.",
+        "weight": 0.15,
+        "status": "passed"
+      },
+      {
+        "id": "C9",
+        "category": "bc_preservation",
+        "assertion": "Full multi-agent-invariants.test.ts: >=1 pass, 0 fail.",
+        "weight": 0.25,
+        "status": "passed"
+      },
+      {
+        "id": "C10",
+        "category": "convention",
+        "assertion": "bun typecheck from packages/opencode passes.",
+        "weight": 0.1,
+        "status": "passed"
+      }
+    ],
+    "weight_sum": 1.00
+  }
+]
