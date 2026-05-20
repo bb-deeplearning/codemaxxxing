@@ -1,0 +1,235 @@
+{
+  "wave_id": 1,
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Rewrite multi-agent-subagent.txt: D1 delivery contract + D7 mirror sentence + D4-style framing",
+      "files": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/PROMPT_SURFACES.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/INTEGRATION_INVARIANTS.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/OVERVIEW.md"
+      ],
+      "writes": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt"
+      ],
+      "depends_on": [],
+      "description": "Replace the 'Final answer' section (current lines 35-37) with a 'Delivery contract' section that literally states the tool-call sequence (send_message(target: spawner, message: <result>), then in a SEPARATE next step close_agent). Bake in a canonical-path reminder pointing at the per-spawn D2 injection. Mirror one sentence on send_message unicast doctrine (D7-mirror). Preserve existing 'Your context', 'You can spawn too', 'Cross-agent messaging', 'Closing yourself' sections."
+    },
+    {
+      "id": "T2",
+      "title": "Extend multi-agent-root.txt: D7 sibling coordination section + D8 limits-of-actor-model section",
+      "files": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/PROMPT_SURFACES.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/INTEGRATION_INVARIANTS.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/OVERVIEW.md"
+      ],
+      "writes": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt"
+      ],
+      "depends_on": [],
+      "description": "Add 'Sibling coordination' section (D7): unicast doctrine ('send_message and followup_task are unicast — only the addressed target receives; there is no broadcast'), three working patterns (CC: address one recipient and CC others by explicit per-target sends; Coordinator: spawn a coordinator subagent that fans out, drains, integrates, sends ONE consolidated message back; followup_task chain: assign next-step to one agent at a time), anti-pattern (do not wait_agent for a message routed to a different sibling — it will never arrive). Add 'Limits' section (D8): no broadcast primitive, no sibling introspection (cannot read a peer's mailbox or in-flight tool calls), no deadlock detection (the runtime will not break a wait cycle for you), idle ≠ alive (an agent at a wait_agent is alive but not making progress; close it if you are done). Preserve all existing sections."
+    },
+    {
+      "id": "T3",
+      "title": "Defer-edit general/anthropic.txt + general/gemini.txt (D4): remove text-is-deliverable framing, point to delivery contract",
+      "files": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/PROMPT_SURFACES.md"
+      ],
+      "writes": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt"
+      ],
+      "depends_on": [],
+      "description": "anthropic.txt: Rewrite line 1 to neutral 'You receive tasks from a parent agent, execute them, and report results back per the delivery contract (see multi-agent coordination guidance in your capability hints).' Rewrite Response format section (lines 46-53) so the lead sentence points to the delivery contract hint instead of implying the text response IS the deliverable; preserve absolute paths rule, snippet inclusion, accuracy framing, no emojis. Preserve Caveman output rules block + Code references block verbatim. Must contain required phrase 'See the delivery contract in your multi-agent coordination guidance.' Must NOT contain forbidden phrases: 'your text response IS the deliverable', 'your response goes to the parent agent' (unqualified), 'the parent agent reads your output' (unqualified). gemini.txt: identical defer-edit applied to its line 1 and 'Response Format' section (lines 108-117). Same forbidden/required-phrase contract."
+    },
+    {
+      "id": "T4",
+      "title": "Defer-edit explore.txt (D4): remove text-is-deliverable framing, preserve read-only enforcement",
+      "files": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/PROMPT_SURFACES.md"
+      ],
+      "writes": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt"
+      ],
+      "depends_on": [],
+      "description": "Rewrite line 1 to neutral framing pointing to the delivery contract via the capability hint. Rewrite Response Format section (lines 47-56) so the lead sentence points to the delivery contract hint instead of 'your response is consumed by another agent'; preserve absolute paths, concise-snippets, relevance order, explicit negatives, no emojis. Preserve CRITICAL READ-ONLY MODE section verbatim. Preserve Caveman output rules block verbatim. Must contain required phrase 'See the delivery contract in your multi-agent coordination guidance.' Must NOT contain forbidden phrases per PROMPT_SURFACES.md."
+    },
+    {
+      "id": "T5",
+      "title": "New test/prose/subagent-prompts.test.ts: forbidden-prose absent + required-phrases present grep harness",
+      "files": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/PROMPT_SURFACES.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/AGENTS.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt"
+      ],
+      "writes": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts"
+      ],
+      "depends_on": ["T1", "T3", "T4"],
+      "description": "Create a new test file that reads each subagent base prompt + capability-hint prompt as text and asserts: (a) forbidden phrases from PROMPT_SURFACES.md § 'Forbidden phrases' do NOT appear in general/anthropic.txt, general/gemini.txt, explore.txt; (b) the required phrase 'See the delivery contract in your multi-agent coordination guidance.' (or an equivalent the planner approves) appears in each of those three base prompts; (c) multi-agent-subagent.txt contains the literal substring 'send_message' AND 'close_agent' in the delivery-contract section; (d) multi-agent-root.txt contains the literal substrings for D7 (e.g. 'unicast', 'no broadcast') and D8 (e.g. 'no sibling introspection', 'idle'). Use Bun's plain test runner (no Effect needed — this is text I/O). Place in test/prose/ to keep it out of the integration harness."
+    },
+    {
+      "id": "T6",
+      "title": "Add INV-D-06 + INV-D-08 to test/integration/multi-agent-invariants.test.ts",
+      "files": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/AGENTS.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/INTEGRATION_INVARIANTS.md"
+      ],
+      "writes": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts"
+      ],
+      "depends_on": [],
+      "description": "Append two new it.instance tests using testEffect / it.instance pattern per test/AGENTS.md. INV-D-06 ('send-message-is-unicast-not-broadcast'): spawn /root/alice and /root/bob from root; root send_message(target: /root/alice, message: 'for alice only'); assert bob's mailbox is empty AND alice's mailbox contains the message. INV-D-08 ('coordinator-fan-out-delivers-single-consolidated-message'): spawn coordinator; coordinator spawns 2 grandchildren in one message (two spawn_agent calls); grandchildren each send_message(coordinator, partial); each self-closes; coordinator drains, integrates, sends ONE consolidated send_message(root, integrated); coordinator self-closes; assert root's mailbox has exactly ONE message from coordinator AND the integrated body contains both grandchildren's content. Test slug strings MUST match exactly: 'send-message-is-unicast-not-broadcast', 'coordinator-fan-out-delivers-single-consolidated-message'."
+    }
+  ],
+  "rubric_seed": {
+    "wave_id": 1,
+    "wave_kind": "prose",
+    "criteria_categories": [
+      {
+        "id": "correctness",
+        "weight": 0.45,
+        "description": "Delivery contract stated literally in multi-agent-subagent.txt; sibling-coord + limits sections present in multi-agent-root.txt; required phrases present in all three base prompts; forbidden phrases absent.",
+        "default_criteria": [
+          {
+            "id_template": "C-corr-required-{path-slug}",
+            "category": "correctness",
+            "assertion_template": "File {path} contains required phrase '{phrase}'.",
+            "verify_template": "grep -q -F '{phrase}' '{path}'",
+            "weight": 0.06
+          },
+          {
+            "id_template": "C-corr-forbidden-{path-slug}-{n}",
+            "category": "correctness",
+            "assertion_template": "File {path} does NOT contain forbidden phrase '{phrase}'.",
+            "verify_template": "! grep -q -F '{phrase}' '{path}'",
+            "weight": 0.04
+          },
+          {
+            "id_template": "C-corr-section-{section-slug}",
+            "category": "correctness",
+            "assertion_template": "File {path} contains a section heading matching '{section_header_regex}'.",
+            "verify_template": "grep -E -q '{section_header_regex}' '{path}'",
+            "weight": 0.05
+          },
+          {
+            "id_function": "C-corr-contract-literal",
+            "category": "correctness",
+            "assertion_template": "multi-agent-subagent.txt contains the literal substrings 'send_message' and 'close_agent' in the delivery-contract region.",
+            "verify_template": "grep -q -F 'send_message' '/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt' && grep -q -F 'close_agent' '/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt'",
+            "weight": 0.05
+          }
+        ]
+      },
+      {
+        "id": "integration",
+        "weight": 0.4,
+        "description": "INV-D-06 + INV-D-08 land green in multi-agent-invariants.test.ts; prose grep harness passes.",
+        "default_criteria": [
+          {
+            "id_template": "C-inv-{slug}",
+            "category": "integration",
+            "assertion_template": "Integration invariant '{slug}' green via test runner.",
+            "verify_template": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t '{slug}'",
+            "weight": 0.15
+          },
+          {
+            "id_template": "C-prose-grep-harness",
+            "category": "integration",
+            "assertion_template": "subagent-prompts.test.ts passes (all forbidden-prose-absent + required-phrase-present assertions green).",
+            "verify_template": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/prose/subagent-prompts.test.ts",
+            "weight": 0.1
+          }
+        ]
+      },
+      {
+        "id": "convention",
+        "weight": 0.1,
+        "description": "Caveman output rules + Code references + read-only enforcement sections preserved verbatim across base prompts.",
+        "default_criteria": [
+          {
+            "id_template": "C-style-caveman-{path-slug}",
+            "category": "convention",
+            "assertion_template": "File {path} preserves the 'Caveman output rules' section header.",
+            "verify_template": "grep -q -F 'Caveman output rules' '{path}'",
+            "weight": 0.03
+          },
+          {
+            "id_template": "C-style-readonly-explore",
+            "category": "convention",
+            "assertion_function": "explore.txt preserves the CRITICAL READ-ONLY MODE block.",
+            "verify_template": "grep -q -F 'CRITICAL: READ-ONLY MODE' '/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt'",
+            "weight": 0.04
+          }
+        ]
+      },
+      {
+        "id": "bc_preservation",
+        "weight": 0.05,
+        "description": "Pre-existing multi-agent-invariants tests (INV-D-01..05, INV-D-07, and Iteration 8 invariants) remain green.",
+        "default_criteria": [
+          {
+            "id_template": "C-bc-existing-invariants",
+            "category": "bc_preservation",
+            "assertion_template": "All pre-existing tests in multi-agent-invariants.test.ts still pass.",
+            "verify_template": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts",
+            "weight": 0.05
+          }
+        ]
+      },
+      {
+        "id": "discipline",
+        "weight": 0.05,
+        "description": "Orchestrator artefacts present: PLAN.json + CONTRACT.json + per-task signed criteria.",
+        "default_criteria": [
+          {
+            "id_template": "C-disc-plan",
+            "category": "discipline",
+            "assertion_template": "waves/wave_1/PLAN.json exists and parses.",
+            "verify_template": "test -f /Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_1/PLAN.json && jq . /Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_1/PLAN.json",
+            "weight": 0.02
+          },
+          {
+            "id_template": "C-disc-contract",
+            "category": "discipline",
+            "assertion_template": "waves/wave_1/CONTRACT.json exists with all task criteria signed.",
+            "verify_template": "jq '.[] | select(.signed != true) | .task_id' /Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_1/CONTRACT.json | wc -l | xargs -I{} test {} -eq 0",
+            "weight": 0.03
+          }
+        ]
+      }
+    ],
+    "guidance": {
+      "few_shot_pass": [
+        "packages/opencode/src/agent/prompt/multi-agent-subagent.txt — 'Delivery contract' section that literally says: 'Deliver result via send_message(target: <spawner-canonical-path>, message: <body>). In a SEPARATE next step, call close_agent (omit target → closes you).'",
+        "packages/opencode/src/agent/prompt/multi-agent-root.txt — 'Sibling coordination' section with three labelled patterns and one anti-pattern; 'Limits' section enumerating no-broadcast / no-sibling-introspection / no-deadlock-detection / idle-not-alive.",
+        "packages/opencode/src/agent/prompt/general/anthropic.txt line 1 — neutral framing pointing to the delivery contract; Response format section's lead sentence points to the capability hint.",
+        "packages/opencode/test/prose/subagent-prompts.test.ts — Bun plain-test that file-greps each prompt file and asserts forbidden absent + required present."
+      ],
+      "few_shot_fail": [
+        "Rewrite that says 'deliver via send_message' in one section but keeps 'your response goes to the parent agent' (unqualified) elsewhere in the same file.",
+        "Defer-edit that drops the Caveman output rules section or the explore.txt CRITICAL READ-ONLY MODE block.",
+        "Adds INV-D-06 test but the test asserts mailbox count without per-root scoping (multi-root-isolation regression).",
+        "Adds D7 sibling-coord prose in multi-agent-subagent.txt instead of multi-agent-root.txt (violates PROMPT_SURFACES.md ownership map)."
+      ],
+      "anti_patterns": [
+        "Wave passes typecheck but no integration test added for INV-D-06 / INV-D-08.",
+        "Prose change matches required-phrases but contradicts the limits-of-actor-model section (e.g. base prompt still says 'spawner reads your output' unconditionally).",
+        "Executor edits the prompt files directly without orchestrating (no per-task generator+evaluator pair).",
+        "Two tasks write the same file (PLAN.json invariant violation).",
+        "Required-phrase wording in base prompts diverges across the three files such that one test pattern can't catch all (use exact same phrase across anthropic/gemini/explore)."
+      ]
+    },
+    "stuck_threshold": 2
+  }
+}
