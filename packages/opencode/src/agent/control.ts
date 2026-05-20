@@ -170,6 +170,71 @@ export const Inbound = {
 
 const newCallID = () => Identifier.create("call", "ascending")
 
+// D5 (actor-discipline-2026-05-20) — extract joined text from a message's
+// parts. Filters out tool-call parts and thinking blocks; joins text parts
+// with newline; trims. Shared by the extractor narrowing and the
+// findMessage predicate so both apply the same "non-empty" rule.
+const extractText = (parts: ReadonlyArray<unknown>): string =>
+  parts
+    .filter(
+      (p): p is { type: "text"; text: string } =>
+        typeof p === "object" &&
+        p !== null &&
+        (p as { type?: unknown }).type === "text" &&
+        typeof (p as { text?: unknown }).text === "string",
+    )
+    .map((p) => p.text)
+    .join("\n")
+    .trim()
+
+// D5 (actor-discipline-2026-05-20) — heuristic for "the child silently
+// exited without delivering a meaningful result". Two cases trip the
+// warning:
+//   - Empty body: extractor walked every assistant message and found no
+//     text. Common when the model emits thinking + tool-call only turns
+//     and never produces text for the spawner.
+//   - Status-line body: short (<200 chars), single-line, contains words
+//     models reach for when wrapping up ("delivered", "complete", "done",
+//     "closing"). Tuned to fire on the diagnostic-session-3 message
+//     ("Report delivered to parent") while sparing legitimate short
+//     deliverables that name files / values.
+const STATUS_LINE_WORDS = /\b(delivered|complete|completed|done|no further|closing|closed)\b/i
+const looksLikeMissingDeliverable = (body: string): boolean => {
+  if (body.length === 0) return true
+  if (body.length >= 200) return false
+  if (body.includes("\n")) return false
+  return STATUS_LINE_WORDS.test(body)
+}
+
+// D5 (actor-discipline-2026-05-20) — render the parent-facing notification
+// body. Three shapes:
+//   - Warning case: structured ⚠️ block leading with the safety net, then
+//     the extracted body (or "<no text emitted>"), then the status header.
+//     The parent sees the warning FIRST so a grep / TUI scan catches the
+//     missing-deliverable case immediately.
+//   - Body case: header + blank line + body, matching the pre-D5 shape so
+//     existing parsers / UIs render the same when the deliverable lands.
+//   - Header-only case: bare status line (no body to inline).
+const WARNING_LINE =
+  "⚠️ Auto-extraction returned a short/likely-status message. Child did NOT call"
+const buildNotificationBody = (
+  header: string,
+  body: string,
+  needsWarning: boolean,
+): string => {
+  if (needsWarning) {
+    return [
+      WARNING_LINE,
+      "send_message/followup_task to deliver. Last assistant text follows:",
+      "",
+      body.length > 0 ? body : "<no text emitted>",
+      "",
+      header,
+    ].join("\n")
+  }
+  return body.length > 0 ? `${header}\n\n${body}` : header
+}
+
 export const spawnErrorTag = (cause: unknown): string => {
   if (cause instanceof AgentDepthExceededError) return "depth_exceeded"
   if (cause instanceof AgentLimitReachedError) return "limit_reached"
@@ -272,6 +337,13 @@ export interface Interface {
   readonly hasPendingTriggerTurn: (id: SessionID) => Effect.Effect<boolean>
   readonly drainMailbox: (id: SessionID) => Effect.Effect<readonly InterAgentCommunication[]>
   readonly cancelChildrenOf: (parentID: SessionID) => Effect.Effect<void>
+  // D9 (actor-discipline-2026-05-20) — has the path ever been registered
+  // under the caller's root? Used by the close_agent tool to split the
+  // failed-resolution error into `already_terminated` (path was once live,
+  // now released) vs `path_invalid` (path was never registered — typo /
+  // wrong root). Per-root scoped via senderID. Returns false when
+  // senderID's slot is unknown OR the path was never registered.
+  readonly wasKnownPath: (senderID: SessionID, path: AgentPath) => Effect.Effect<boolean>
   readonly emitWaitStarted: (
     sessionID: SessionID,
     callID: string,
@@ -312,6 +384,22 @@ interface PerRootData {
   // stranded `wait_agent` whenever a child self-closed (the parent never
   // learned about the close and timed out).
   readonly skipCompletionNotification: Set<SessionID>
+  // D5 (actor-discipline-2026-05-20) — per-child spawner path. Populated at
+  // spawnAgent. Read by sendInterAgentCommunication to detect whether a
+  // child's send is targeting its own spawner — that send marks the child
+  // as having delivered. The completion watcher consults outgoingToSpawner
+  // at terminal-status time to decide whether to prepend the safety-net
+  // warning ("child never delivered via send_message/followup_task").
+  readonly spawnerOf: Map<SessionID, AgentPath>
+  readonly outgoingToSpawner: Set<SessionID>
+  // D9 (actor-discipline-2026-05-20) — set of every path that has ever been
+  // registered under this root, kept across release. The close_agent tool
+  // consults this to distinguish "path was registered then terminated"
+  // (success case → `already_terminated`) from "path was never registered"
+  // (error case → `path_invalid`). Entries persist for the lifetime of the
+  // root slot — re-creating a path between two waves is rare and the
+  // distinction we care about is the model-facing one (was this a typo?).
+  readonly knownPaths: Set<string>
 }
 
 interface InternalState {
@@ -415,6 +503,9 @@ export const layer = Layer.effect(
           slot.mailboxes.clear()
           slot.statuses.clear()
           slot.skipCompletionNotification.clear()
+          slot.spawnerOf.clear()
+          slot.outgoingToSpawner.clear()
+          slot.knownPaths.clear()
           perRoot.delete(deletedID)
           for (const [sid, rid] of sessionToRoot.entries()) {
             if (rid === deletedID) sessionToRoot.delete(sid)
@@ -437,6 +528,9 @@ export const layer = Layer.effect(
               data.mailboxes.clear()
               data.statuses.clear()
               data.skipCompletionNotification.clear()
+              data.spawnerOf.clear()
+              data.outgoingToSpawner.clear()
+              data.knownPaths.clear()
             }
             perRoot.clear()
             sessionToRoot.clear()
@@ -473,6 +567,9 @@ export const layer = Layer.effect(
           statuses: new Map([[id, status]]),
           fibers: new Map(),
           skipCompletionNotification: new Set(),
+          spawnerOf: new Map(),
+          outgoingToSpawner: new Set(),
+          knownPaths: new Set([String(AgentPath.root())]),
         }
         data.perRoot.set(id, slot)
         data.sessionToRoot.set(id, id)
@@ -650,6 +747,20 @@ export const layer = Layer.effect(
 
             slot.mailboxes.set(child.id, mailbox)
             slot.statuses.set(child.id, status)
+            // D5 (actor-discipline-2026-05-20) — record this child's spawner
+            // path so sendInterAgentCommunication can detect "child delivered
+            // to spawner" sends and flip outgoingToSpawner. The completion
+            // watcher reads outgoingToSpawner at terminal-status time to
+            // decide whether to prepend the safety-net warning.
+            slot.spawnerOf.set(child.id, input.parentPath)
+            // D9 (actor-discipline-2026-05-20) — record this path so the
+            // close_agent tool can distinguish "already terminated" (the path
+            // was once registered under this root, then released) from
+            // "path invalid" (typo / wrong root). Entries persist after
+            // release; the registry's path index is the live source of truth
+            // and a re-spawn at the same path is rare enough that we accept
+            // the "already_terminated → re-resolved live" transition.
+            slot.knownPaths.add(String(childPath))
             // Index the child back to its root so future operations
             // (sendInterAgentCommunication, closeAgent, wait_agent) on
             // the child resolve to the right slot.
@@ -706,26 +817,42 @@ export const layer = Layer.effect(
                     : typeof next === "object" && "completed" in next
                       ? "completed"
                       : "errored"
+                  // D5 (actor-discipline-2026-05-20) — extractor narrowing.
+                  // Pre-D5 the predicate skipped any assistant message ending
+                  // in `finish: "tool-calls"`, which silently dropped the
+                  // entire deliverable when the model emitted text AND a
+                  // close_agent (or any tool) call in the same turn. New
+                  // shape: accept any assistant message whose joined text
+                  // parts are non-empty, walking newest-first. Empty matches
+                  // (tool-only / thinking-only turns) are filtered inside the
+                  // predicate so findMessage keeps walking past them until it
+                  // finds a non-empty body or runs out of messages.
                   const finalAssistant = yield* sessions
-                    .findMessage(
-                      child.id,
-                      (m) =>
-                        m.info.role === "assistant" &&
-                        typeof m.info.finish === "string" &&
-                        m.info.finish !== "tool-calls",
-                    )
+                    .findMessage(child.id, (m) => {
+                      if (m.info.role !== "assistant") return false
+                      const text = extractText(m.parts)
+                      return text.length > 0
+                    })
                     .pipe(Effect.orElseSucceed(() => Option.none<never>()))
                   const body = Option.match(finalAssistant, {
                     onNone: () => "",
-                    onSome: (msg) =>
-                      msg.parts
-                        .filter((p) => p.type === "text" && typeof p.text === "string")
-                        .map((p) => (p as { text: string }).text)
-                        .join("\n")
-                        .trim(),
+                    onSome: (msg) => extractText(msg.parts),
                   })
+                  // D5 — safety-net warning. If the child never invoked
+                  // send_message/followup_task with its spawner as recipient
+                  // AND the extracted body is empty OR looks like a terse
+                  // status line (short, single-line, contains cleanup-style
+                  // words), prepend the structured warning so the parent can
+                  // tell "subagent silently exited without delivering" apart
+                  // from "subagent's deliverable IS this body". Heuristic
+                  // tuned to fire on the diagnostic-session-3 message
+                  // ("Report delivered to parent") while sparing legitimate
+                  // short deliverables like
+                  // "Found: /abs/path/file.ts:42 — checks expiry."
+                  const childDelivered = slot.outgoingToSpawner.has(child.id)
+                  const needsWarning = !childDelivered && looksLikeMissingDeliverable(body)
                   const header = `Agent ${String(childPath)} reached status: ${label}`
-                  const content = body.length > 0 ? `${header}\n\n${body}` : header
+                  const content = buildNotificationBody(header, body, needsWarning)
                   // The watcher's send may race with parent deletion. If the
                   // parent root is gone, sendInterAgentCommunication fails
                   // with AgentNotFoundError — absorb it; nothing to wake.
@@ -880,6 +1007,15 @@ export const layer = Layer.effect(
         }
         yield* mailbox.send(comm)
         yield* slot.registry.updateLastTaskMessage(targetID, comm.content)
+        // D5 (actor-discipline-2026-05-20) — safety-net tracking. If the
+        // sender is a registered child AND the recipient is the sender's
+        // spawner path, mark the child as having delivered. The completion
+        // watcher consults this flag at terminal-status time to decide
+        // whether to prepend the missing-deliverable warning.
+        const spawnerPath = slot.spawnerOf.get(senderID)
+        if (spawnerPath !== undefined && (comm.recipient as string) === (spawnerPath as string)) {
+          slot.outgoingToSpawner.add(senderID)
+        }
         // Codex parity: trigger_turn mail revives an idle agent.
         // codex-rs/core/src/session/handlers.rs:310-321 — after enqueueing,
         // if trigger_turn is true, codex calls
@@ -1235,8 +1371,23 @@ export const layer = Layer.effect(
       }
     })
 
-    const emitWaitStarted = Effect.fn("AgentControl.emitWaitStarted")(function* (
-      sessionID: SessionID,
+    // D9 (actor-discipline-2026-05-20) — has `path` ever been registered
+    // under the caller's root? Used by the close_agent tool to disambiguate
+    // a failed resolve into `already_terminated` (path was once live, now
+    // released) vs `path_invalid` (path was never registered). Per-root
+    // scoped via senderID — a path registered under root A is invisible to
+    // a close from root B (mirrors the cross-root-send-rejection invariant).
+    const wasKnownPath = Effect.fn("AgentControl.wasKnownPath")(function* (
+      senderID: SessionID,
+      path: AgentPath,
+    ) {
+      const data = yield* InstanceState.get(state)
+      const slot = slotFor(data, senderID)
+      if (!slot) return false
+      return slot.knownPaths.has(String(path))
+    })
+
+    const emitWaitStarted = Effect.fn("AgentControl.emitWaitStarted")(function* (      sessionID: SessionID,
       callID: string,
       timeoutMs: number,
     ) {
@@ -1288,6 +1439,7 @@ export const layer = Layer.effect(
       hasPendingTriggerTurn,
       drainMailbox,
       cancelChildrenOf,
+      wasKnownPath,
       emitWaitStarted,
       emitWaitEnded,
     })

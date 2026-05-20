@@ -1768,7 +1768,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               sys.environment(model),
               instruction.system().pipe(Effect.orDie),
               MessageV2.toModelMessagesEffect(msgs, model),
-              sys.capabilityHints(agent),
+              sys.capabilityHints(agent, sessionID),
             ])
             // Wave 12 — capability hints append AFTER skills. Pre-wave-12
             // assembly was `[...env, ...instructions, ...(skills ? [skills]

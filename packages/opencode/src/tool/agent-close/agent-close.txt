@@ -8,6 +8,8 @@ Cannot close root (`/root`). Root is the user's session; targeting it is rejecte
 
 Returns `{ previous_status }` — the status the target held immediately before close. If `running` or `pending_init`, you closed an agent that was still working; if `completed`, you closed cleanly; if `shutdown`, the agent was already gone (idempotent).
 
-Targets accept relative paths from your current path (e.g. `worker_a`) or absolute canonical paths (e.g. `/root/explorers/worker_a`).
+Targets accept relative paths from your current path (e.g. `worker_a`) or absolute canonical paths (e.g. `/root/explorers/worker_a`). Omit `target` entirely to close yourself — equivalent to passing your own canonical path.
+
+When you `close_agent` a target that has self-terminated since you last observed it, the call returns metadata `{ error: "already_terminated", previous_status: "shutdown" }`. This is the success case — the target is gone, the slot is free, no further action needed. The `path_invalid` error tag is distinct: it means the path was never registered under your root (typo or wrong reference).
 
 Use after `wait_agent` finishes and you have what you need. Don't close an agent you're about to message again — `followup_task` reuses its warm context for free.

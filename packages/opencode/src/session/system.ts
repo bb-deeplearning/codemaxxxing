@@ -18,8 +18,11 @@ import PROMPT_MULTI_AGENT_SUBAGENT from "@/agent/prompt/multi-agent-subagent.txt
 
 import type { Provider } from "@/provider/provider"
 import type { Agent } from "@/agent/agent"
+import { AgentControl } from "@/agent/control"
+import { AgentToolContext } from "@/tool/agents/current-path"
 import { Permission } from "@/permission"
 import { Skill } from "@/skill"
+import { SessionID } from "@/session/schema"
 
 export function provider(model: Provider.Model) {
   if (model.api.id.includes("gpt-4") || model.api.id.includes("o1") || model.api.id.includes("o3"))
@@ -40,7 +43,17 @@ export function provider(model: Provider.Model) {
 export interface Interface {
   readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
   readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
-  readonly capabilityHints: (agent: Agent.Info) => Effect.Effect<string[]>
+  // capabilityHints (D2 actor-discipline-2026-05-20): sessionID is optional
+  // for backward compatibility with existing callers that don't have one
+  // (assembly-order regression tests, prompt-render benches). When supplied
+  // AND the agent is a subagent AND the subagent fragment is being injected,
+  // we append a per-spawn "Your canonical path" block templated with the
+  // agent's `/root/<task_name>` path so the subagent knows how to address
+  // itself (close_agent(target: "<path>"), send_message author = <path>).
+  readonly capabilityHints: (
+    agent: Agent.Info,
+    sessionID?: SessionID,
+  ) => Effect.Effect<string[]>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SystemPrompt") {}
@@ -61,10 +74,27 @@ function permitted(agent: Agent.Info, key: string): boolean {
   return Permission.evaluate(key, "*", agent.permission).action !== "deny"
 }
 
+// D2 (actor-discipline-2026-05-20) — per-spawn canonical-path block appended
+// to the subagent fragment. Rendered LAST in the capability hints array so
+// the subagent's most recent guidance is the operational manual + their own
+// address. The leading newline keeps the per-spawn block visually separated
+// from the static multi-agent-subagent.txt content when both render.
+const renderCanonicalPathBlock = (path: string): string =>
+  [
+    "",
+    "## Your canonical path",
+    "",
+    `You are operating as \`${path}\`. To close yourself:`,
+    "",
+    `  close_agent(target: "${path}")`,
+    "  # or just omit the target; defaults to self.",
+  ].join("\n")
+
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const skill = yield* Skill.Service
+    const control = yield* AgentControl.Service
 
     return Service.of({
       environment: Effect.fn("SystemPrompt.environment")(function* (model: Provider.Model) {
@@ -98,7 +128,10 @@ export const layer = Layer.effect(
         ].join("\n")
       }),
 
-      capabilityHints: Effect.fn("SystemPrompt.capabilityHints")(function* (agent: Agent.Info) {
+      capabilityHints: Effect.fn("SystemPrompt.capabilityHints")(function* (
+        agent: Agent.Info,
+        sessionID?: SessionID,
+      ) {
         const hints: string[] = []
         if (permitted(agent, "exec_command")) hints.push(PROMPT_PERSISTENT_PROCESSES)
         // Root-agent guidance only fires for agents that can hold the user-
@@ -110,14 +143,34 @@ export const layer = Layer.effect(
         // Subagent guidance fires when the agent can communicate back to the
         // tree (send or wait). An agent with neither has no coordination
         // surface and doesn't need the subagent operational manual.
-        if (agent.mode === "subagent" && (permitted(agent, "send_message") || permitted(agent, "wait_agent")))
+        if (agent.mode === "subagent" && (permitted(agent, "send_message") || permitted(agent, "wait_agent"))) {
           hints.push(PROMPT_MULTI_AGENT_SUBAGENT)
+          // D2 (actor-discipline-2026-05-20) — per-spawn canonical path. The
+          // subagent fragment is the only fragment whose addressee changes
+          // per-spawn; templating happens here at render time rather than
+          // baking placeholders into the .txt file. Skipped when sessionID
+          // is omitted (legacy callers — assembly-order tests, benches) and
+          // when the agent's canonical path resolves to root (defensive —
+          // a subagent should never have root's path, but the
+          // currentAgentPath lazy-register helper returns root for an
+          // unknown session).
+          if (sessionID !== undefined) {
+            const path = yield* AgentToolContext.currentAgentPath(control, sessionID)
+            const pathStr = String(path)
+            if (pathStr !== "/root") {
+              hints.push(renderCanonicalPathBlock(pathStr))
+            }
+          }
+        }
         return hints
       }),
     })
   }),
 )
 
-export const defaultLayer = layer.pipe(Layer.provide(Skill.defaultLayer))
+export const defaultLayer = layer.pipe(
+  Layer.provide(Skill.defaultLayer),
+  Layer.provide(AgentControl.defaultLayer),
+)
 
 export * as SystemPrompt from "./system"

@@ -9,9 +9,13 @@ const accepts = (schema: Schema.Decoder<unknown>, input: unknown): boolean =>
   Result.isSuccess(Schema.decodeUnknownResult(schema)(input))
 
 describe("close_agent parameters", () => {
-  test("includes target as required", () => {
+  // D3 (actor-discipline-2026-05-20) — target is OPTIONAL. Omitting it
+  // resolves to the caller's canonical path (self-close). Pre-D3 the
+  // schema required target; this assertion is the regression-pin for the
+  // optional shape.
+  test("omits target from required list (D3 — self-close form)", () => {
     const json = toJsonSchema(Parameters)
-    expect(json.required).toEqual(["target"])
+    expect(json.required ?? []).not.toContain("target")
   })
 
   test("target field has a non-empty description", () => {
@@ -26,8 +30,12 @@ describe("close_agent parameters", () => {
     expect(accepts(Parameters, { target: "worker" })).toBe(true)
   })
 
-  test("rejects missing target", () => {
-    expect(accepts(Parameters, {})).toBe(false)
+  test("accepts missing target (D3 — self-close)", () => {
+    expect(accepts(Parameters, {})).toBe(true)
+  })
+
+  test("accepts explicit undefined target (D3 — same as omission)", () => {
+    expect(accepts(Parameters, { target: undefined })).toBe(true)
   })
 
   test("rejects non-string target", () => {

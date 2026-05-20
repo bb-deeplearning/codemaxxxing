@@ -1,9 +1,14 @@
 import { describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
+import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import type { Agent } from "../../src/agent/agent"
+import { AgentControl } from "../../src/agent/control"
+import { AgentPath } from "../../src/agent/agent-path"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { Skill } from "../../src/skill"
 import { Permission } from "../../src/permission"
+import { Config } from "../../src/config/config"
+import { Session } from "../../src/session/session"
 import { SystemPrompt } from "../../src/session/system"
 import { testEffect } from "../lib/effect"
 
@@ -36,18 +41,30 @@ const build: Agent.Info = {
 }
 
 const it = testEffect(
-  SystemPrompt.layer.pipe(
-    Layer.provide(
-      Layer.succeed(
-        Skill.Service,
-        Skill.Service.of({
-          get: (name) => Effect.succeed(skills.find((skill) => skill.name === name)),
-          all: () => Effect.succeed(skills),
-          dirs: () => Effect.succeed([]),
-          available: () => Effect.succeed(skills),
-        }),
+  Layer.mergeAll(
+    SystemPrompt.layer.pipe(
+      Layer.provide(
+        Layer.succeed(
+          Skill.Service,
+          Skill.Service.of({
+            get: (name) => Effect.succeed(skills.find((skill) => skill.name === name)),
+            all: () => Effect.succeed(skills),
+            dirs: () => Effect.succeed([]),
+            available: () => Effect.succeed(skills),
+          }),
+        ),
       ),
+      // D2 (actor-discipline-2026-05-20) — SystemPrompt's layer now requires
+      // AgentControl so capabilityHints can resolve the caller's canonical
+      // path for the per-spawn block. Tests that don't exercise the
+      // sessionID arg get the same behaviour as before (no path block).
+      Layer.provide(AgentControl.defaultLayer),
     ),
+    // Expose Session + AgentControl as test-callable services so the D2
+    // it.instance tests can spawn a real subagent to resolve a non-root
+    // canonical path. The layers self-supply Config / CrossSpawnSpawner.
+    Session.defaultLayer,
+    AgentControl.defaultLayer,
   ),
 )
 
@@ -318,6 +335,82 @@ describe("session.system capability hints", () => {
       const first = yield* prompt.capabilityHints(agent)
       const second = yield* prompt.capabilityHints(agent)
       expect(first).toEqual(second)
+    }),
+  )
+
+  // D2 (actor-discipline-2026-05-20) — per-spawn canonical-path block. The
+  // subagent fragment is followed by a templated block naming the agent's
+  // canonical path when (a) sessionID is supplied AND (b) the path is not
+  // root. The block teaches the model how to self-close. Pre-D2 the
+  // subagent had no way to know its own canonical path; this is the fix.
+  it.instance("D2: subagent fragment is followed by a canonical-path block when sessionID resolves", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      // Spawn a real subagent so currentAgentPath resolves to /root/worker.
+      yield* control.registerRunLoop(() => Effect.never)
+      const root = yield* sessions.create({ title: "root" })
+      yield* control.registerSessionRoot(root.id)
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "worker",
+        initial_message: ".",
+      })
+
+      const prompt = yield* SystemPrompt.Service
+      const hints = yield* prompt.capabilityHints(
+        agentWith({
+          mode: "subagent",
+          permission: Permission.fromConfig({ send_message: "allow" }),
+        }),
+        child.thread_id,
+      )
+      // Subagent fragment is in the list AND so is the per-spawn path block.
+      const joined = hints.join("\n\n")
+      expect(joined.includes(SUBAGENT_MARKER)).toBe(true)
+      expect(joined).toContain("/root/worker")
+      expect(joined).toContain("Your canonical path")
+      expect(joined).toContain(`close_agent(target: "/root/worker")`)
+    }),
+  )
+
+  it.instance("D2: omitting sessionID does NOT append the canonical-path block (backward compat)", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const hints = yield* prompt.capabilityHints(
+        agentWith({
+          mode: "subagent",
+          permission: Permission.fromConfig({ send_message: "allow" }),
+        }),
+      )
+      const joined = hints.join("\n\n")
+      expect(joined.includes(SUBAGENT_MARKER)).toBe(true)
+      expect(joined).not.toContain("Your canonical path")
+    }),
+  )
+
+  it.instance("D2: sessionID that resolves to root path does NOT append the block (defensive)", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      // A bare root session — currentAgentPath returns AgentPath.root().
+      const root = yield* sessions.create({ title: "root" })
+      yield* control.registerSessionRoot(root.id)
+
+      const prompt = yield* SystemPrompt.Service
+      // Even with subagent mode and a sessionID, root's path means we skip
+      // the block — root is the user's session, not a subagent address.
+      const hints = yield* prompt.capabilityHints(
+        agentWith({
+          mode: "subagent",
+          permission: Permission.fromConfig({ send_message: "allow" }),
+        }),
+        root.id,
+      )
+      const joined = hints.join("\n\n")
+      expect(joined.includes(SUBAGENT_MARKER)).toBe(true)
+      expect(joined).not.toContain("Your canonical path")
     }),
   )
 })

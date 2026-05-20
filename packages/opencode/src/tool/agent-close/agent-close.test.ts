@@ -317,4 +317,142 @@ describe("close_agent tool", () => {
       }),
     ),
   )
+
+  // D3 (actor-discipline-2026-05-20) — target is optional. Omitting it
+  // resolves to the caller's canonical path. Used by the self-close form
+  // a subagent reaches for when it knows it wants to close itself but
+  // doesn't know its own canonical path (the model's perennial problem).
+  it.live("D3: close_agent with omitted target closes the caller (self-close)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "selfcloser",
+          initial_message: "init",
+        })
+
+        const def = yield* initTool()
+        // Caller IS the child. target omitted → resolves to /root/selfcloser.
+        const { ctx } = makeCtx(child.thread_id)
+        const result = yield* def.execute({}, ctx)
+        const payload = JSON.parse(result.output)
+        expect(payload.previous_status).toBeDefined()
+
+        const list = yield* control.listAgents(AgentPath.root(), root.id)
+        expect(list.find((a) => a.agent_name === "/root/selfcloser")).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("D3: target=undefined behaves the same as omitted target", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "explicit_undef",
+          initial_message: "init",
+        })
+
+        const def = yield* initTool()
+        const { ctx } = makeCtx(child.thread_id)
+        const result = yield* def.execute({ target: undefined }, ctx)
+        const payload = JSON.parse(result.output)
+        expect(payload.previous_status).toBeDefined()
+        const list = yield* control.listAgents(AgentPath.root(), root.id)
+        expect(list.find((a) => a.agent_name === "/root/explicit_undef")).toBeUndefined()
+      }),
+    ),
+  )
+
+  // D9 (actor-discipline-2026-05-20) — failed resolution splits into
+  // `already_terminated` (path was once registered, now released → success
+  // case) vs `path_invalid` (typo / wrong root → real error). The model's
+  // re-close after self-termination must look like a no-op, not an error.
+  it.live("D9: close_agent on a path that was registered then released returns already_terminated", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "doomed",
+          initial_message: "init",
+        })
+        // Self-close directly via control to remove the path from the
+        // registry. The path STAYS in slot.knownPaths (D9 invariant).
+        yield* control.closeAgent(child.thread_id, child.thread_id)
+
+        const def = yield* initTool()
+        const { ctx, record } = makeCtx(root.id)
+        const result = yield* def.execute({ target: "/root/doomed" }, ctx)
+
+        const meta = (result as { metadata: { error?: string; previous_status?: string } }).metadata
+        expect(meta.error).toBe("already_terminated")
+        expect(meta.previous_status).toBe("shutdown")
+        const payload = JSON.parse(result.output)
+        expect(payload.error).toBe("already_terminated")
+        // No permission ask — the path is already gone; no need to gate.
+        expect(record.asks).toHaveLength(0)
+      }),
+    ),
+  )
+
+  it.live("D9: close_agent on a path that was never registered returns path_invalid", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const def = yield* initTool()
+        const { ctx, record } = makeCtx(root.id)
+        const result = yield* def.execute({ target: "/root/nonexistent" }, ctx)
+
+        const meta = (result as { metadata: { error?: string } }).metadata
+        expect(meta.error).toBe("path_invalid")
+        expect(meta.error).not.toBe("already_terminated")
+        // No permission ask either — bad path; nothing to do.
+        expect(record.asks).toHaveLength(0)
+      }),
+    ),
+  )
+
+  it.live("D9: relative target that was-once-known still resolves to already_terminated", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const a = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "a",
+          initial_message: "init",
+        })
+        const b = yield* control.spawnAgent({
+          parentID: a.thread_id,
+          parentPath: yield* AgentPath.from("/root/a"),
+          task_name: "b",
+          initial_message: "init",
+        })
+        yield* control.closeAgent(b.thread_id, b.thread_id)
+
+        const def = yield* initTool()
+        // Caller is "a"; target "b" relative resolves to /root/a/b — that
+        // path is in knownPaths but no longer live.
+        const { ctx } = makeCtx(a.thread_id)
+        const result = yield* def.execute({ target: "b" }, ctx)
+        const meta = (result as { metadata: { error?: string } }).metadata
+        expect(meta.error).toBe("already_terminated")
+      }),
+    ),
+  )
 })

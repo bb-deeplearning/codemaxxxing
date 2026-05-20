@@ -2274,3 +2274,404 @@ describe("AgentControl completion watcher body inclusion", () => {
 // type context. Fiber is imported for type narrowing in some test-only
 // rewrites; this no-op keeps the import live.
 void Fiber
+
+// D5 + D9 (actor-discipline-2026-05-20) — extractor narrowing, safety net,
+// and wasKnownPath. The diagnostic-session-3 bug
+// (ses_1c2e8d84affeZ7t5g5LKveGDTo) shipped a subagent that emitted text
+// AND close_agent in the same turn → message.finish === "tool-calls" →
+// pre-D5 predicate skipped the message → parent received an empty body.
+// These tests pin every branch of the fix at the unit level so regressions
+// surface in `bun test src/agent/control.test.ts` instead of waiting for the
+// integration suite.
+describe("AgentControl D5 extractor narrowing + safety net", () => {
+  // Helper — write a child assistant message with a fixed finish reason and
+  // text. Mirrors the pattern at "completion watcher body inclusion" above
+  // (line ~2052).
+  const writeAssistantMessage = (
+    sessions: Session.Interface,
+    sessionID: SessionID,
+    text: string,
+    finish: string,
+  ) =>
+    Effect.gen(function* () {
+      const userMsg = {
+        id: MessageID.ascending(),
+        sessionID,
+        role: "user" as const,
+        time: { created: Date.now() },
+        agent: "build",
+        model: {
+          providerID: ProviderID.make("anthropic"),
+          modelID: ModelID.make("claude-3-5-sonnet"),
+        },
+      }
+      yield* sessions.updateMessage(userMsg)
+      const assistantMsg = {
+        id: MessageID.ascending(),
+        sessionID,
+        parentID: userMsg.id,
+        role: "assistant" as const,
+        mode: "build",
+        agent: "build",
+        path: { cwd: ".", root: "." },
+        time: { created: Date.now(), completed: Date.now() },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("claude-3-5-sonnet"),
+        providerID: ProviderID.make("anthropic"),
+        finish,
+      }
+      yield* sessions.updateMessage(assistantMsg)
+      yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: assistantMsg.id,
+        sessionID,
+        type: "text",
+        text,
+      })
+      return assistantMsg
+    })
+
+  it.live(
+    "extractor returns text from an assistant message whose finish reason is `tool-calls` (INV-D-01 unit)",
+    () =>
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const control = yield* AgentControl.Service
+
+          // Child runLoop emits a single assistant message with text AND
+          // finish=tool-calls (the diagnostic-session-3 shape), then exits.
+          // Pre-D5 the watcher's predicate skipped this message; post-D5
+          // the predicate accepts any assistant text. The body must land
+          // in the parent's mailbox notification.
+          yield* control.registerRunLoop((sid) =>
+            Effect.gen(function* () {
+              yield* writeAssistantMessage(
+                sessions,
+                sid,
+                "This is the actual deliverable text the parent needs.",
+                "tool-calls",
+              )
+              return "done"
+            }),
+          )
+
+          const root = yield* seedRoot()
+          const child = yield* control.spawnAgent({
+            parentID: root.id,
+            parentPath: ROOT,
+            task_name: "toolcall_child",
+            initial_message: ".",
+          })
+          yield* Effect.sleep(50)
+
+          const drained = yield* control.drainMailbox(root.id)
+          const fromChild = drained.find(
+            (m) => String(m.author) === String(child.metadata.agent_path),
+          )
+          expect(fromChild).toBeDefined()
+          expect(fromChild?.content).toContain(
+            "This is the actual deliverable text the parent needs.",
+          )
+        }),
+      ),
+  )
+
+  it.live("extractor walks back when the latest assistant message has no text (only tool parts)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+
+        // The child writes two assistant messages: first carries the real
+        // deliverable text, second is a follow-up turn with only a
+        // tool-call (no text part). The walk-back logic must skip past the
+        // text-less second message and surface the first message's text.
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            // First assistant message with the actual deliverable.
+            yield* writeAssistantMessage(
+              sessions,
+              sid,
+              "This is the deliverable from the first turn.",
+              "stop",
+            )
+            // Second assistant message: ONLY a tool-call part (no text).
+            const userMsg2 = {
+              id: MessageID.ascending(),
+              sessionID: sid,
+              role: "user" as const,
+              time: { created: Date.now() },
+              agent: "build",
+              model: {
+                providerID: ProviderID.make("anthropic"),
+                modelID: ModelID.make("claude-3-5-sonnet"),
+              },
+            }
+            yield* sessions.updateMessage(userMsg2)
+            const assistantMsg2 = {
+              id: MessageID.ascending(),
+              sessionID: sid,
+              parentID: userMsg2.id,
+              role: "assistant" as const,
+              mode: "build",
+              agent: "build",
+              path: { cwd: ".", root: "." },
+              time: { created: Date.now(), completed: Date.now() },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("claude-3-5-sonnet"),
+              providerID: ProviderID.make("anthropic"),
+              finish: "tool-calls",
+            }
+            yield* sessions.updateMessage(assistantMsg2)
+            // No text part — only a tool-call part (we use a synthetic
+            // part shape here; the extractor's filter is type === "text"
+            // so any non-text part is dropped).
+            yield* sessions.updatePart({
+              id: PartID.ascending(),
+              messageID: assistantMsg2.id,
+              sessionID: sid,
+              type: "tool",
+              tool: "close_agent",
+              callID: "call_xyz",
+              state: {
+                status: "completed",
+                input: {},
+                output: "",
+                metadata: {},
+                title: "close_agent",
+                time: { start: 0, end: 0 },
+              },
+            })
+            return "done"
+          }),
+        )
+
+        const root = yield* seedRoot()
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "walkback_child",
+          initial_message: ".",
+        })
+        yield* Effect.sleep(50)
+
+        const drained = yield* control.drainMailbox(root.id)
+        const fromChild = drained.find(
+          (m) => String(m.author) === String(child.metadata.agent_path),
+        )
+        expect(fromChild).toBeDefined()
+        // Pre-fix: the watcher picked up the text-less second message
+        // → joined body was "" → notification was header-only.
+        // Post-fix: the predicate walks back over the empty match and
+        // finds the first message's text.
+        expect(fromChild?.content).toContain("This is the deliverable from the first turn.")
+      }),
+    ),
+  )
+
+  it.live(
+    "safety-net warning prepended when child never sent send_message/followup_task to spawner (INV-D-03 unit)",
+    () =>
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const control = yield* AgentControl.Service
+
+          // Child emits the diagnostic-session-3 message ("Report delivered
+          // to parent") as its last assistant text. The text alone matches
+          // the status-line heuristic (short, single-line, contains
+          // "delivered"). Because the child never called send_message to
+          // its spawner, the safety-net warning must be prepended.
+          yield* control.registerRunLoop((sid) =>
+            Effect.gen(function* () {
+              yield* writeAssistantMessage(
+                sessions,
+                sid,
+                "Report delivered to parent. Closing now.",
+                "tool-calls",
+              )
+              return "done"
+            }),
+          )
+
+          const root = yield* seedRoot()
+          yield* control.spawnAgent({
+            parentID: root.id,
+            parentPath: ROOT,
+            task_name: "silent_child",
+            initial_message: ".",
+          })
+          yield* Effect.sleep(50)
+
+          const drained = yield* control.drainMailbox(root.id)
+          expect(drained.length).toBeGreaterThanOrEqual(1)
+          const note = drained[0]!
+          expect(note.content.startsWith("⚠️")).toBe(true)
+          expect(note.content).toContain(
+            "Child did NOT call",
+          )
+          expect(note.content).toContain("Report delivered to parent")
+        }),
+      ),
+  )
+
+  it.live("safety-net warning suppressed when child DID call send_message to spawner", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        // Capture root.id before runLoop registration so the closure can
+        // refer to it without going through resolveAgentReference (which
+        // is an Effect<_, AgentReferenceInvalidError, _> that doesn't fit
+        // the runLoop's `Effect<unknown>` signature without an explicit
+        // `orDie`). Spawn happens after the runLoop registers.
+        const root = yield* seedRoot()
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            yield* control
+              .sendInterAgentCommunication(
+                root.id,
+                new InterAgentCommunication({
+                  author: path("/root/talker"),
+                  recipient: ROOT,
+                  content: "explicit delivery",
+                  trigger_turn: false,
+                  sent_at: 1,
+                }),
+                sid,
+              )
+              .pipe(Effect.orDie)
+            yield* writeAssistantMessage(
+              sessions,
+              sid,
+              "Report delivered. Closing now.",
+              "tool-calls",
+            )
+            return "done"
+          }),
+        )
+        yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "talker",
+          initial_message: ".",
+        })
+        yield* Effect.sleep(80)
+
+        const drained = yield* control.drainMailbox(root.id)
+        // Mailbox contains the explicit send AND the completion
+        // notification. The completion notification body must NOT start
+        // with ⚠️ — the explicit send marked outgoingToSpawner.
+        const notif = drained.find(
+          (m) =>
+            (m.content.startsWith("Agent /root/talker reached status:") ||
+              m.content.includes("Agent /root/talker reached status:")) &&
+            !m.content.includes("explicit delivery"),
+        )
+        expect(notif).toBeDefined()
+        expect(notif?.content.startsWith("⚠️")).toBe(false)
+      }),
+    ),
+  )
+
+  it.live("safety-net warning includes <no text emitted> when child produced zero assistant text", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+        // Child dies before writing any assistant message. The extractor
+        // walks back, finds nothing, returns empty body. The child also
+        // never delivered via send_message → safety net fires with the
+        // "<no text emitted>" placeholder.
+        yield* control.registerRunLoop(() => Effect.die("immediate death"))
+
+        const root = yield* seedRoot()
+        yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "noemit",
+          initial_message: ".",
+        })
+        yield* Effect.sleep(50)
+
+        const drained = yield* control.drainMailbox(root.id)
+        const note = drained.find((m) => String(m.author) === "/root/noemit")
+        expect(note).toBeDefined()
+        expect(note?.content.startsWith("⚠️")).toBe(true)
+        expect(note?.content).toContain("<no text emitted>")
+        expect(note?.content).toContain("reached status: errored")
+      }),
+    ),
+  )
+})
+
+describe("AgentControl D9 wasKnownPath", () => {
+  it.live("returns true for a path that was once registered, false for a never-registered path", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "known",
+          initial_message: ".",
+        })
+
+        // The child's path is registered now AND remains in knownPaths.
+        expect(yield* control.wasKnownPath(root.id, child.metadata.agent_path!)).toBe(true)
+        expect(yield* control.wasKnownPath(root.id, path("/root/never"))).toBe(false)
+
+        // After closeAgent, the path is RELEASED from the registry but
+        // STAYS in knownPaths — the close_agent tool needs this exact
+        // distinction to surface already_terminated vs path_invalid.
+        yield* control.closeAgent(child.thread_id, root.id)
+        expect(yield* control.wasKnownPath(root.id, child.metadata.agent_path!)).toBe(true)
+
+        // Root itself is in knownPaths (seeded when ensureRootSlot ran).
+        expect(yield* control.wasKnownPath(root.id, ROOT)).toBe(true)
+      }),
+    ),
+  )
+
+  it.live("returns false when senderID does not resolve to a slot (unknown root)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        yield* seedRoot()
+        const control = yield* AgentControl.Service
+        // Phantom session id → slotFor returns undefined → returns false.
+        const phantom = SessionID.descending()
+        expect(yield* control.wasKnownPath(phantom, path("/root/anything"))).toBe(false)
+      }),
+    ),
+  )
+
+  it.live("is per-root scoped — a path registered under root A is invisible to root B's caller", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const rootA = yield* sessions.create({ title: "A" })
+        const rootB = yield* sessions.create({ title: "B" })
+        yield* control.registerSessionRoot(rootA.id)
+        yield* control.registerSessionRoot(rootB.id)
+
+        yield* control.spawnAgent({
+          parentID: rootA.id,
+          parentPath: ROOT,
+          task_name: "isolated",
+          initial_message: ".",
+        })
+        // From rootA: the path is known.
+        expect(yield* control.wasKnownPath(rootA.id, path("/root/isolated"))).toBe(true)
+        // From rootB: the SAME path is invisible.
+        expect(yield* control.wasKnownPath(rootB.id, path("/root/isolated"))).toBe(false)
+      }),
+    ),
+  )
+})

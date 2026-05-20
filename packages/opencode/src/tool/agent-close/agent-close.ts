@@ -31,10 +31,17 @@ export const ID = "close_agent" as const
 export const PermissionKey = "task" as const
 
 export const Parameters = Schema.Struct({
-  target: Schema.String.annotate({
-    description:
-      "Agent to close. Relative path from your current location (e.g. `worker_a`) or canonical absolute path (e.g. `/root/explorers/worker_a`). Cannot be `/root` — root is your session and is rejected.",
-  }),
+  // D3 (actor-discipline-2026-05-20) — target is OPTIONAL. When omitted (or
+  // explicitly undefined), the tool resolves to the caller's canonical path
+  // (self-close). The model frequently knows it wants to close itself but
+  // doesn't know its own canonical path; making `target` optional removes
+  // the failure mode where the model passes `agent_type` instead.
+  target: Schema.optional(
+    Schema.String.annotate({
+      description:
+        "Agent to close. Relative path from your current location (e.g. `worker_a`) or canonical absolute path (e.g. `/root/explorers/worker_a`). Cannot be `/root` — root is your session and is rejected. Omit to close the caller (self-close).",
+    }),
+  ),
 })
 
 export type Parameters = Schema.Schema.Type<typeof Parameters>
@@ -52,16 +59,48 @@ export const AgentCloseTool = Tool.define(
                 control,
                 ctx.sessionID,
               )
+              // D3 (actor-discipline-2026-05-20) — self-close when target
+              // is omitted. The caller's canonical path is the target.
+              // String() encodes the AgentPath brand back to its "/root/..."
+              // form so resolveAgentReference can match it absolutely.
+              const target = params.target ?? String(currentPath)
 
               const resolved = yield* control
-                .resolveAgentReference(currentPath, params.target, ctx.sessionID)
+                .resolveAgentReference(currentPath, target, ctx.sessionID)
                 .pipe(Effect.result)
               if (Result.isFailure(resolved)) {
+                // D9 (actor-discipline-2026-05-20) — split failed
+                // resolution into `already_terminated` (path was once
+                // registered under this root, now released) vs
+                // `path_invalid` (path was never registered). The
+                // already_terminated branch is the success case from the
+                // model's perspective — a re-close on a self-terminated
+                // child should look like a no-op, not an error.
+                const resolvedPath = yield* AgentPath.resolve(currentPath, target).pipe(
+                  Effect.result,
+                )
+                const wasKnown = Result.isSuccess(resolvedPath)
+                  ? yield* control.wasKnownPath(ctx.sessionID, resolvedPath.success)
+                  : false
+                if (wasKnown) {
+                  return {
+                    title: `close_agent ${target}`,
+                    metadata: {
+                      error: "already_terminated",
+                      target,
+                      previous_status: "shutdown",
+                    },
+                    output: JSON.stringify({
+                      error: "already_terminated",
+                      previous_status: "shutdown",
+                    }),
+                  }
+                }
                 return {
-                  title: `close_agent ${params.target}`,
+                  title: `close_agent ${target}`,
                   metadata: {
-                    error: "invalid_target",
-                    target: params.target,
+                    error: "path_invalid",
+                    target,
                     reason: resolved.failure.reason,
                   },
                   output: resolved.failure.message,
@@ -73,17 +112,17 @@ export const AgentCloseTool = Tool.define(
               // Reject root explicitly. Mirrors codex close_agent.rs:43-51.
               if (meta?.agent_path !== undefined && AgentPath.isRoot(meta.agent_path)) {
                 return {
-                  title: `close_agent ${params.target}`,
-                  metadata: { error: "root_target", target: params.target },
+                  title: `close_agent ${target}`,
+                  metadata: { error: "root_target", target },
                   output: "root is not a spawned agent",
                 }
               }
 
               yield* ctx.ask({
                 permission: PermissionKey,
-                patterns: [params.target],
+                patterns: [target],
                 always: ["*"],
-                metadata: { target: params.target, target_session_id: targetID },
+                metadata: { target, target_session_id: targetID },
               })
 
               // After a successful resolveAgentReference + non-root check, the
@@ -102,9 +141,9 @@ export const AgentCloseTool = Tool.define(
                 .closeAgent(targetID, ctx.sessionID)
                 .pipe(Effect.orDie)
               return {
-                title: `close_agent ${params.target}`,
+                title: `close_agent ${target}`,
                 metadata: {
-                  target: params.target,
+                  target,
                   target_session_id: targetID,
                   previous_status,
                 },

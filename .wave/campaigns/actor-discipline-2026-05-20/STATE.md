@@ -8,17 +8,17 @@ plan_source: inline (conversation thread; ADR-009 phases 1-3 + Anthropic AI Engi
 executor_agent: caveman
 executor_model: ""
 executor_variant: ""
-current_wave: 0
-wave_status: running
+current_wave: 1
+wave_status: pending
 failure_kind: ""
 retry_count: 0
 verify_count: 1
 user_question: ""
-loop_state: paused
-active_session_id: ses_1bb7ee509ffeEvVSvg7ggfBj6m
+loop_state: armed
+active_session_id: ses_1bb7ad697ffepCG10H5HGsjNxr
 active_session_kind: executor
 total_waves: 10
-session_count: 0
+session_count: 1
 created: 2026-05-20
 last_updated: 2026-05-20
 ```
@@ -27,7 +27,7 @@ last_updated: 2026-05-20
 
 | Wave | Status   | Session | Commit | Notes |
 |------|----------|---------|--------|-------|
-| 0 | running  | ses_1bb7ee509ffeEvVSvg7ggfBj6m | — | Bootstrap: extractor narrowing (D5) + canonical-path injection (D2) + safety-net warning (D5) + root-hold for in-flight mail (D6) + close_agent error split (D9) + first-class self-close (D3). Executor-solo (no orchestration). Lands the floor so Wave 1+ can orchestrate safely. |
+| 0 | complete | ses_1bb7ad697ffepCG10H5HGsjNxr | TBD | Bootstrap: D5 extractor narrowing + safety net, D2 canonical-path injection, D3 self-close target optional, D9 already_terminated/path_invalid split. D6 root-hold deferred per WAVE.md §6 explicit allowance. INV-D-01..05, INV-D-07 green. Per-file 100% line coverage on control.ts/agent-close.ts/system.ts. |
 | 1 | pending  | — | — | Prose: rewrite multi-agent-subagent.txt "Final answer" → "Delivery contract" (D1); add sibling-coordination + limits sections in multi-agent-root.txt (D7, D8); defer-edits in general/anthropic.txt, general/gemini.txt, explore.txt (D4); 4.7 literalism adaptation (D4). First orchestrated wave. |
 | 2 | pending  | — | — | Validation: drive INV-D-01..08 to green. Reproduce ses_1c2e8d84affe... extractor failure and ses_1d84f236bffe... sibling deadlock end-to-end as regression tests. |
 | 3 | pending  | — | — | Ask pattern (Phase 2A): correlation_id on send_message/followup_task; wait_for_reply variant on wait_agent; mandatory-timeout doctrine in prose. INV-D-09..11. |

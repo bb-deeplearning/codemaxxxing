@@ -18,17 +18,21 @@ import { AgentControl, AgentNotFoundError } from "@/agent/control"
 import { AgentPath } from "@/agent/agent-path"
 import { InterAgentCommunication } from "@/agent/inter-agent-communication"
 import { Config } from "@/config/config"
+import { Permission } from "@/permission"
 import { Pty } from "@/pty"
 import { Session } from "@/session/session"
 import { MessageV2 } from "@/session/message-v2"
 import type { SessionPrompt } from "@/session/prompt"
+import { SystemPrompt } from "@/session/system"
 import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
+import { AgentCloseTool } from "@/tool/agent-close/agent-close"
 import { AgentWaitTool } from "@/tool/agent-wait/agent-wait"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { ProviderID, ModelID } from "@/provider/schema"
 import { MessageID, PartID, SessionID } from "@/session/schema"
 import type * as Tool from "@/tool/tool"
+import type { Permission as PermissionTypes } from "@/permission"
 import { disposeAllInstances } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
@@ -49,6 +53,7 @@ const it = testEffect(
     CrossSpawnSpawner.defaultLayer,
     Pty.defaultLayer,
     Session.defaultLayer,
+    SystemPrompt.defaultLayer,
     Truncate.defaultLayer,
     ToolRegistry.defaultLayer,
   ),
@@ -277,6 +282,11 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
   )
 
   // TODO(wave_2): unskip when completion watcher lands.
+  // Updated in actor-discipline-2026-05-20 Wave 0: a silently-exiting child
+  // (no assistant text, no send_message) now trips the D5 safety net.
+  // The notification body STARTS with the ⚠️ warning, with the status
+  // header appended at the end. The lifecycle envelope (author/recipient/
+  // trigger_turn) is unchanged.
   it.instance("child-completion-notification-body-shape", () =>
     Effect.gen(function* () {
       const sessions = yield* Session.Service
@@ -299,11 +309,15 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
       expect(result.metadata.timed_out).toBe(false)
 
       // The watcher's notification carries a fixed body shape per
-      // MESSAGE_SHAPES.md § "completion notification body shape (Wave 2)".
+      // MESSAGE_SHAPES.md § "completion notification body shape (Wave 2)"
+      // + the actor-discipline-2026-05-20 safety-net additions.
       const drained = yield* control.drainMailbox(root.id)
       expect(drained).toHaveLength(1)
       const note = drained[0]!
-      expect(note.content).toBe("Agent /root/task_b reached status: completed")
+      // D5 safety net: child silently exited, no send to spawner → ⚠️.
+      expect(note.content.startsWith("⚠️")).toBe(true)
+      expect(note.content).toContain("Agent /root/task_b reached status: completed")
+      expect(note.content).toContain("<no text emitted>")
       expect(String(note.author)).toBe("/root/task_b")
       // The parent here IS root → recipient is "/root".
       expect(String(note.recipient)).toBe("/root")
@@ -830,6 +844,304 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
       // index is properly per-root).
       const childrenOfB = yield* sessions.children(rootB.id)
       expect(childrenOfB).toHaveLength(0)
+    }),
+  )
+
+  // -----------------------------------------------------------------
+  // actor-discipline-2026-05-20 — INV-D-01..05, INV-D-07 (Wave 0).
+  // Each test reproduces the diagnostic-session bug the campaign exists
+  // to prevent. See INTEGRATION_INVARIANTS.md for the slug-by-slug spec.
+  // -----------------------------------------------------------------
+
+  // INV-D-01 — diagnostic-session-3 regression. A subagent emitted text
+  // AND close_agent in the same turn → message.finish === "tool-calls" →
+  // pre-D5 predicate skipped → parent received an empty body. After the
+  // fix, the parent's completion notification contains the text body.
+  it.instance("INV-D-01-extractor-returns-text-from-finish-tool-calls", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      // Run-loop writes one assistant message with text AND finish=tool-calls,
+      // then exits. The completion watcher MUST surface the text in the
+      // parent's notification despite the tool-calls finish.
+      yield* control.registerRunLoop((sid) =>
+        Effect.gen(function* () {
+          const user = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            role: "user" as const,
+            time: { created: Date.now() },
+            agent: "build",
+            model: ref,
+          }
+          yield* sessions.updateMessage(user)
+          const asst = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            parentID: user.id,
+            role: "assistant" as const,
+            mode: "build",
+            agent: "build",
+            path: { cwd: "/tmp", root: "/tmp" },
+            time: { created: Date.now(), completed: Date.now() },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: ref.modelID,
+            providerID: ref.providerID,
+            finish: "tool-calls",
+          }
+          yield* sessions.updateMessage(asst)
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: asst.id,
+            sessionID: sid,
+            type: "text",
+            text: "This is my deliverable.",
+          })
+          return "done"
+        }),
+      )
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "tc",
+        initial_message: "go",
+      })
+      yield* Effect.sleep(60)
+
+      const drained = yield* control.drainMailbox(root.id)
+      const note = drained.find((m) => String(m.author) === "/root/tc")
+      expect(note).toBeDefined()
+      expect(note?.content).toContain("This is my deliverable.")
+    }),
+  )
+
+  // INV-D-02 — explicit send + completion compose. The child explicitly
+  // calls send_message to the parent during its runLoop, then exits. The
+  // parent's mailbox holds both (a) the explicit message, (b) the
+  // completion notification with label "completed" — in order. Validates
+  // that the safety net does NOT fire when the child delivers explicitly.
+  it.instance("INV-D-02-explicit-send-message-delivers-and-completion-notifies", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+
+      // Resolve the child's canonical path outside the runLoop closure so
+      // the InterAgentCommunication construction can't introduce typed
+      // errors into the registered run-loop signature.
+      const childPath = yield* AgentPath.from("/root/explicit")
+      yield* control.registerRunLoop((sid) =>
+        Effect.gen(function* () {
+          // Explicit delivery via send_message to the spawner (root).
+          yield* control
+            .sendInterAgentCommunication(
+              root.id,
+              new InterAgentCommunication({
+                author: childPath,
+                recipient: AgentPath.root(),
+                content: "Explicit deliverable.",
+                trigger_turn: false,
+                sent_at: Date.now(),
+              }),
+              sid,
+            )
+            .pipe(Effect.orDie)
+          // Successful exit triggers the watcher's completion notification.
+          return "done"
+        }),
+      )
+
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "explicit",
+        initial_message: "go",
+      })
+      yield* Effect.sleep(80)
+
+      const drained = yield* control.drainMailbox(root.id)
+      // Two messages from the child: explicit + completion. Order is
+      // explicit first (sent during runLoop), completion second (watcher
+      // fires after runLoop exits).
+      const fromChild = drained.filter((m) => String(m.author) === "/root/explicit")
+      expect(fromChild.length).toBeGreaterThanOrEqual(2)
+      expect(fromChild[0]?.content).toBe("Explicit deliverable.")
+      expect(fromChild[1]?.content).toContain("reached status: completed")
+      // Safety-net warning must NOT fire — child delivered explicitly.
+      expect(fromChild[1]?.content.startsWith("⚠️")).toBe(false)
+    }),
+  )
+
+  // INV-D-03 — safety net fires when child silently exits. Child emits no
+  // text in any assistant turn (dies early), never sends to spawner.
+  // Parent's notification body STARTS with the ⚠️ warning prefix.
+  it.instance("INV-D-03-safety-net-warning-when-deliverable-missing", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      yield* control.registerRunLoop(() => Effect.die("silent failure"))
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "silent",
+        initial_message: "go",
+      })
+      yield* Effect.sleep(60)
+
+      const drained = yield* control.drainMailbox(root.id)
+      const note = drained.find((m) => String(m.author) === "/root/silent")
+      expect(note).toBeDefined()
+      expect(note?.content.startsWith("⚠️")).toBe(true)
+      expect(note?.content).toContain("Child did NOT call")
+      expect(note?.content).toContain("send_message/followup_task")
+      // No text emitted → placeholder appears in the warning body.
+      expect(note?.content).toContain("<no text emitted>")
+    }),
+  )
+
+  // INV-D-04 — close_agent with omitted target resolves to the caller.
+  // Subagent invokes close_agent({}); the tool resolves target to the
+  // subagent's canonical path and closes the subagent.
+  it.instance("INV-D-04-agent-close-without-target-resolves-to-caller", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "abc",
+        initial_message: "go",
+      })
+
+      const info = yield* AgentCloseTool
+      const def = yield* info.init()
+      // Caller IS the child. target omitted → tool resolves to /root/abc.
+      const ctx: Tool.Context = {
+        sessionID: child.thread_id,
+        messageID: MessageID.make(""),
+        callID: "",
+        agent: "build",
+        abort: new AbortController().signal,
+        messages: [],
+        metadata: () => Effect.void,
+        ask: () => Effect.void,
+      }
+      const result = yield* def.execute({}, ctx)
+
+      const payload = JSON.parse(result.output)
+      expect(payload.previous_status).toBeDefined()
+
+      // Child removed from the registry.
+      const list = yield* control.listAgents(AgentPath.root(), root.id)
+      expect(list.find((l) => l.agent_name === "/root/abc")).toBeUndefined()
+    }),
+  )
+
+  // INV-D-05 — subagent prompt contains canonical path. Spawn a child;
+  // assert the system prompt the child sees on its first turn contains
+  // `/root/worker_a` verbatim (D2 templating).
+  it.instance("INV-D-05-subagent-prompt-contains-canonical-path", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const sys = yield* SystemPrompt.Service
+      const agents = yield* Agent.Service
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "worker_a",
+        initial_message: "go",
+      })
+
+      // Render the capability hints the child would see on its first turn.
+      // The "general" agent type is a subagent with send_message permission,
+      // which is the case D2 targets (subagent fragment + path block).
+      const general = yield* agents.get("general")
+      if (!general) throw new Error("general agent not registered")
+      // Override mode to "subagent" if needed (general's built-in default).
+      const subagent: Agent.Info = {
+        ...general,
+        mode: "subagent",
+        permission: Permission.fromConfig({ send_message: "allow", wait_agent: "allow" }),
+      }
+      const hints = yield* sys.capabilityHints(subagent, child.thread_id)
+      const joined = hints.join("\n\n")
+
+      // The canonical path appears in the per-spawn block.
+      expect(joined).toContain("/root/worker_a")
+      expect(joined).toContain("Your canonical path")
+      expect(joined).toContain(`close_agent(target: "/root/worker_a")`)
+    }),
+  )
+
+  // INV-D-07 — close_agent splits failed resolution into
+  // already_terminated (success case) vs path_invalid (error case).
+  // Self-terminate a child via control.closeAgent (callerID = child);
+  // then re-close via the tool → already_terminated. Separately,
+  // close a never-registered path → path_invalid.
+  it.instance("INV-D-07-close-agent-distinguishes-already-terminated-from-path-invalid", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "child_a",
+        initial_message: "go",
+      })
+      // Self-close to release the path from the registry. The path STAYS
+      // in slot.knownPaths.
+      yield* control.closeAgent(child.thread_id, child.thread_id)
+
+      const info = yield* AgentCloseTool
+      const def = yield* info.init()
+      const asks: Array<Omit<PermissionTypes.Request, "id" | "sessionID" | "tool">> = []
+      const ctx: Tool.Context = {
+        sessionID: root.id,
+        messageID: MessageID.make(""),
+        callID: "",
+        agent: "build",
+        abort: new AbortController().signal,
+        messages: [],
+        metadata: () => Effect.void,
+        ask: (input) =>
+          Effect.sync(() => {
+            asks.push(input)
+          }),
+      }
+
+      // Already-terminated case.
+      const r1 = yield* def.execute({ target: "/root/child_a" }, ctx)
+      const meta1 = (r1 as { metadata: { error?: string; previous_status?: string } }).metadata
+      expect(meta1.error).toBe("already_terminated")
+      expect(meta1.previous_status).toBe("shutdown")
+
+      // Path-invalid case — never registered.
+      const r2 = yield* def.execute({ target: "/root/nonexistent" }, ctx)
+      const meta2 = (r2 as { metadata: { error?: string } }).metadata
+      expect(meta2.error).toBe("path_invalid")
+
+      // Neither failure mode prompted permission.
+      expect(asks).toHaveLength(0)
     }),
   )
 })
