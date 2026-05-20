@@ -140,8 +140,8 @@
     ],
     "depends_on": ["T1"],
     "pre_agreed_by_orchestrator": true,
-    "signed": false,
-    "commit_sha": null,
+    "signed": true,
+    "commit_sha": "25f1e2bf8",
     "criteria": [
       {
         "id": "C1",
@@ -149,7 +149,8 @@
         "assertion": "agent.ts imports Behaviors from ./behaviors AND attaches behaviors registry to both general AND explore via options field (e.g. `options: { behaviors: Behaviors.DEFAULT_CONTRACTS['general'] }`).",
         "verify": "bash -c 'grep -qE \"import \\{ Behaviors \\} from \\\"\\./behaviors\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/agent.ts && grep -qE \"Behaviors\\.DEFAULT_CONTRACTS\\[\\\"general\\\"\\]\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/agent.ts && grep -qE \"Behaviors\\.DEFAULT_CONTRACTS\\[\\\"explore\\\"\\]\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/agent.ts'",
         "weight": 0.15,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "Behaviors import + DEFAULT_CONTRACTS[general] + DEFAULT_CONTRACTS[explore] all present in agent.ts"
       },
       {
         "id": "C2",
@@ -157,7 +158,8 @@
         "assertion": "agent.ts exports behaviorContractFor helper function that proxies to Behaviors.resolveContract.",
         "verify": "bash -c 'grep -qE \"export const behaviorContractFor\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/agent.ts && grep -qE \"Behaviors\\.resolveContract\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/agent.ts'",
         "weight": 0.15,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "behaviorContractFor export + Behaviors.resolveContract proxy call present"
       },
       {
         "id": "C3",
@@ -165,7 +167,8 @@
         "assertion": "Only general AND explore native subagent records get behaviors attached. build / plan / compaction / title / summary records do NOT get behaviors attached (no agent_type-based contract for primary / hidden agents per WAVE.md item 2).",
         "verify": "bash -c 'c=$(grep -cE \"Behaviors\\.DEFAULT_CONTRACTS\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/agent.ts); [ \"$c\" -eq 2 ] || { echo \"Behaviors.DEFAULT_CONTRACTS usage count=$c (need exactly 2 — one for general, one for explore)\"; exit 1; }'",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "Behaviors.DEFAULT_CONTRACTS usage count=2 (general + explore only)"
       },
       {
         "id": "C4",
@@ -173,7 +176,8 @@
         "assertion": "bun typecheck passes from packages/opencode.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
         "weight": 0.2,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "tsgo --noEmit exit 0"
       },
       {
         "id": "C5",
@@ -181,7 +185,8 @@
         "assertion": "Existing integration tests that load Agent.defaultLayer still pass (registry.test.ts as a fast smoke).",
         "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/registry.test.ts 2>&1 | tee /tmp/wave8-t2-c5.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave8-t2-c5.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave8-t2-c5.log'",
         "weight": 0.15,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "registry.test.ts 7 pass / 0 fail"
       },
       {
         "id": "C6",
@@ -189,7 +194,8 @@
         "assertion": "agent-pool.test.ts AND agent-spawn.test.ts still pass (they pass agent_type='explore' to spawnAgent — additive behavior_violation field must NOT regress existing assertions).",
         "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-pool/agent-pool.test.ts src/tool/agent-spawn/agent-spawn.test.ts 2>&1 | tee /tmp/wave8-t2-c6.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave8-t2-c6.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave8-t2-c6.log'",
         "weight": 0.15,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "agent-pool + agent-spawn 51 pass / 0 fail"
       },
       {
         "id": "C7",
@@ -197,7 +203,8 @@
         "assertion": "Generator commit exists matching 'wave 8 T2' AND touches ONLY agent.ts.",
         "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 8 T2\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat=200 --format= \"$sha\" | grep -qE \"packages/opencode/src/agent/agent\\\\.ts\"'",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "commit 25f1e2bf8 touches packages/opencode/src/agent/agent.ts only"
       }
     ]
   },
