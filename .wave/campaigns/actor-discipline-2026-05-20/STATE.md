@@ -8,17 +8,17 @@ plan_source: inline (conversation thread; ADR-009 phases 1-3 + Anthropic AI Engi
 executor_agent: caveman
 executor_model: ""
 executor_variant: ""
-current_wave: 8
+current_wave: 9
 wave_status: pending
 failure_kind: ""
 retry_count: 0
 verify_count: 1
 user_question: ""
 loop_state: armed
-active_session_id: ses_1baa634f8ffekzzWm8TzMpfknn
+active_session_id: ses_1ba7ba7abffe9x81BFYn2ATwNQ
 active_session_kind: executor
 total_waves: 10
-session_count: 8
+session_count: 9
 created: 2026-05-20
 last_updated: 2026-05-20
 ```
@@ -35,5 +35,5 @@ last_updated: 2026-05-20
 | 5 | complete | ses_1baf41a10ffeZ422LtQm8VsmkF | 209ce3e63 | Supervision strategies (Phase 3A): D12 control.ts runtime (OnFailureStrategy/PoolStrategy types + SpawnAgentInput extension + PerRootData 4 new maps + spawnAgent policy storage + completion-watcher respawn/ignore/cap-exceeded/escalate dispatch + 6 D12 it.live tests). D12 agent-spawn.ts tool (Schema.optional+Union+Literal for 4+3 enums + execute passthrough + 9 it.live tests). INV-D-15..17 integration invariants + `## Supervision strategies (D12)` section in agent-spawn.txt. 3 tasks T1+T2+T3 orchestrated via pre-agreed-contracts + per-task gen+eval pairs; 0 pivots. T1 evaluator self-closed mid-grade (C1-C7 only) → orchestrator inline-adjudicated C8-C12 + 2 recipe-shape adjustments per Wave 4 T2 precedent. T2 + T3 evaluators stayed alive through all criteria (explicit "STAY ALIVE" reminder in spawn message). 31/31 CONTRACT criteria passed. multi-agent-invariants: 34/0 (was 31). |
 | 6 | complete | ses_1bad425a0ffee9XS2fbYUNAC6d | 991721ef6 | Spawn pool (Phase 3B): D13 control.ts pool primitives (CreatePoolInput/CreatePoolResult/PoolMemberFailure/PoolDeliverable interfaces + CollectStrategy + PerRootData.poolMembers/poolOf + createPool/collectPool/listPoolMembers/closePoolMembers methods + 17 D13 it.live tests). D13 NEW tool dir packages/opencode/src/tool/agent-pool/ (agent-pool.ts 278 lines + agent-pool.txt 109 lines + agent-pool.test.ts 698 lines, 21 tests, 100/100 coverage). D13 wiring: MULTI_AGENT_TOOLS 7→8 (added spawn_pool); registry.ts import+Tool.init+builtin+legacy-bridge; multi-agent-root.txt "Routers and pools" subsection. INV-D-18..20 integration invariants (multi-agent-invariants.test.ts: 34→37). 4 tasks T1-T4 orchestrated via pre-agreed-contracts + per-task gen+eval pairs; 0 pivots. 47/47 CONTRACT criteria passed (T1: 12; T2: 12; T3: 12; T4: 11). 2 inline-adjudications on C10 recipes (T1: column-extraction bug; T3: pre-existing baseline structurally <100%) — both follow Wave 4/5 Schema.TaggedErrorClass precedent. |
 | 7 | complete | ses_1baa634f8ffekzzWm8TzMpfknn | 3347ac552 | Lifecycle (Phase 3C): D14 link/unlink primitives in control.ts (links + linkedDeathOf per-root maps + linkAgents/unlinkAgents/agentLinks methods + completion-watcher cascade + linked_death label override). D15 bounded mailbox in mailbox.ts (MAILBOX_DEFAULT_CAPACITY=32 + MailboxFullError + sendSystem). D15 control.ts sendInterAgentCommunication flags?.system propagation; internal callers (completion-watcher + respawn-cap + spawn seed) opt into system bypass. D14 NEW tool dir packages/opencode/src/tool/agent-link/ (agent-link.ts 2 tools + agent-link.txt + agent-link.test.ts 14 tests, 100/100 coverage). D14 wiring: MULTI_AGENT_TOOLS 8→10 (link_agents + unlink_agents); registry.ts import+Tool.init+builtin+legacy-bridge. D15 agent-send + agent-followup mailbox_full structured tool output (retry_after_ms=250). INV-D-21..23 integration invariants (multi-agent-invariants.test.ts: 37→40). multi-agent-root.txt Limits bullet + multi-agent-subagent.txt mailbox-backpressure paragraph. 4 tasks T1-T4 orchestrated via pre-agreed-contracts + per-task gen+eval pairs; T2+T3 parallelized after T1; 0 pivots. 47/47 CONTRACT criteria passed (T1: 14; T2: 13; T3: 9; T4: 11). |
-| 8 | pending  | — | — | Behaviors (Phase 3D): declared per-agent_type behavior contracts + runtime validation harness. INV-D-24..26. |
+| 8 | complete | ses_1ba7ba7abffe9x81BFYn2ATwNQ | _(settle SHA after commit)_ | Behaviors (Phase 3D): D16 NEW behaviors.ts (BehaviorContract + BehaviorViolation Schema.Class + DEFAULT_CONTRACTS for general/explore + resolveContract + computeViolations; ABORT_REASONS const). D16 InterAgentCommunication.behavior_violation optional struct field. D16 agent.ts attaches behaviors to general+explore via options + exports behaviorContractFor helper. D16 control.ts runtime validation (PerRootData.behaviorOf map + SpawnAgentInput.behavior_version + spawnAgent storage + completion-watcher validation attaching behavior_violation to parent notification; observer-only — spawn returns successfully). D16 control.test.ts new describe block with 7 it.live tests. D16 multi-agent-subagent.txt `## Your behavior contract` section. INV-D-24..26 integration invariants (multi-agent-invariants.test.ts: 40→43). prose/subagent-prompts.test.ts: 48→54. 5 tasks T1-T5 orchestrated via pre-agreed-contracts + per-task gen+eval pairs; T2+T3+T4 parallelized after T1 (3-way fan-out); 0 pivots. 48/48 CONTRACT criteria passed (T1: 13; T2: 7; T3: 11; T4: 8; T5: 9). |
 | 9 | pending  | — | — | Observability + audit: D18 instrumentation (deliverable-arrival rate, safety-net firing rate, sibling-deadlock rate, subagent-tool-error rate); cross-wave NOTES.md audit for drift. Executor-solo. |
