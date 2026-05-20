@@ -2706,6 +2706,208 @@ describe("AgentControl D5 extractor narrowing + safety net", () => {
   )
 })
 
+describe("AgentControl D11 ABORT recognition", () => {
+  // Reuse the D5 writeAssistantMessage shape — defined inside the D5
+  // describe block. Replicated here to keep this block self-contained
+  // (the helper is closure-local to the D5 describe and not exported).
+  const writeAssistantMessage = (
+    sessions: Session.Interface,
+    sessionID: SessionID,
+    text: string,
+    finish: string,
+  ) =>
+    Effect.gen(function* () {
+      const userMsg = {
+        id: MessageID.ascending(),
+        sessionID,
+        role: "user" as const,
+        time: { created: Date.now() },
+        agent: "build",
+        model: {
+          providerID: ProviderID.make("anthropic"),
+          modelID: ModelID.make("claude-3-5-sonnet"),
+        },
+      }
+      yield* sessions.updateMessage(userMsg)
+      const assistantMsg = {
+        id: MessageID.ascending(),
+        sessionID,
+        parentID: userMsg.id,
+        role: "assistant" as const,
+        mode: "build",
+        agent: "build",
+        path: { cwd: ".", root: "." },
+        time: { created: Date.now(), completed: Date.now() },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("claude-3-5-sonnet"),
+        providerID: ProviderID.make("anthropic"),
+        finish,
+      }
+      yield* sessions.updateMessage(assistantMsg)
+      yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: assistantMsg.id,
+        sessionID,
+        type: "text",
+        text,
+      })
+      return assistantMsg
+    })
+
+  it.live(
+    "recognizes ABORT(<reason>): <details> as last assistant line and surfaces structured payload (INV-D-12 unit)",
+    () =>
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const control = yield* AgentControl.Service
+          yield* control.registerRunLoop((sid) =>
+            Effect.gen(function* () {
+              yield* writeAssistantMessage(
+                sessions,
+                sid,
+                "ABORT(spec_wrong): bad spec.",
+                "tool-calls",
+              )
+              return "done"
+            }),
+          )
+
+          const root = yield* seedRoot()
+          const child = yield* control.spawnAgent({
+            parentID: root.id,
+            parentPath: ROOT,
+            task_name: "abort_basic",
+            initial_message: ".",
+          })
+          yield* Effect.sleep(50)
+
+          const drained = yield* control.drainMailbox(root.id)
+          const note = drained.find(
+            (m) => String(m.author) === String(child.metadata.agent_path),
+          )
+          expect(note).toBeDefined()
+          expect(note?.abort_reason?.reason).toBe("spec_wrong")
+          expect(note?.abort_reason?.details).toBe("bad spec.")
+          // Legacy text preserved inside content for TUI / log scrapers.
+          expect(note?.content).toContain("ABORT(spec_wrong)")
+        }),
+      ),
+  )
+
+  it.live("parses ABORT from the LAST line of a multi-line body, not from interior lines", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            yield* writeAssistantMessage(
+              sessions,
+              sid,
+              "Working on fix.\nAttempted 3 strategies.\nABORT(approach_failed): tried 3x.",
+              "tool-calls",
+            )
+            return "done"
+          }),
+        )
+
+        const root = yield* seedRoot()
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "abort_multiline",
+          initial_message: ".",
+        })
+        yield* Effect.sleep(50)
+
+        const drained = yield* control.drainMailbox(root.id)
+        const note = drained.find(
+          (m) => String(m.author) === String(child.metadata.agent_path),
+        )
+        expect(note).toBeDefined()
+        expect(note?.abort_reason?.reason).toBe("approach_failed")
+        expect(note?.abort_reason?.details).toBe("tried 3x.")
+      }),
+    ),
+  )
+
+  it.live("returns undefined abort_reason on normal completion with no ABORT line", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            yield* writeAssistantMessage(
+              sessions,
+              sid,
+              "Task complete. Found 5 results.",
+              "tool-calls",
+            )
+            return "done"
+          }),
+        )
+
+        const root = yield* seedRoot()
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "abort_none",
+          initial_message: ".",
+        })
+        yield* Effect.sleep(50)
+
+        const drained = yield* control.drainMailbox(root.id)
+        const note = drained.find(
+          (m) => String(m.author) === String(child.metadata.agent_path),
+        )
+        expect(note).toBeDefined()
+        expect(note?.abort_reason).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("forwards unrecognized reason tags (graceful degradation per WAVE.md Gotcha #2)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            yield* writeAssistantMessage(
+              sessions,
+              sid,
+              "ABORT(custom_reason): foo",
+              "tool-calls",
+            )
+            return "done"
+          }),
+        )
+
+        const root = yield* seedRoot()
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "abort_custom",
+          initial_message: ".",
+        })
+        yield* Effect.sleep(50)
+
+        const drained = yield* control.drainMailbox(root.id)
+        const note = drained.find(
+          (m) => String(m.author) === String(child.metadata.agent_path),
+        )
+        expect(note).toBeDefined()
+        // Runtime does NOT enforce the official six — forwards whatever matches `[a-z_]+`.
+        expect(note?.abort_reason?.reason).toBe("custom_reason")
+        expect(note?.abort_reason?.details).toBe("foo")
+      }),
+    ),
+  )
+})
+
 describe("AgentControl D9 wasKnownPath", () => {
   it.live("returns true for a path that was once registered, false for a never-registered path", () =>
     provideTmpdirInstance(() =>

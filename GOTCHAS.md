@@ -37,6 +37,7 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | Wiring a long-lived bus subscriber inside a service | `bus-subscriber-needs-instance-state-fork-and-instance-ref`, `syncevent-publish-uses-helper-bus-not-test-layer-bus` |
 | Storing service state shared across instances | `agentcontrol-providerref-must-live-in-layer-not-instancestate` |
 | Touching the D5 completion-watcher extractor in `agent/control.ts` | `agentcontrol-d5-extractor-needs-two-pass-walk-for-terse-followup-status-line` |
+| Parsing ABORT set-phrases in `agent/control.ts` completion-watcher | `agentcontrol-d11-abort-line-parser-last-line-only` |
 | Defining a new tool with `Tool.define` | `tool-define-inner-effect-gen-closing-brace`, `tool-execute-needs-explicit-result-type-disjoint-metadata`, `tool-context-ask-typed-as-void` |
 | Lifting helpers out of `Tool.define` into a sibling module | `tool-define-execute-r-must-be-never-capture-services-in-closure` |
 | Adding a new dep to `ToolRegistry`'s layer | `agentcontrol-required-by-toolregistry-existing-test-layers` |
@@ -89,6 +90,7 @@ Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offs
 - L868 `syncevent-publish-uses-helper-bus-not-test-layer-bus` — same root cause from the other side: subscribe via top-level `Bus.subscribe` from inside `InstanceState.make`.
 - L138 `agentcontrol-providerref-must-live-in-layer-not-instancestate` — single-value, instance-agnostic state belongs at layer scope, not in `InstanceState`.
 - L148 `agentcontrol-d5-extractor-needs-two-pass-walk-for-terse-followup-status-line` — D5 completion watcher must prefer non-terse bodies before falling back to terse status lines.
+- L181 `agentcontrol-d11-abort-line-parser-last-line-only` — parse ABORT set-phrase anchored to LAST non-empty line; interior or quoted ABORT mentions must NOT trigger.
 
 ### Sourced events
 - L551 `eventv2-and-bus-dual-emission-with-parallel-type-prefixes` — keep EventV2 (`session.next.<domain>.…`) and BusEvent (`<domain>.…`) under different type prefixes; emit both with the same payload.
@@ -177,6 +179,28 @@ const finalAssistant = Option.isSome(substantive)
 
 **Why:** `Session.findMessage` walks newest-first. The naive D5 predicate (`text.length > 0`) returns the newest non-empty message, which is the terse follow-up when one exists. `looksLikeMissingDeliverable` then triggers on the terse body and the warning shadows the real deliverable. The two-pass walk preserves newest-first ordering while preferring substantive over terse.
 **See:** `packages/opencode/src/agent/control.ts:820-859` (the two-pass walk). Test: `packages/opencode/test/integration/multi-agent-invariants.test.ts` slug `INV-D-01-regression-ses_1c2e8d84affe`. Related: `agentcontrol-providerref-must-live-in-layer-not-instancestate` (sibling D5 invariant — per-root scoping).
+
+---
+
+### `agentcontrol-d11-abort-line-parser-last-line-only`
+
+**Severity:** correctness-bug
+**When:** Parsing ABORT(<reason>): <details> set-phrases from subagent completion text in `control.ts`.
+**Symptom:** Naive `body.match(/ABORT\(...\)/)` finds ABORT mentions inside paragraphs or code blocks → false positives. Without strict line-anchoring, a subagent writing "I considered emitting ABORT(foo)" gets a phantom abort_reason on its notification.
+**Fix:** Anchor the regex to the LAST non-empty line: trim trailing whitespace, take the substring after the last `\n`, then match `^ABORT\(([a-z_]+)\):\s*(.+?)\s*$`. The constraint is "last line only, not any line".
+
+```ts
+const parseAbortReason = (body: string) => {
+  const trimmed = body.trimEnd()
+  const idx = trimmed.lastIndexOf("\n")
+  const lastLine = idx === -1 ? trimmed : trimmed.slice(idx + 1)
+  const m = lastLine.match(/^ABORT\(([a-z_]+)\):\s*(.+?)\s*$/)
+  return m ? { reason: m[1], details: m[2] } : undefined
+}
+```
+
+**Why:** The completion-watcher's extractor walks text parts only (tool-call payloads excluded by D5), but text bodies can still contain quoted ABORT phrases. Last-line anchoring matches the prose contract in `multi-agent-subagent.txt` ("emit as last assistant line") and prevents both interior-line and inline-quote false positives. Unrecognized reasons are forwarded (the regex matches `[a-z_]+` not an enum) — graceful degradation per the spec; future iterations can add a strict whitelist if needed.
+**See:** `packages/opencode/src/agent/control.ts` `parseAbortReason` helper + completion-watcher `abort_reason:` field on the InterAgentCommunication construction. Related: `agentcontrol-d5-extractor-needs-two-pass-walk-for-terse-followup-status-line` (sibling extractor invariant), `word-boundary-regex-vs-prose-collisions` (the prose-vs-regex trap this entry avoids).
 
 ---
 

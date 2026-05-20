@@ -206,6 +206,26 @@ const looksLikeMissingDeliverable = (body: string): boolean => {
   return STATUS_LINE_WORDS.test(body)
 }
 
+// D11 (actor-discipline-2026-05-20 Wave 4) — parse the ABORT set-phrase
+// from the LAST non-empty line of the extracted body. Strict line anchor
+// (^...$) on the last line avoids prose-vs-regex collisions per GOTCHA
+// `word-boundary-regex-vs-prose-collisions`: an interior paragraph or
+// quoted line mentioning `ABORT(...)` must NOT trigger a false positive.
+// Matches lower_snake_case reasons (the regex enforces `[a-z_]+`); the
+// runtime forwards unrecognized reasons verbatim — graceful degradation
+// per WAVE.md Gotcha #2 (future iterations may add a strict whitelist).
+// The match runs on the EXTRACTED body (joined text parts only — never
+// tool-call payloads, per D5), so the parser never sees structured tool
+// arguments. Sibling of `extractText` / `looksLikeMissingDeliverable`;
+// the three independently inspect the same body string.
+const parseAbortReason = (body: string): { reason: string; details: string } | undefined => {
+  const trimmed = body.trimEnd()
+  const idx = trimmed.lastIndexOf("\n")
+  const lastLine = idx === -1 ? trimmed : trimmed.slice(idx + 1)
+  const m = lastLine.match(/^ABORT\(([a-z_]+)\):\s*(.+?)\s*$/)
+  return m ? { reason: m[1], details: m[2] } : undefined
+}
+
 // D5 (actor-discipline-2026-05-20) — render the parent-facing notification
 // body. Three shapes:
 //   - Warning case: structured ⚠️ block leading with the safety net, then
@@ -884,6 +904,16 @@ export const layer = Layer.effect(
                   const needsWarning = !childDelivered && looksLikeMissingDeliverable(body)
                   const header = `Agent ${String(childPath)} reached status: ${label}`
                   const content = buildNotificationBody(header, body, needsWarning)
+                  // D11 (actor-discipline-2026-05-20 Wave 4) — parse the
+                  // ABORT set-phrase from the LAST line of the extracted
+                  // body. undefined when no ABORT line present (normal
+                  // completion). The structured payload rides alongside
+                  // the human-readable `content` — legacy consumers (TUI,
+                  // log scrapers) still see the literal `ABORT(...):` text
+                  // inside the body; supervisors dispatch on the parsed
+                  // payload. Independent of safety-net warning logic;
+                  // both passes inspect the same `body` separately.
+                  const abortParsed = parseAbortReason(body)
                   // The watcher's send may race with parent deletion. If the
                   // parent root is gone, sendInterAgentCommunication fails
                   // with AgentNotFoundError — absorb it; nothing to wake.
@@ -895,6 +925,7 @@ export const layer = Layer.effect(
                       content,
                       trigger_turn: false,
                       sent_at: Date.now(),
+                      abort_reason: abortParsed,
                     }),
                     child.id,
                   ).pipe(Effect.catch(() => Effect.void))
