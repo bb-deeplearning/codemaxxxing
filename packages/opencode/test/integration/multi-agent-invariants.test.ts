@@ -2684,6 +2684,291 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
       expect(completion).toBeDefined()
     }),
   )
+
+  // INV-D-24 (actor-discipline-2026-05-20 Wave 8) — D16 behavior contract
+  // validated at terminal-status time. WAVE.md gotcha 1: validation runs
+  // at TERMINAL time (not at spawn time) — spawnAgent always succeeds, the
+  // violation is observed AFTER the child reaches a final status via the
+  // completion-watcher attaching a structured `behavior_violation` payload
+  // to the parent's notification. WAVE.md gotcha 2: existing tests that
+  // OMIT `agent_type` continue to work — this test intentionally PASSES
+  // `agent_type: "general"` to OPT IN to validation. WAVE.md gotcha 4: D5
+  // safety-net prose warning and D16 structured violation are independent
+  // — both can fire on the same case (the body is empty so D5 may also
+  // emit its warning prefix); the D16 assertion is about the structured
+  // `behavior_violation` field, which is authoritative.
+  //
+  // Stub runLoop writes ONE assistant text + exits. Does NOT call
+  // send_message → contract `send_message_required` is violated → parent
+  // mailbox notification carries `behavior_violation.violations[0].kind
+  // === "missing_delivery"` against `contract_version === "subagent_v1"`
+  // (general's default).
+  it.instance("INV-D-24-agent-type-behavior-contract-validated-at-spawn", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      yield* control.registerRunLoop((sid) =>
+        Effect.gen(function* () {
+          const user = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            role: "user" as const,
+            time: { created: Date.now() },
+            agent: "build",
+            model: ref,
+          }
+          yield* sessions.updateMessage(user)
+          const asst = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            parentID: user.id,
+            role: "assistant" as const,
+            mode: "build",
+            agent: "build",
+            path: { cwd: "/tmp", root: "/tmp" },
+            time: { created: Date.now(), completed: Date.now() },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: ref.modelID,
+            providerID: ref.providerID,
+            finish: "stop",
+          }
+          yield* sessions.updateMessage(asst)
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: asst.id,
+            sessionID: sid,
+            type: "text",
+            text: "did some work but never delivered",
+          })
+          return "done"
+        }),
+      )
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "g24",
+        agent_type: "general",
+        initial_message: "go",
+      })
+      yield* Effect.sleep(80)
+
+      const drained = yield* control.drainMailbox(root.id)
+      const note = drained.find((m) => String(m.author) === "/root/g24")
+      expect(note).toBeDefined()
+      expect(note?.content).toContain("reached status:")
+      expect(note?.behavior_violation).toBeDefined()
+      expect(note?.behavior_violation?.contract_version).toBe("subagent_v1")
+      expect(note?.behavior_violation?.violations.length).toBeGreaterThanOrEqual(1)
+      expect(note?.behavior_violation?.violations[0]?.kind).toBe("missing_delivery")
+    }),
+  )
+
+  // INV-D-25 (actor-discipline-2026-05-20 Wave 8) — D16 version coexistence.
+  // WAVE.md gotcha 3: `subagent_v1` and `subagent_v2` declared
+  // simultaneously under the same agent_type (`general` — see
+  // behaviors.ts DEFAULT_CONTRACTS); each child uses its declared
+  // version's contract (passed at spawn time via `behavior_version`).
+  //
+  // Both children share one stub runLoop that writes "preamble.\nABORT
+  // (spec_wrong): test" — `spec_wrong` IS in BOTH v1 AND v2
+  // declared_failure_modes (per behaviors.ts L115-135), so neither
+  // child triggers `undeclared_failure_mode` noise that would distract
+  // from the version-coexistence assertion. Neither child calls
+  // send_message → both should carry `missing_delivery` under their
+  // RESPECTIVE contract versions. No cross-contamination: v1child's
+  // notification carries `"subagent_v1"` and NOT `"subagent_v2"`, and
+  // vice versa.
+  it.instance("INV-D-25-behavior-contract-version-bump-coexists-with-prior-version", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      yield* control.registerRunLoop((sid) =>
+        Effect.gen(function* () {
+          const user = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            role: "user" as const,
+            time: { created: Date.now() },
+            agent: "build",
+            model: ref,
+          }
+          yield* sessions.updateMessage(user)
+          const asst = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            parentID: user.id,
+            role: "assistant" as const,
+            mode: "build",
+            agent: "build",
+            path: { cwd: "/tmp", root: "/tmp" },
+            time: { created: Date.now(), completed: Date.now() },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: ref.modelID,
+            providerID: ref.providerID,
+            finish: "stop",
+          }
+          yield* sessions.updateMessage(asst)
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: asst.id,
+            sessionID: sid,
+            type: "text",
+            text: "preamble.\nABORT(spec_wrong): test",
+          })
+          return "done"
+        }),
+      )
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "v1child",
+        agent_type: "general",
+        behavior_version: "subagent_v1",
+        initial_message: "go",
+      })
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "v2child",
+        agent_type: "general",
+        behavior_version: "subagent_v2",
+        initial_message: "go",
+      })
+      yield* Effect.sleep(150)
+
+      const drained = yield* control.drainMailbox(root.id)
+      const noteV1 = drained.find((m) => String(m.author) === "/root/v1child")
+      const noteV2 = drained.find((m) => String(m.author) === "/root/v2child")
+      expect(noteV1).toBeDefined()
+      expect(noteV2).toBeDefined()
+
+      // Each child validated against its declared version's contract.
+      expect(noteV1?.behavior_violation?.contract_version).toBe("subagent_v1")
+      expect(noteV2?.behavior_violation?.contract_version).toBe("subagent_v2")
+
+      // Both carry a missing_delivery violation (neither called send_message).
+      const v1Kinds = noteV1?.behavior_violation?.violations.map((v) => v.kind) ?? []
+      const v2Kinds = noteV2?.behavior_violation?.violations.map((v) => v.kind) ?? []
+      expect(v1Kinds).toContain("missing_delivery")
+      expect(v2Kinds).toContain("missing_delivery")
+
+      // No cross-contamination: v1child's notification must NOT mention
+      // "subagent_v2" and vice versa. Stringify the whole envelope so we
+      // catch the version label anywhere it might leak (contract_version,
+      // violation detail strings, etc).
+      const v1Str = JSON.stringify(noteV1)
+      const v2Str = JSON.stringify(noteV2)
+      expect(v1Str).not.toContain("subagent_v2")
+      expect(v2Str).not.toContain("subagent_v1")
+    }),
+  )
+
+  // INV-D-26 (actor-discipline-2026-05-20 Wave 8) — D16 violation does
+  // NOT fail spawn. WAVE.md gotcha 1: spawnAgent MUST return cleanly
+  // even when the child will subsequently violate its declared contract;
+  // validation runs at TERMINAL-status time (the completion-watcher),
+  // not at spawn time. The orchestrator observes the violation AFTER
+  // spawn via the mailbox notification's `behavior_violation` payload
+  // and decides whether to pivot / retry / ignore. Separates "violation
+  // detected" from "what to do about it."
+  //
+  // Effect.result wrapper proves spawn returned a Success branch (no
+  // Result.failure); the runLoop then writes one assistant message
+  // (never calls send_message) → child reaches terminal status → parent
+  // mailbox carries the completion notification with
+  // `behavior_violation` populated.
+  it.instance("INV-D-26-behavior-contract-violation-fails-orchestrated-wave-not-spawn", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      yield* control.registerRunLoop((sid) =>
+        Effect.gen(function* () {
+          const user = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            role: "user" as const,
+            time: { created: Date.now() },
+            agent: "build",
+            model: ref,
+          }
+          yield* sessions.updateMessage(user)
+          const asst = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            parentID: user.id,
+            role: "assistant" as const,
+            mode: "build",
+            agent: "build",
+            path: { cwd: "/tmp", root: "/tmp" },
+            time: { created: Date.now(), completed: Date.now() },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: ref.modelID,
+            providerID: ref.providerID,
+            finish: "stop",
+          }
+          yield* sessions.updateMessage(asst)
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: asst.id,
+            sessionID: sid,
+            type: "text",
+            text: "one assistant message, no send_message",
+          })
+          return "done"
+        }),
+      )
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+
+      // Effect.result wrapper proves the spawn returns a Success even
+      // though the runtime contract WILL be violated. Validation lives
+      // at terminal-status time, not at spawn time.
+      const spawned = yield* Effect.result(
+        control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "g26",
+          agent_type: "general",
+          initial_message: "go",
+        }),
+      )
+      expect(Result.isSuccess(spawned)).toBe(true)
+      if (Result.isSuccess(spawned)) {
+        expect(typeof spawned.success.thread_id).toBe("string")
+        // Spawn returns the LiveAgent before terminal-status validation
+        // — the status is non-final at this read point (the runLoop has
+        // not yet completed, OR the registry returns the pre-terminal
+        // status snapshot from registerRunLoop's first publish).
+        expect(AgentStatus.isFinal(spawned.success.status)).toBe(false)
+      }
+
+      // After the runLoop exits, the completion-watcher attaches the
+      // behavior_violation payload to the parent's mailbox notification.
+      yield* Effect.sleep(80)
+      const drained = yield* control.drainMailbox(root.id)
+      const note = drained.find((m) => String(m.author) === "/root/g26")
+      expect(note).toBeDefined()
+      expect(note?.content).toContain("reached status:")
+      expect(note?.behavior_violation).toBeDefined()
+      expect(note?.behavior_violation?.contract_version).toBe("subagent_v1")
+      const kinds = note?.behavior_violation?.violations.map((v) => v.kind) ?? []
+      expect(kinds).toContain("missing_delivery")
+    }),
+  )
 })
 
 describe("bug 3 audit — agent_type role-vocabulary fix is intact", () => {
