@@ -1,0 +1,86 @@
+{
+  "task_id": "T5",
+  "signed": true,
+  "criteria": [
+    {
+      "id": "C1",
+      "category": "correctness",
+      "assertion": "Test file exists at /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts.",
+      "verify": "test -f /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+      "weight": 0.05,
+      "status": "pending"
+    },
+    {
+      "id": "C2",
+      "category": "correctness",
+      "assertion": "Uses plain Bun test runner — imports from 'bun:test'; reads files via Bun.file().text(); does NOT import effect or testEffect.",
+      "verify": "grep -q -F 'from \"bun:test\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F 'Bun.file(' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && ! grep -q -F 'testEffect' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && ! grep -q -E 'from \"effect\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+      "weight": 0.08,
+      "status": "pending"
+    },
+    {
+      "id": "C3",
+      "category": "correctness",
+      "assertion": "Test file contains all 3 forbidden phrase literals (so it can assert their absence): 'your text response IS the deliverable', 'your response goes to the parent agent', 'the parent agent reads your output'.",
+      "verify": "grep -q -F 'your text response IS the deliverable' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F 'your response goes to the parent agent' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F 'the parent agent reads your output' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+      "weight": 0.08,
+      "status": "pending"
+    },
+    {
+      "id": "C4",
+      "category": "correctness",
+      "assertion": "Test file references all 3 base prompts: general/anthropic.txt, general/gemini.txt, explore.txt.",
+      "verify": "grep -q -F 'general/anthropic.txt' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F 'general/gemini.txt' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F 'explore.txt' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+      "weight": 0.06,
+      "status": "pending"
+    },
+    {
+      "id": "C5",
+      "category": "correctness",
+      "assertion": "Test file contains the required-phrase literal 'See the delivery contract in your multi-agent coordination guidance.'",
+      "verify": "grep -q -F 'See the delivery contract in your multi-agent coordination guidance.' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+      "weight": 0.08,
+      "status": "pending"
+    },
+    {
+      "id": "C6",
+      "category": "correctness",
+      "assertion": "Test references multi-agent-subagent.txt and asserts presence of 'send_message' and 'close_agent' literals.",
+      "verify": "grep -q -F 'multi-agent-subagent.txt' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F \"'send_message'\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F \"'close_agent'\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+      "weight": 0.08,
+      "status": "pending"
+    },
+    {
+      "id": "C7",
+      "category": "correctness",
+      "assertion": "Test references multi-agent-root.txt and asserts presence of D7+D8 literals: 'unicast', 'no broadcast', 'sibling introspection', 'idle'.",
+      "verify": "grep -q -F 'multi-agent-root.txt' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F \"'unicast'\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F \"'no broadcast'\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F \"'sibling introspection'\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -q -F \"'idle'\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+      "weight": 0.08,
+      "status": "pending"
+    },
+    {
+      "id": "C8",
+      "category": "correctness",
+      "assertion": "Test does NOT shell out to grep or spawn external processes.",
+      "verify": "! grep -q -E 'Bun\\.(spawn|spawnSync|\\$)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && ! grep -q -F 'import { $ }' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+      "weight": 0.05,
+      "status": "pending"
+    },
+    {
+      "id": "C9",
+      "category": "integration",
+      "assertion": "Test runs green: `cd packages/opencode && bun test ./test/prose/subagent-prompts.test.ts` exits 0 with >= 1 pass and 0 fail.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/prose/subagent-prompts.test.ts 2>&1 | tee /tmp/t5-c9.log && grep -E '[1-9][0-9]* pass' /tmp/t5-c9.log && ! grep -E '[1-9][0-9]* fail' /tmp/t5-c9.log",
+      "weight": 0.30,
+      "status": "pending"
+    },
+    {
+      "id": "C10",
+      "category": "convention",
+      "assertion": "Self-contained — no .wave/campaigns or PROMPT_SURFACES.md references.",
+      "verify": "! grep -q -F '.wave/campaigns' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && ! grep -q -F 'PROMPT_SURFACES.md' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+      "weight": 0.14,
+      "status": "pending"
+    }
+  ]
+}
