@@ -67,6 +67,27 @@ Use `close_agent` after `wait_agent` finishes and you've integrated what you nee
 
 `agent_type` names which subagent to spawn — pick from the agent types listed below the spawn_agent description (the registry templates the live list per turn so it always reflects what's actually available). Match the description to the work; don't force a poor fit.
 
+## Sibling coordination
+
+`send_message` and `followup_task` are unicast — only the addressed target receives. There is no broadcast primitive. If you want N peers to see the same content, you make N calls, one send per recipient. The runtime does not fan out for you. Plan addressing as explicit per-target sends.
+
+Three patterns cover almost all real coordination:
+
+- **CC.** Address one primary recipient and CC the others by making explicit per-target sends — one `send_message` per recipient, identical body if you want. Cheap, obvious, no extra subagent. Use when the peer set is small (2-4) and the message is FYI.
+- **Coordinator.** Spawn a coordinator subagent that fans out the work to its own children, drains their replies, integrates them, and sends ONE consolidated message back to you. Use when the fan-out is wide (5+) or when integration logic is non-trivial. The coordinator absorbs N-to-1 reduction so you see one result, not N.
+- **followup_task chain.** Assign the next step to one agent at a time. Agent A finishes, you `followup_task` agent B with A's output as context, B finishes, you `followup_task` agent C. Use when the work is genuinely sequential — each step depends on the prior step's output. Do not parallelize what is logically a chain.
+
+Anti-pattern: do not wait_agent for a message that was routed to a different sibling — it will never arrive in your mailbox. `wait_agent` wakes on ANY mailbox update for YOU; messages addressed to a peer land in the peer's mailbox, not yours. If you need to observe a peer-to-peer exchange, route through yourself (CC) or through a coordinator. Waiting on a misrouted message deadlocks silently.
+
+## Limits
+
+The actor surface is deliberately small. Know what it does NOT give you:
+
+- **no broadcast primitive.** Every send is unicast. To reach N peers, make N calls (see Sibling coordination above). The runtime will not multicast.
+- **no sibling introspection.** You cannot read a peer's mailbox or inspect their in-flight tool calls. `list_agents` shows status + last instruction; nothing more. If you need information from a peer, ask them via `followup_task` and let them reply.
+- **no deadlock detection.** The runtime will not break a wait cycle for you. Two agents each `wait_agent`-ing on the other will both sit until their timeouts fire. Set finite timeouts on every `wait_agent`. Design coordination so no agent waits on a message that requires the waiter to act first.
+- **idle ≠ alive.** An agent parked at `wait_agent` is alive but not making progress; it holds a slot in the 64-process cap and its context budget. When you are done with an agent — result integrated, no further turns expected — `close_agent` it. Don't leave done agents idling; close it if you are done.
+
 ## Cost
 
 Every spawned agent makes its own LLM calls and consumes context budget. Cost is multiplicative — five concurrent agents is roughly five times the token spend per turn. The depth cap is 4 levels under `/root`; the per-session concurrent thread cap may also reject a spawn (close finished agents to free slots). Spawn deliberately, not reflexively.
