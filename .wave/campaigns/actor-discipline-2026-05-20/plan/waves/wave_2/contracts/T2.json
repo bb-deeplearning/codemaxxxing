@@ -1,0 +1,94 @@
+{
+  "task_id": "T2",
+  "title": "INV-D-06-regression-ses_1d84f236bffe — Demo 2 sibling-deadlock reproduction (runtime + prose)",
+  "writes": [
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts"
+  ],
+  "depends_on": ["T1"],
+  "pre_agreed_by_orchestrator": true,
+  "signed": true,
+  "criteria": [
+    {
+      "id": "C1",
+      "category": "correctness",
+      "assertion": "multi-agent-invariants.test.ts contains literal slug 'INV-D-06-regression-ses_1d84f236bffe' on an `it.instance(\"...\",` line inside the INV-D describe block.",
+      "verify": "grep -E -q 'it\\.instance\\(\"INV-D-06-regression-ses_1d84f236bffe\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+      "weight": 0.1,
+      "status": "passed",
+      "evidence": "grep -q match found; exit 0."
+    },
+    {
+      "id": "C2",
+      "category": "integration",
+      "assertion": "The new INV-D-06-regression runtime test passes when filtered by exact slug from packages/opencode.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-06-regression-ses_1d84f236bffe' 2>&1 | tee /tmp/wave2-t2-c2.log && grep -E '[1-9][0-9]* pass' /tmp/wave2-t2-c2.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave2-t2-c2.log",
+      "weight": 0.2,
+      "status": "passed",
+      "evidence": "1 pass, 0 fail, 4 expect() calls, 24 filtered out (995ms)."
+    },
+    {
+      "id": "C3",
+      "category": "correctness",
+      "assertion": "The runtime test uses task_name 'prosecutor' and task_name 'defense' (Demo 2 cast) AND asserts root mailbox holds BOTH openings AND each sibling mailbox stays empty (proving runtime IS unicast — the bug was in prose).",
+      "verify": "awk '/it\\.instance\\(\"INV-D-06-regression-ses_1d84f236bffe\"/,/^  \\)$/' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts > /tmp/wave2-t2-c3.txt && grep -F 'prosecutor' /tmp/wave2-t2-c3.txt && grep -F 'defense' /tmp/wave2-t2-c3.txt",
+      "weight": 0.1,
+      "status": "passed",
+      "evidence": "Both 'prosecutor' and 'defense' task_name strings present in regression block."
+    },
+    {
+      "id": "C4",
+      "category": "correctness",
+      "assertion": "Prose grep test in subagent-prompts.test.ts: new describe block exists asserting 'unicast' + 'no broadcast' both in multi-agent-root.txt AND 'unicast' mirror sentence in multi-agent-subagent.txt. The describe header references the wave 2 regression slug (or 'INV-D-06 regression' / 'ses_1d84f236bffe' for traceability).",
+      "verify": "grep -F 'ses_1d84f236bffe' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -F 'multi-agent-root.txt' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -F 'multi-agent-subagent.txt' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+      "weight": 0.1,
+      "status": "passed",
+      "evidence": "All three literals present incl. 'Wave 2 — INV-D-06 regression: unicast doctrine pinned (ses_1d84f236bffe Demo 2)' describe header."
+    },
+    {
+      "id": "C5",
+      "category": "integration",
+      "assertion": "Full prose suite (Wave 1 + Wave 2 additions) passes from packages/opencode.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test test/prose/subagent-prompts.test.ts 2>&1 | tee /tmp/wave2-t2-c5.log && grep -E '[1-9][0-9]* pass' /tmp/wave2-t2-c5.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave2-t2-c5.log",
+      "weight": 0.15,
+      "status": "passed",
+      "evidence": "21 pass, 0 fail, 21 expect() calls (687ms)."
+    },
+    {
+      "id": "C6",
+      "category": "convention",
+      "assertion": "bun typecheck still passes from packages/opencode.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+      "weight": 0.1,
+      "status": "passed",
+      "evidence": "tsgo --noEmit exit 0, no diagnostics."
+    },
+    {
+      "id": "C7",
+      "category": "bc_preservation",
+      "assertion": "Full multi-agent-invariants.test.ts file passes (>=1 pass, 0 fail) — no regression to T1 or pre-existing tests.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave2-t2-c7.log && grep -E '[1-9][0-9]* pass' /tmp/wave2-t2-c7.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave2-t2-c7.log",
+      "weight": 0.15,
+      "status": "passed",
+      "evidence": "25 pass, 0 fail, 105 expect() calls (5.42s)."
+    },
+    {
+      "id": "C8",
+      "category": "correctness",
+      "assertion": "Runtime test asserts the unicast property explicitly: each sibling's mailbox is empty (length 0) after siblings each send to root. Look for `.toHaveLength(0)` adjacent to one of the sibling thread_id drain calls within the regression test body.",
+      "verify": "awk '/it\\.instance\\(\"INV-D-06-regression-ses_1d84f236bffe\"/,/^  \\)$/' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts > /tmp/wave2-t2-c8.txt && grep -E '(toHaveLength\\(0\\)|toEqual\\(\\[\\]\\))' /tmp/wave2-t2-c8.txt",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "Both `expect(drainProsecutor).toHaveLength(0)` and `expect(drainDefense).toHaveLength(0)` present."
+    },
+    {
+      "id": "C9",
+      "category": "bc_preservation",
+      "assertion": "T1's regression test slug 'INV-D-01-regression-ses_1c2e8d84affe' still present (T2 must NOT delete or modify T1's test).",
+      "verify": "grep -F 'INV-D-01-regression-ses_1c2e8d84affe' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "T1 slug still present in `it.instance(\"INV-D-01-regression-ses_1c2e8d84affe\", ...)` line."
+    }
+  ]
+}

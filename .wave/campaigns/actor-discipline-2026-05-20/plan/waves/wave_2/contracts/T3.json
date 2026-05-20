@@ -1,0 +1,102 @@
+{
+  "task_id": "T3",
+  "title": "Audit + regression sweep — full INV-D-01..08 + regression slugs green, write NOTES.md audit subsection",
+  "writes": [
+    "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_2/NOTES.md"
+  ],
+  "depends_on": ["T1", "T2"],
+  "pre_agreed_by_orchestrator": true,
+  "signed": true,
+  "criteria": [
+    {
+      "id": "C1",
+      "category": "discipline",
+      "assertion": "waves/wave_2/NOTES.md exists.",
+      "verify": "test -f /Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_2/NOTES.md",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "test -f exit 0 at commit 30e7bd146; file present, 55 lines."
+    },
+    {
+      "id": "C2",
+      "category": "correctness",
+      "assertion": "NOTES.md contains the standard Wave 1-style attempt header: 'Attempt 1', 'Session:', 'Commit:', 'Date:', 'Decision on entry:', 'Orchestration:' (six fields).",
+      "verify": "f=/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_2/NOTES.md; grep -F 'Attempt 1' $f && grep -F 'Session:' $f && grep -F 'Commit:' $f && grep -F 'Date:' $f && grep -F 'Decision on entry:' $f && grep -F 'Orchestration:' $f",
+      "weight": 0.1,
+      "status": "passed",
+      "evidence": "All six fields found once each: Attempt 1, Session:, Commit:, Date:, Decision on entry:, Orchestration:. Chain exit 0."
+    },
+    {
+      "id": "C3",
+      "category": "correctness",
+      "assertion": "NOTES.md contains an invariant→wave→fix table mapping each of INV-D-01..08 (every slug must appear).",
+      "verify": "f=/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_2/NOTES.md; for n in 01 02 03 04 05 06 07 08; do grep -q \"INV-D-$n\" $f || { echo \"missing INV-D-$n\"; exit 1; }; done",
+      "weight": 0.15,
+      "status": "passed",
+      "evidence": "Loop completed exit 0; all 8 slugs INV-D-01..08 present in NOTES.md table."
+    },
+    {
+      "id": "C4",
+      "category": "correctness",
+      "assertion": "NOTES.md mentions Wave 2's two regression slugs (INV-D-01-regression-ses_1c2e8d84affe AND INV-D-06-regression-ses_1d84f236bffe) as audit-relevant artefacts.",
+      "verify": "f=/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_2/NOTES.md; grep -F 'INV-D-01-regression-ses_1c2e8d84affe' $f && grep -F 'INV-D-06-regression-ses_1d84f236bffe' $f",
+      "weight": 0.1,
+      "status": "passed",
+      "evidence": "Both regression slugs present in NOTES.md table rows + commit shas section."
+    },
+    {
+      "id": "C5",
+      "category": "correctness",
+      "assertion": "NOTES.md documents the D5b two-pass extractor hardening landed during T1 (mentions 'D5b' or 'two-pass' or 'hardening', plus the Cidoo session id).",
+      "verify": "f=/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_2/NOTES.md; (grep -F 'D5b' $f || grep -F 'two-pass' $f || grep -F 'hardening' $f) && grep -F 'ses_1c2e8d84affe' $f",
+      "weight": 0.1,
+      "status": "passed",
+      "evidence": "D5b + two-pass + hardening all present; Cidoo session id ses_1c2e8d84affe present in NOTES.md narrative + table."
+    },
+    {
+      "id": "C6",
+      "category": "correctness",
+      "assertion": "NOTES.md has a Phase 2 recommendations section (e.g. 'Phase 2' or 'Recommendations for') discussing one or more of: D5 safety-net adequacy, D6 root-hold status, INV-D-06 ask-pattern follow-up.",
+      "verify": "f=/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_2/NOTES.md; (grep -i -E -q 'Phase 2|Recommendations|recommendations' $f) && (grep -i -E -q 'safety net|safety-net|root.hold|D6|ask pattern|ask-pattern' $f)",
+      "weight": 0.1,
+      "status": "passed",
+      "evidence": "Phase 2 + Recommendations section header present; covers D5 safety-net adequacy, D6 root-hold status, INV-D-06 ask-pattern follow-up — all three explicit."
+    },
+    {
+      "id": "C7",
+      "category": "convention",
+      "assertion": "NOTES.md file length under 250 lines (audit subsection, not a thesis).",
+      "verify": "lines=$(wc -l < /Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_2/NOTES.md); test \"$lines\" -le 250",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "wc -l = 55 ≤ 250."
+    },
+    {
+      "id": "C8",
+      "category": "integration",
+      "assertion": "Full INV-D-01..08 + both regression slugs all green when run together via `-t 'INV-D-0'`.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-0' 2>&1 | tee /tmp/wave2-t3-c8.log && grep -E '[1-9][0-9]* pass' /tmp/wave2-t3-c8.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave2-t3-c8.log",
+      "weight": 0.15,
+      "status": "passed",
+      "evidence": "bun test (filtered -t 'INV-D-0'): 10 pass / 0 fail / 36 expects / 15 filtered out [2.43s]. Matches 8 INV-D-0[1-8] + 2 regression slugs."
+    },
+    {
+      "id": "C9",
+      "category": "integration",
+      "assertion": "Full prose suite passes.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test test/prose/subagent-prompts.test.ts 2>&1 | tee /tmp/wave2-t3-c9.log && grep -E '[1-9][0-9]* pass' /tmp/wave2-t3-c9.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave2-t3-c9.log",
+      "weight": 0.1,
+      "status": "passed",
+      "evidence": "bun test prose: 21 pass / 0 fail / 21 expects [706ms]. Wave 1 + Wave 2 prose additions all green."
+    },
+    {
+      "id": "C10",
+      "category": "bc_preservation",
+      "assertion": "T3 generator did NOT modify multi-agent-invariants.test.ts or subagent-prompts.test.ts (cross-task disjoint discipline — only NOTES.md should change). Compare against the T2 commit SHA 12e42f932.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing && [ -z \"$(git diff 12e42f932 HEAD -- packages/opencode/test/integration/multi-agent-invariants.test.ts packages/opencode/test/prose/subagent-prompts.test.ts)\" ]",
+      "weight": 0.1,
+      "status": "passed",
+      "evidence": "git diff 12e42f932 HEAD on both test files is empty. T3 commit 30e7bd146 only touches NOTES.md (+55 lines). Disjoint discipline preserved."
+    }
+  ]
+}

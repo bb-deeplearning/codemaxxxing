@@ -1,0 +1,272 @@
+{
+  "wave_id": 2,
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "INV-D-01-regression-ses_1c2e8d84affe — diagnostic-session-1 reproduction (scripted runLoop emits text+close_agent in same turn)",
+      "files": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/INTEGRATION_INVARIANTS.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/REFERENCES.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/OVERVIEW.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/AGENTS.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts"
+      ],
+      "writes": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts"
+      ],
+      "depends_on": [],
+      "description": "Append a new it.instance test named exactly 'INV-D-01-regression-ses_1c2e8d84affe' to the existing INV-D-01..08 describe block in multi-agent-invariants.test.ts. The test reconstructs the ses_1c2e8d84affeZ7t5g5LKveGDTo failure shape WITHOUT needing the real Cidoo prompt. Use the existing scripted-runLoop pattern from INV-D-01 (line 860) as the model: registerRunLoop emits ONE assistant message with finish='tool-calls' containing a text part of ~5KB body (e.g. literal string 'FULL REPORT BODY ' repeated to produce a multi-KB body — keep the marker substring 'FULL REPORT BODY' so the assertion can grep), THEN a second assistant message with finish='stop' containing just text 'Done.'. The runLoop returns 'done' after both messages are updated. Use spawnAgent with parentPath=AgentPath.root(), task_name='cidoo_repro'. After Effect.sleep(80), drainMailbox(root.id) and assert: (a) exactly ONE message from author '/root/cidoo_repro' (use .filter not .find for the count assertion), (b) body contains 'FULL REPORT BODY' (the actual deliverable from the first message), (c) body does NOT equal or contain ONLY 'Done.' as the entire deliverable. Required imports/services match INV-D-01: Session.Service, AgentControl.Service, MessageID, PartID, ref, AgentPath. Do NOT use installNeverLoop — register a real scripted runLoop. The slug name MUST match the verify recipe exactly: `bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-01-regression-ses_1c2e8d84affe'`. After append, run typecheck + the slug-targeted test from packages/opencode and verify both pass."
+    },
+    {
+      "id": "T2",
+      "title": "INV-D-06-regression-ses_1d84f236bffe — Demo 2 sibling-deadlock reproduction (runtime unicast assert + prose mirror-sentence grep)",
+      "files": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/INTEGRATION_INVARIANTS.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/REFERENCES.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/OVERVIEW.md"
+      ],
+      "writes": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts"
+      ],
+      "depends_on": ["T1"],
+      "description": "COORDINATION: T2 shares multi-agent-invariants.test.ts with T1; generator MUST rebase on T1's commit (git pull/rebase the wave branch HEAD) BEFORE editing the file, then append below T1's INV-D-01 regression test. No overlapping edit ranges with T1. Two-part deliverable: (Part A — runtime, in multi-agent-invariants.test.ts) Append it.instance 'INV-D-06-regression-ses_1d84f236bffe'. Use installNeverLoop, then sessions.create root, registerSessionRoot, spawn two siblings task_name='prosecutor' and task_name='defense' under AgentPath.root(). Drain BOTH siblings' spawn-seed mailboxes (per existing INV-D-06 pattern at line 1151). From each sibling: send_message(target: AgentPath.root(), content: '<role> opening'). Then drain root.id and each sibling. Assert: root mailbox contains BOTH openings (prosecutor's + defense's), prosecutor's mailbox is empty (defense never sent to prosecutor), defense's mailbox is empty (prosecutor never sent to defense). This proves the deadlock IS the runtime's correct unicast behavior; the bug was in PROSE (no instruction to address peers directly), not in runtime. The test name 'INV-D-06-regression-ses_1d84f236bffe' must be a distinct it.instance from the existing INV-D-06 at line 1151 (both can coexist; the regression slug pins the diagnostic session). (Part B — prose grep, in test/prose/subagent-prompts.test.ts) Append a new describe block 'Wave 2 — INV-D-06 regression: unicast doctrine pinned in both subagent + root prompts' with two tests: (1) assert multi-agent-root.txt contains the unicast doctrine string 'unicast' (this duplicates existing Wave 1 coverage but pins the regression slug; acceptable redundancy per WAVE.md), AND assert it contains a stronger explicit phrase such as 'no broadcast' — both substrings must appear in the same file; (2) assert multi-agent-subagent.txt contains a mirror unicast sentence — the literal substring 'unicast' must appear in multi-agent-subagent.txt (the D7-mirror sentence Wave 1 T1 added). Use the same Bun.file().text() + expect(...).toContain pattern as existing Wave 1 tests in the file. If the mirror substring is absent from multi-agent-subagent.txt, this is a Wave 1 gap → emit ABORT(spec_wrong) recommending Wave 1 amendment, do not silently fix. Verify recipe: `bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-06-regression-ses_1d84f236bffe'` AND `bun test test/prose/subagent-prompts.test.ts`."
+    },
+    {
+      "id": "T3",
+      "title": "Audit + regression sweep — full INV-D-01..08 + regression slugs green, write NOTES.md audit subsection",
+      "files": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_2/WAVE.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/INTEGRATION_INVARIANTS.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/OVERVIEW.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_0/NOTES.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_1/NOTES.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts"
+      ],
+      "writes": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_2/NOTES.md"
+      ],
+      "depends_on": ["T1", "T2"],
+      "description": "After T1 + T2 land, run the full Phase 1 invariant matrix from packages/opencode: `bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-0'` (matches INV-D-01..08 + both regression slugs), capture which slugs pass/fail. Also run `bun test test/prose/subagent-prompts.test.ts` for the prose layer. Write waves/wave_2/NOTES.md containing the audit subsection required by WAVE.md (REQUIRED even on success). Subsection MUST include: (a) the orchestration header 'Orchestration: planner+gen+eval, pivot count: <K>'; (b) an invariant→wave→fix table mapping each of INV-D-01..08 to which wave landed the production fix and one-line description (INV-D-01 → Wave 0 D5 extractor narrowing; INV-D-02 → Wave 0 D3 self-close + safety net; INV-D-03 → Wave 0 D5 safety net; INV-D-04 → Wave 0 D3 close_agent target optional; INV-D-05 → Wave 0 D2 canonical-path injection; INV-D-06 → Wave 1 D7 unicast doctrine prose; INV-D-07 → Wave 0 D9 error-tag split; INV-D-08 → no production fix; locks in Demo 1 success shape); (c) any drift observed during the wave (e.g. a previously-green invariant flickering RED on a retry — note the slug, the retry count, and whether it stabilized); (d) Phase 2 recommendations: is the safety net (D5) heuristic adequate as written or should it be tightened (e.g. trigger on body length < N tokens, not just on missing-tool-call signal)? Did D6 root-hold actually land in Wave 0 or was it deferred? Should INV-D-06 add a Wave-3 follow-up testing the runtime ask-pattern once correlation_id lands? Keep the file under 200 lines, scannable headers. Do NOT modify multi-agent-invariants.test.ts or subagent-prompts.test.ts — both are owned by T1/T2."
+    }
+  ],
+  "rubric_seed": {
+    "wave_id": 2,
+    "wave_kind": "validation",
+    "criteria_categories": [
+      {
+        "id": "correctness",
+        "weight": 0.1,
+        "description": "Minimal production code is added (validation wave); test files exist at the agreed paths, parse, and name the regression slugs verbatim.",
+        "default_criteria": [
+          {
+            "id_template": "C-corr-slug-{n}",
+            "category": "correctness",
+            "assertion_template": "Test file {path} contains the regression slug literal '{slug}'.",
+            "verify_template": "grep -F \"{slug}\" {path}",
+            "weight": 0.05
+          },
+          {
+            "id_template": "C-corr-notes-{n}",
+            "category": "correctness",
+            "assertion_template": "waves/wave_2/NOTES.md contains the audit subsection header and invariant→wave→fix table.",
+            "verify_template": "grep -E 'Orchestration:|INV-D-0[1-8]' /Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_2/NOTES.md | wc -l | awk '$1 >= 9 { exit 0 } { exit 1 }'",
+            "weight": 0.05
+          }
+        ]
+      },
+      {
+        "id": "integration",
+        "weight": 0.6,
+        "description": "Every Phase 1 invariant slug (INV-D-01..08) AND the two regression slugs pass when run individually under the bun test name filter from packages/opencode.",
+        "default_criteria": [
+          {
+            "id_template": "C-inv-D-01",
+            "category": "integration",
+            "assertion_template": "Integration invariant INV-D-01-extractor-returns-text-from-finish-tool-calls passes.",
+            "verify_template": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-01-extractor-returns-text-from-finish-tool-calls'",
+            "weight": 0.05
+          },
+          {
+            "id_template": "C-inv-D-02",
+            "category": "integration",
+            "assertion_template": "Integration invariant INV-D-02-explicit-send-message-delivers-and-completion-notifies passes.",
+            "verify_template": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-02-explicit-send-message-delivers-and-completion-notifies'",
+            "weight": 0.05
+          },
+          {
+            "id_template": "C-inv-D-03",
+            "category": "integration",
+            "assertion_template": "Integration invariant INV-D-03-safety-net-warning-when-deliverable-missing passes.",
+            "verify_template": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-03-safety-net-warning-when-deliverable-missing'",
+            "weight": 0.05
+          },
+          {
+            "id_template": "C-inv-D-04",
+            "category": "integration",
+            "assertion_template": "Integration invariant INV-D-04-agent-close-without-target-resolves-to-caller passes.",
+            "verify_template": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-04-agent-close-without-target-resolves-to-caller'",
+            "weight": 0.05
+          },
+          {
+            "id_template": "C-inv-D-05",
+            "category": "integration",
+            "assertion_template": "Integration invariant INV-D-05-subagent-prompt-contains-canonical-path passes.",
+            "verify_template": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-05-subagent-prompt-contains-canonical-path'",
+            "weight": 0.05
+          },
+          {
+            "id_template": "C-inv-D-06",
+            "category": "integration",
+            "assertion_template": "Integration invariant INV-D-06-send-message-is-unicast-not-broadcast passes.",
+            "verify_template": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-06-send-message-is-unicast-not-broadcast'",
+            "weight": 0.05
+          },
+          {
+            "id_template": "C-inv-D-07",
+            "category": "integration",
+            "assertion_template": "Integration invariant INV-D-07-close-agent-distinguishes-already-terminated-from-path-invalid passes.",
+            "verify_template": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-07-close-agent-distinguishes-already-terminated-from-path-invalid'",
+            "weight": 0.05
+          },
+          {
+            "id_template": "C-inv-D-08",
+            "category": "integration",
+            "assertion_template": "Integration invariant INV-D-08-coordinator-fan-out-delivers-single-consolidated-message passes.",
+            "verify_template": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-08-coordinator-fan-out-delivers-single-consolidated-message'",
+            "weight": 0.05
+          },
+          {
+            "id_template": "C-inv-regression-01",
+            "category": "integration",
+            "assertion_template": "Regression slug INV-D-01-regression-ses_1c2e8d84affe passes (T1 deliverable).",
+            "verify_template": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-01-regression-ses_1c2e8d84affe'",
+            "weight": 0.1
+          },
+          {
+            "id_template": "C-inv-regression-06",
+            "category": "integration",
+            "assertion_template": "Regression slug INV-D-06-regression-ses_1d84f236bffe passes (T2 deliverable).",
+            "verify_template": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-06-regression-ses_1d84f236bffe'",
+            "weight": 0.1
+          },
+          {
+            "id_template": "C-inv-prose",
+            "category": "integration",
+            "assertion_template": "Full prose grep suite (Wave 1 + Wave 2 additions) passes.",
+            "verify_template": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test test/prose/subagent-prompts.test.ts",
+            "weight": 0.05
+          }
+        ]
+      },
+      {
+        "id": "convention",
+        "weight": 0.15,
+        "description": "Tests use the existing it.instance + testEffect harness (no manual ManagedRuntime), match the scripted-runLoop pattern from INV-D-01, slug names match verify recipes verbatim, no new files outside the agreed write set.",
+        "default_criteria": [
+          {
+            "id_template": "C-conv-it-instance",
+            "category": "convention",
+            "assertion_template": "New tests use `it.instance(...)` (not bare `test(...)` and not custom ManagedRuntime).",
+            "verify_template": "grep -c \"it.instance(\\\"INV-D-0\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | awk '$1 >= 10 { exit 0 } { exit 1 }'",
+            "weight": 0.05
+          },
+          {
+            "id_template": "C-conv-no-typecheck-regress",
+            "category": "convention",
+            "assertion_template": "bun typecheck passes from packages/opencode after T1+T2 land.",
+            "verify_template": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+            "weight": 0.05
+          },
+          {
+            "id_template": "C-conv-no-banned-bun-test-root",
+            "category": "convention",
+            "assertion_template": "No verify recipe uses the banned `bun test test/` form (which overwrites baseline-perf.json) or runs tests from repo root.",
+            "verify_template": "! grep -E 'bun test test/$|cd /Users/rohan/Documents/Personal/codemaxxxing && bun test' /Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_2/CONTRACT.json 2>/dev/null",
+            "weight": 0.05
+          }
+        ]
+      },
+      {
+        "id": "bc_preservation",
+        "weight": 0.1,
+        "description": "No regression to pre-existing multi-agent-invariants.test.ts cases or to prose tests. The bug-3 audit describe block stays untouched.",
+        "default_criteria": [
+          {
+            "id_template": "C-bc-full-suite",
+            "category": "bc_preservation",
+            "assertion_template": "Full multi-agent-invariants.test.ts file passes from packages/opencode (all describes, both pre-existing and newly added).",
+            "verify_template": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts",
+            "weight": 0.05
+          },
+          {
+            "id_template": "C-bc-bug3-untouched",
+            "category": "bc_preservation",
+            "assertion_template": "The bug-3 audit describe block ('bug 3 audit — agent_type role-vocabulary fix is intact') still exists verbatim.",
+            "verify_template": "grep -F \"bug 3 audit — agent_type role-vocabulary fix is intact\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+            "weight": 0.05
+          }
+        ]
+      },
+      {
+        "id": "discipline",
+        "weight": 0.05,
+        "description": "Orchestrator artefacts present and parse: PLAN.json, CONTRACT.json, NOTES.md audit subsection.",
+        "default_criteria": [
+          {
+            "id_template": "C-disc-plan",
+            "category": "discipline",
+            "assertion_template": "waves/wave_2/PLAN.json exists and parses as JSON.",
+            "verify_template": "test -f /Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_2/PLAN.json && jq . /Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_2/PLAN.json > /dev/null",
+            "weight": 0.02
+          },
+          {
+            "id_template": "C-disc-contract",
+            "category": "discipline",
+            "assertion_template": "waves/wave_2/CONTRACT.json exists and all task criteria are signed (no pending).",
+            "verify_template": "test -f /Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_2/CONTRACT.json && jq . /Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_2/CONTRACT.json > /dev/null",
+            "weight": 0.02
+          },
+          {
+            "id_template": "C-disc-notes",
+            "category": "discipline",
+            "assertion_template": "waves/wave_2/NOTES.md exists (REQUIRED for this wave even on success per WAVE.md).",
+            "verify_template": "test -f /Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_2/NOTES.md",
+            "weight": 0.01
+          }
+        ]
+      }
+    ],
+    "guidance": {
+      "few_shot_pass": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts:860 — INV-D-01 reference scripted-runLoop pattern. T1 mirrors this shape (registerRunLoop emitting assistant message with finish='tool-calls', drainMailbox, find by author path, expect content).",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts:1151 — INV-D-06 reference unicast pattern. T2 Part A reuses spawnAgent + drainMailbox for both siblings + sendInterAgentCommunication shape.",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts:86-106 — Wave 1 prose grep idiom. T2 Part B appends a new describe block in the same Bun.file().text() + expect.toContain shape.",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_1/PLAN.json — Wave 1 PLAN.json structure (task shape, depends_on chain on T5, files vs writes discipline)."
+      ],
+      "few_shot_fail": [
+        "Adding a top-level new describe block instead of appending into the existing 'INV-D-01..08' describe — breaks the test catalog locality.",
+        "Naming the regression slug differently from the verify recipe (e.g. 'INV-D-01-regression' instead of 'INV-D-01-regression-ses_1c2e8d84affe') — the slug-targeted bun test filter fails to match.",
+        "Using a real session (no scripted runLoop) for T1 — the test becomes flaky against a real provider; the diagnostic-session shape is a script.",
+        "Asserting that Demo-2-style deadlock 'fails' at runtime — it does not; the runtime IS unicast and that's correct. T2 must assert the runtime is unicast (siblings' mailboxes empty after sending to root), and that PROSE has the doctrine. The bug was prose, not runtime.",
+        "Silently fixing missing prose in T2 Part B instead of emitting ABORT(spec_wrong) when the Wave 1 prose mirror sentence is absent — that hides Wave 1 incompleteness."
+      ],
+      "anti_patterns": [
+        "Generator adds production code in agent/control.ts during T1/T2 — this is a validation wave; only tests should change. If a Phase 1 invariant fails for a real production reason, ABORT(spec_wrong) and let verifier amend Wave 0/1.",
+        "Generator uses `bun test --coverage <file>` for verification — silent false-pass; use plain `bun test <file>` only.",
+        "Generator uses `bun test test/` form — overwrites baseline-perf.json; per AGENTS.md gotcha, restrict to per-area runs.",
+        "T3 generator modifies multi-agent-invariants.test.ts or subagent-prompts.test.ts — those are owned by T1/T2; cross-task writes violate disjoint discipline.",
+        "T2 generator does not rebase on T1's commit before appending to multi-agent-invariants.test.ts — merge conflict guaranteed; the depends_on chain exists exactly for this serialization.",
+        "Subagent runs tests from repo root (`do-not-run-tests-from-root` guard fires) — always cd packages/opencode first.",
+        "Test passes typecheck but never actually asserts the regression body — e.g. forgets `.toContain('FULL REPORT BODY')` and only checks message existence."
+      ]
+    },
+    "stuck_threshold": 3
+  }
+}

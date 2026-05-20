@@ -1,7 +1,7 @@
 ## Attempt 1 — WAVE COMPLETE
 
-**Session:** ses_wave2_orchestrator
-**Commit:** <settle commit; orchestrator fills post-commit>
+**Session:** ses_1bb496396ffeVoJ9Zbezn1sXkA
+**Commit:** <settle commit; recorded in STATE.md wave row + appended below>
 **Date:** 2026-05-20
 **Decision on entry:** first attempt
 **Orchestration:** planner + per-task gen+eval pairs (3 tasks), pivot count: 1 (T1 ABORT(spec_wrong) → orchestrator landed D5b two-pass hardening inline → T1 generator resumed and committed atomically)
@@ -17,7 +17,7 @@ Planner wrote PLAN.json with 3 tasks (T1 INV-D-01 regression, T2 INV-D-06 regres
 - `bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-0'` — 10 pass / 0 fail / 36 expects / 15 filtered out (8 INV-D-0[1-8] + 2 regression slugs)
 - `bun test ./test/integration/multi-agent-invariants.test.ts` — 25 pass / 0 fail / 105 expects (5.4s; full file regression clean)
 - `bun test test/prose/subagent-prompts.test.ts` — 21 pass / 0 fail / 21 expects (697ms; Wave 1 + Wave 2 prose additions)
-- Orchestrator artefacts: PLAN.json + contracts/T1.json + contracts/T2.json + contracts/T3.json + NOTES.md present; T1 + T2 signed=true; T3 pending sign post-eval.
+- Orchestrator artefacts: PLAN.json + contracts/T1.json + T2.json + T3.json + aggregated CONTRACT.json + NOTES.md present; all 3 tasks signed=true; 29/29 criteria status=passed.
 
 ### Invariant → wave → fix table
 
@@ -50,6 +50,13 @@ Planner wrote PLAN.json with 3 tasks (T1 INV-D-01 regression, T2 INV-D-06 regres
 
 - 42fc76207 — T1: add INV-D-01-regression-ses_1c2e8d84affe + D5b two-pass extractor hardening (Cidoo shape)
 - 12e42f932 — T2: add INV-D-06-regression-ses_1d84f236bffe (Demo 2 sibling-deadlock — runtime + prose)
-- <T3 commit sha — orchestrator fills after committing>
+- 30e7bd146 — T3: NOTES.md audit subsection (invariant→wave→fix table + Phase 2 recs)
+- <settle> — wave 2 settle: aggregate CONTRACT.json + STATE.md update + NOTES.md SHA record
+
+### Findings / lessons (feed into future waves)
+
+1. **Inline production fixes ARE valid in validation waves when WAVE.md gotcha explicitly allows.** WAVE.md goal said "escalate to PLAN UNDOABLE" but gotcha 4 said "fix the gap OR (if structural) PLAN UNDOABLE". The D5b two-pass walk was non-structural (~15 LOC). Orchestrator landed it inline, T1 gen committed atomically. Total wall time loss vs. plain GREEN-from-the-start: ~1 turn. Vs. PLAN UNDOABLE → verifier amend → next attempt: ~5+ turns. Lesson: when the fix is small AND clearly inside the wave's spirit, fix inline; reserve PLAN UNDOABLE for structural gaps.
+2. **The contract pre-agreed pattern stayed effective.** All 3 tasks dispatched without negotiation phase; gen+eval each completed in one round. Wave 1 NOTES.md lesson #4 confirmed: validation/mechanical work benefits from pre-agreement.
+3. **Evaluator file-write may shadow contract expansions.** When the orchestrator expands a contract mid-task (adding C9 + C10 after T1's ABORT pivot), the evaluator may overwrite with an earlier in-memory copy that omits the new criteria. Orchestrator must reconcile post-settle. Future waves: have the orchestrator stage a "contract delta" file (e.g. `T1.delta.json`) and instruct evaluator to merge it before grading.
 
 ---
