@@ -1,7 +1,7 @@
 ## Attempt 1 — WAVE COMPLETE
 
 **Session:** ses_1bb496396ffeVoJ9Zbezn1sXkA
-**Commit:** <settle commit; recorded in STATE.md wave row + appended below>
+**Commit:** 4fda52548 (settle commit; per-task SHAs in Commit shas section)
 **Date:** 2026-05-20
 **Decision on entry:** first attempt
 **Orchestration:** planner + per-task gen+eval pairs (3 tasks), pivot count: 1 (T1 ABORT(spec_wrong) → orchestrator landed D5b two-pass hardening inline → T1 generator resumed and committed atomically)
@@ -51,7 +51,7 @@ Planner wrote PLAN.json with 3 tasks (T1 INV-D-01 regression, T2 INV-D-06 regres
 - 42fc76207 — T1: add INV-D-01-regression-ses_1c2e8d84affe + D5b two-pass extractor hardening (Cidoo shape)
 - 12e42f932 — T2: add INV-D-06-regression-ses_1d84f236bffe (Demo 2 sibling-deadlock — runtime + prose)
 - 30e7bd146 — T3: NOTES.md audit subsection (invariant→wave→fix table + Phase 2 recs)
-- <settle> — wave 2 settle: aggregate CONTRACT.json + STATE.md update + NOTES.md SHA record
+- 4fda52548 — wave 2 settle: aggregate CONTRACT.json + STATE.md update + NOTES.md SHA record
 
 ### Findings / lessons (feed into future waves)
 
