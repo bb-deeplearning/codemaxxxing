@@ -36,6 +36,7 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | Subscribing to bus events in tests | `bus-subscribe-helper-vs-service-method-cross-runtime-mismatch`, `syncevent-publish-uses-top-level-bus-runtime` |
 | Wiring a long-lived bus subscriber inside a service | `bus-subscriber-needs-instance-state-fork-and-instance-ref`, `syncevent-publish-uses-helper-bus-not-test-layer-bus` |
 | Storing service state shared across instances | `agentcontrol-providerref-must-live-in-layer-not-instancestate` |
+| Touching the D5 completion-watcher extractor in `agent/control.ts` | `agentcontrol-d5-extractor-needs-two-pass-walk-for-terse-followup-status-line` |
 | Defining a new tool with `Tool.define` | `tool-define-inner-effect-gen-closing-brace`, `tool-execute-needs-explicit-result-type-disjoint-metadata`, `tool-context-ask-typed-as-void` |
 | Lifting helpers out of `Tool.define` into a sibling module | `tool-define-execute-r-must-be-never-capture-services-in-closure` |
 | Adding a new dep to `ToolRegistry`'s layer | `agentcontrol-required-by-toolregistry-existing-test-layers` |
@@ -87,6 +88,7 @@ Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offs
 - L887 `syncevent-publish-uses-top-level-bus-runtime` — events from `SyncEvent.run` land on the top-level Bus runtime, not your test layer's.
 - L868 `syncevent-publish-uses-helper-bus-not-test-layer-bus` — same root cause from the other side: subscribe via top-level `Bus.subscribe` from inside `InstanceState.make`.
 - L138 `agentcontrol-providerref-must-live-in-layer-not-instancestate` — single-value, instance-agnostic state belongs at layer scope, not in `InstanceState`.
+- L148 `agentcontrol-d5-extractor-needs-two-pass-walk-for-terse-followup-status-line` — D5 completion watcher must prefer non-terse bodies before falling back to terse status lines.
 
 ### Sourced events
 - L551 `eventv2-and-bus-dual-emission-with-parallel-type-prefixes` — keep EventV2 (`session.next.<domain>.…`) and BusEvent (`<domain>.…`) under different type prefixes; emit both with the same payload.
@@ -144,6 +146,39 @@ Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offs
 ## Full entries
 
 Alphabetical by slug. Each entry stands alone — read just what you need.
+
+### `agentcontrol-d5-extractor-needs-two-pass-walk-for-terse-followup-status-line`
+
+**Severity:** correctness-bug
+**When:** A subagent emits its real deliverable in one assistant message (e.g. `finish: "tool-calls"` + ~5KB body) AND a terse follow-up status message in another (`finish: "stop"` + "Done.").
+**Symptom:** Parent's completion notification body is the ⚠️ safety-net warning with `"Done."` inlined as the "last assistant text" — the real deliverable is silently dropped. Reproduces `ses_1c2e8d84affeZ7t5g5LKveGDTo` (Cidoo ABM066) end-to-end.
+**Fix:** Two-pass `findMessage` walk in `control.ts`'s completion watcher. Pass 1 prefers non-terse bodies (predicate: `text.length > 0 && !looksLikeMissingDeliverable(text)`). Pass 2 falls back to any non-empty text (the original predicate). The fallback preserves the safety-net behavior for the genuinely-silent-with-only-status-line case (INV-D-03 still green).
+
+```ts
+// Pass 1 — prefer substantive deliverable.
+const substantive = yield* sessions
+  .findMessage(child.id, (m) => {
+    if (m.info.role !== "assistant") return false
+    const text = extractText(m.parts)
+    return text.length > 0 && !looksLikeMissingDeliverable(text)
+  })
+  .pipe(Effect.orElseSucceed(() => Option.none<never>()))
+// Pass 2 — fall back to any non-empty text.
+const finalAssistant = Option.isSome(substantive)
+  ? substantive
+  : yield* sessions
+      .findMessage(child.id, (m) => {
+        if (m.info.role !== "assistant") return false
+        const text = extractText(m.parts)
+        return text.length > 0
+      })
+      .pipe(Effect.orElseSucceed(() => Option.none<never>()))
+```
+
+**Why:** `Session.findMessage` walks newest-first. The naive D5 predicate (`text.length > 0`) returns the newest non-empty message, which is the terse follow-up when one exists. `looksLikeMissingDeliverable` then triggers on the terse body and the warning shadows the real deliverable. The two-pass walk preserves newest-first ordering while preferring substantive over terse.
+**See:** `packages/opencode/src/agent/control.ts:820-859` (the two-pass walk). Test: `packages/opencode/test/integration/multi-agent-invariants.test.ts` slug `INV-D-01-regression-ses_1c2e8d84affe`. Related: `agentcontrol-providerref-must-live-in-layer-not-instancestate` (sibling D5 invariant — per-root scoping).
+
+---
 
 ### `agentcontrol-providerref-must-live-in-layer-not-instancestate`
 

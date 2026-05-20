@@ -1320,6 +1320,110 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
       expect(note.content).toContain("finding-b")
     }),
   )
+
+  // INV-D-01-regression-ses_1c2e8d84affe — diagnostic-session-1 (Cidoo
+  // ABM066) shape. Subagent emits a multi-KB tool-calls assistant message
+  // carrying the actual deliverable, THEN a second finish="stop" message
+  // with just "Done." The pre-D5 extractor surfaced only the last
+  // assistant text → parent received "Done." with the report lost. After
+  // D5, the parent's completion notification carries the report body.
+  it.instance("INV-D-01-regression-ses_1c2e8d84affe", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      // Build a ~5KB body. Marker substring "FULL REPORT BODY" stays
+      // intact so the assertion can grep it back out.
+      const longText = "FULL REPORT BODY ".repeat(256)
+
+      yield* control.registerRunLoop((sid) =>
+        Effect.gen(function* () {
+          const user = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            role: "user" as const,
+            time: { created: Date.now() },
+            agent: "build",
+            model: ref,
+          }
+          yield* sessions.updateMessage(user)
+
+          // First assistant message: finish="tool-calls" carrying the
+          // multi-KB report. This is the actual deliverable.
+          const asst1 = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            parentID: user.id,
+            role: "assistant" as const,
+            mode: "build",
+            agent: "build",
+            path: { cwd: "/tmp", root: "/tmp" },
+            time: { created: Date.now(), completed: Date.now() },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: ref.modelID,
+            providerID: ref.providerID,
+            finish: "tool-calls",
+          }
+          yield* sessions.updateMessage(asst1)
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: asst1.id,
+            sessionID: sid,
+            type: "text",
+            text: longText,
+          })
+
+          // Second assistant message: finish="stop" with just "Done."
+          // Pre-D5 extractor surfaced THIS as the deliverable, losing
+          // the report body above.
+          const asst2 = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            parentID: asst1.id,
+            role: "assistant" as const,
+            mode: "build",
+            agent: "build",
+            path: { cwd: "/tmp", root: "/tmp" },
+            time: { created: Date.now(), completed: Date.now() },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: ref.modelID,
+            providerID: ref.providerID,
+            finish: "stop",
+          }
+          yield* sessions.updateMessage(asst2)
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: asst2.id,
+            sessionID: sid,
+            type: "text",
+            text: "Done.",
+          })
+          return "done"
+        }),
+      )
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "cidoo_repro",
+        initial_message: "go",
+      })
+      yield* Effect.sleep(80)
+
+      const drained = yield* control.drainMailbox(root.id)
+      // Exactly ONE notification from the child path.
+      const fromChild = drained.filter((m) => String(m.author) === "/root/cidoo_repro")
+      expect(fromChild).toHaveLength(1)
+      const note = fromChild[0]!
+      // The actual deliverable (report body) landed in the parent's
+      // mailbox — NOT just the second-turn "Done." message.
+      expect(note.content).toContain("FULL REPORT BODY")
+    }),
+  )
 })
 
 describe("bug 3 audit — agent_type role-vocabulary fix is intact", () => {

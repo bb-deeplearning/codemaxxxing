@@ -1,0 +1,94 @@
+{
+  "task_id": "T1",
+  "title": "INV-D-01-regression-ses_1c2e8d84affe — diagnostic-session-1 reproduction (+ D5 two-pass extractor hardening)",
+  "writes": [
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+    "/Users/rohan/Documents/Personal/codemaxxxing/GOTCHAS.md"
+  ],
+  "scope_expansion": "After T1 generator's initial pass uncovered a production gap (D5 extractor walks newest-first; terse follow-up shadowed the real deliverable in the Cidoo two-message shape), the orchestrator landed a tightly-scoped D5 hardening (two-pass walk in control.ts) inline. Per WAVE.md gotcha 4 ('fix the gap, OR (if structural) PLAN UNDOABLE') and WAVE.md goal ('minimal new production code (only if a fix is incomplete)'). The hardening is non-structural — ~15 lines, preserves D5 attribution, plus a GOTCHAS entry. T1 generator now commits BOTH files atomically.",
+  "pre_agreed_by_orchestrator": true,
+  "signed": false,
+  "criteria": [
+    {
+      "id": "C1",
+      "category": "correctness",
+      "assertion": "multi-agent-invariants.test.ts contains literal slug 'INV-D-01-regression-ses_1c2e8d84affe' on an `it.instance(\"...\",` line inside the INV-D describe block.",
+      "verify": "grep -E -q 'it\\.instance\\(\"INV-D-01-regression-ses_1c2e8d84affe\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+      "weight": 0.1,
+      "status": "pending"
+    },
+    {
+      "id": "C2",
+      "category": "integration",
+      "assertion": "The new regression test passes when filtered by exact slug from packages/opencode.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-01-regression-ses_1c2e8d84affe' 2>&1 | tee /tmp/wave2-t1-c2.log && grep -E '[1-9][0-9]* pass' /tmp/wave2-t1-c2.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave2-t1-c2.log",
+      "weight": 0.3,
+      "status": "pending"
+    },
+    {
+      "id": "C3",
+      "category": "convention",
+      "assertion": "bun typecheck still passes from packages/opencode after the append.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+      "weight": 0.1,
+      "status": "pending"
+    },
+    {
+      "id": "C4",
+      "category": "bc_preservation",
+      "assertion": "All pre-existing INV-D-01..08 still pass; full multi-agent-invariants.test.ts runs clean (>=1 pass, 0 fail).",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave2-t1-c4.log && grep -E '[1-9][0-9]* pass' /tmp/wave2-t1-c4.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave2-t1-c4.log",
+      "weight": 0.15,
+      "status": "pending"
+    },
+    {
+      "id": "C5",
+      "category": "correctness",
+      "assertion": "The new test body asserts the marker substring 'FULL REPORT BODY' is in the delivered message (the actual deliverable, NOT the second-turn 'Done.' message).",
+      "verify": "grep -F 'FULL REPORT BODY' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts && grep -E 'toContain.*FULL REPORT BODY' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+      "weight": 0.1,
+      "status": "pending"
+    },
+    {
+      "id": "C6",
+      "category": "correctness",
+      "assertion": "The test scripts TWO assistant messages (one finish='tool-calls' with the report, one finish='stop' with 'Done.'). Verify both finish reasons appear inside the regression test body.",
+      "verify": "awk '/it\\.instance\\(\"INV-D-01-regression-ses_1c2e8d84affe\"/,/^  \\)$/' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts > /tmp/wave2-t1-c6.txt && grep -F 'tool-calls' /tmp/wave2-t1-c6.txt && grep -F 'stop' /tmp/wave2-t1-c6.txt && grep -F 'Done.' /tmp/wave2-t1-c6.txt",
+      "weight": 0.1,
+      "status": "pending"
+    },
+    {
+      "id": "C7",
+      "category": "correctness",
+      "assertion": "The test asserts exactly ONE message from the child path '/root/cidoo_repro' (uses .filter not .find for the count assertion).",
+      "verify": "awk '/it\\.instance\\(\"INV-D-01-regression-ses_1c2e8d84affe\"/,/^  \\)$/' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts > /tmp/wave2-t1-c7.txt && grep -F '/root/cidoo_repro' /tmp/wave2-t1-c7.txt && grep -E '\\.filter\\(' /tmp/wave2-t1-c7.txt && grep -E '(toHaveLength\\(1\\)|toBe\\(1\\))' /tmp/wave2-t1-c7.txt",
+      "weight": 0.1,
+      "status": "pending"
+    },
+    {
+      "id": "C8",
+      "category": "bc_preservation",
+      "assertion": "The bug-3 audit describe block 'bug 3 audit — agent_type role-vocabulary fix is intact' still exists verbatim.",
+      "verify": "grep -F 'bug 3 audit — agent_type role-vocabulary fix is intact' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+      "weight": 0.05,
+      "status": "pending"
+    },
+    {
+      "id": "C9",
+      "category": "correctness",
+      "assertion": "D5 two-pass extractor hardening present in control.ts: the file contains BOTH the pass-1 substantive-body predicate (using `!looksLikeMissingDeliverable(text)`) AND the wave-2 hardening attribution comment.",
+      "verify": "grep -F '!looksLikeMissingDeliverable(text)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -F 'Wave 2 hardening (D5b)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+      "weight": 0.05,
+      "status": "pending"
+    },
+    {
+      "id": "C10",
+      "category": "correctness",
+      "assertion": "Repo-root GOTCHAS.md contains the new sharp-edge entry slug 'agentcontrol-d5-extractor-needs-two-pass-walk-for-terse-followup-status-line'.",
+      "verify": "grep -F 'agentcontrol-d5-extractor-needs-two-pass-walk-for-terse-followup-status-line' /Users/rohan/Documents/Personal/codemaxxxing/GOTCHAS.md",
+      "weight": 0.05,
+      "status": "pending"
+    }
+  ]
+}

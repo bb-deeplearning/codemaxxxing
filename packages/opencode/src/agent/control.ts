@@ -827,13 +827,34 @@ export const layer = Layer.effect(
                   // (tool-only / thinking-only turns) are filtered inside the
                   // predicate so findMessage keeps walking past them until it
                   // finds a non-empty body or runs out of messages.
-                  const finalAssistant = yield* sessions
+                  //
+                  // Wave 2 hardening (D5b) — two-pass walk. The Cidoo shape
+                  // (`ses_1c2e8d84affeZ7t5g5LKveGDTo`) emitted the real
+                  // deliverable in one assistant message (finish=tool-calls,
+                  // ~5KB body) and then a TERSE follow-up status line in a
+                  // second assistant message (finish=stop, "Done."). Pass-1
+                  // (non-empty AND not a terse status line) finds the real
+                  // deliverable. Pass-2 (any non-empty) is the fallback when
+                  // the only message in the session IS a terse status line
+                  // — that case still wants the body inlined alongside the
+                  // ⚠️ warning so the parent sees what the child actually
+                  // emitted.
+                  const substantive = yield* sessions
                     .findMessage(child.id, (m) => {
                       if (m.info.role !== "assistant") return false
                       const text = extractText(m.parts)
-                      return text.length > 0
+                      return text.length > 0 && !looksLikeMissingDeliverable(text)
                     })
                     .pipe(Effect.orElseSucceed(() => Option.none<never>()))
+                  const finalAssistant = Option.isSome(substantive)
+                    ? substantive
+                    : yield* sessions
+                        .findMessage(child.id, (m) => {
+                          if (m.info.role !== "assistant") return false
+                          const text = extractText(m.parts)
+                          return text.length > 0
+                        })
+                        .pipe(Effect.orElseSucceed(() => Option.none<never>()))
                   const body = Option.match(finalAssistant, {
                     onNone: () => "",
                     onSome: (msg) => extractText(msg.parts),
