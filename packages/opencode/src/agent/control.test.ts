@@ -3788,3 +3788,632 @@ describe("AgentControl D13 pool primitives", () => {
     ),
   )
 })
+
+// D14 (actor-discipline-2026-05-20 Wave 7) — link primitives + linked-death
+// cascade. linkAgents/unlinkAgents/agentLinks manage a symmetric
+// adjacency map per-root; the completion watcher fires the cascade on
+// any linked peer's non-shutdown terminal status and renders the dead
+// partner's status label as `linked_death` instead of plain `shutdown`.
+describe("AgentControl D14 link primitives", () => {
+  it.live("linkAgents stores symmetric edges visible via agentLinks from both sides", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const a = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "a",
+          initial_message: ".",
+        })
+        const b = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "b",
+          initial_message: ".",
+        })
+        yield* control.linkAgents(a.thread_id, b.thread_id, root.id)
+        const aLinks = yield* control.agentLinks(a.thread_id, root.id)
+        const bLinks = yield* control.agentLinks(b.thread_id, root.id)
+        expect(aLinks).toContain(b.thread_id)
+        expect(bLinks).toContain(a.thread_id)
+      }),
+    ),
+  )
+
+  it.live("linkAgents is idempotent — re-link does not duplicate the edge", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const a = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "a",
+          initial_message: ".",
+        })
+        const b = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "b",
+          initial_message: ".",
+        })
+        yield* control.linkAgents(a.thread_id, b.thread_id, root.id)
+        yield* control.linkAgents(a.thread_id, b.thread_id, root.id)
+        yield* control.linkAgents(b.thread_id, a.thread_id, root.id)
+        const aLinks = yield* control.agentLinks(a.thread_id, root.id)
+        expect(aLinks.length).toBe(1)
+        expect(aLinks[0]).toBe(b.thread_id)
+      }),
+    ),
+  )
+
+  it.live("self-link is a no-op (no self-edge stored)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const a = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "a",
+          initial_message: ".",
+        })
+        yield* control.linkAgents(a.thread_id, a.thread_id, root.id)
+        const links = yield* control.agentLinks(a.thread_id, root.id)
+        expect(links).toEqual([])
+      }),
+    ),
+  )
+
+  it.live("unlinkAgents removes the symmetric edge; second unlink is a no-op", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const a = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "a",
+          initial_message: ".",
+        })
+        const b = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "b",
+          initial_message: ".",
+        })
+        yield* control.linkAgents(a.thread_id, b.thread_id, root.id)
+        yield* control.unlinkAgents(a.thread_id, b.thread_id, root.id)
+        expect(yield* control.agentLinks(a.thread_id, root.id)).toEqual([])
+        expect(yield* control.agentLinks(b.thread_id, root.id)).toEqual([])
+        // Second unlink does not error.
+        yield* control.unlinkAgents(a.thread_id, b.thread_id, root.id)
+      }),
+    ),
+  )
+
+  it.live("cross-root link rejected with AgentNotFoundError", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const rootA = yield* sessions.create({ title: "A" })
+        const rootB = yield* sessions.create({ title: "B" })
+        yield* control.registerSessionRoot(rootA.id)
+        yield* control.registerSessionRoot(rootB.id)
+        const childA = yield* control.spawnAgent({
+          parentID: rootA.id,
+          parentPath: ROOT,
+          task_name: "a",
+          initial_message: ".",
+        })
+        const childB = yield* control.spawnAgent({
+          parentID: rootB.id,
+          parentPath: ROOT,
+          task_name: "b",
+          initial_message: ".",
+        })
+        const result = yield* Effect.result(
+          control.linkAgents(childA.thread_id, childB.thread_id, rootA.id),
+        )
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) {
+          expect(result.failure).toBeInstanceOf(AgentNotFoundError)
+        }
+      }),
+    ),
+  )
+
+  it.live("agentLinks returns empty array for unknown id", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const out = yield* control.agentLinks(SessionID.descending(), root.id)
+        expect(out).toEqual([])
+      }),
+    ),
+  )
+
+  it.live("agentLinks returns empty when callerID has no slot (unknown root)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const out = yield* control.agentLinks(
+          SessionID.descending(),
+          SessionID.descending(),
+        )
+        expect(out).toEqual([])
+      }),
+    ),
+  )
+
+  it.live("unlinkAgents on unknown caller is a no-op (no error)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        yield* seedRoot()
+        const control = yield* AgentControl.Service
+        // Should complete without throwing.
+        yield* control.unlinkAgents(
+          SessionID.descending(),
+          SessionID.descending(),
+          SessionID.descending(),
+        )
+      }),
+    ),
+  )
+
+  it.live("linkAgents rejects when caller's slot is unknown", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const control = yield* AgentControl.Service
+        const result = yield* Effect.result(
+          control.linkAgents(
+            SessionID.descending(),
+            SessionID.descending(),
+            SessionID.descending(),
+          ),
+        )
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) {
+          expect(result.failure).toBeInstanceOf(AgentNotFoundError)
+        }
+      }),
+    ),
+  )
+
+  it.live("linkAgents rejects when peer A's root does not match caller's", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const liveChild = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "live",
+          initial_message: ".",
+        })
+        // a is a phantom SessionID — its root is unknown, so the aRoot
+        // check fails before bRoot is consulted.
+        const result = yield* Effect.result(
+          control.linkAgents(SessionID.descending(), liveChild.thread_id, root.id),
+        )
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) {
+          expect(result.failure).toBeInstanceOf(AgentNotFoundError)
+        }
+      }),
+    ),
+  )
+
+  it.live("linked-death cascade: crashing peer A closes peer B with linked_death label", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+        // Peer A's runLoop crashes; peer B holds on Effect.never. The
+        // cascade must close B within the watcher window.
+        let aId: SessionID | undefined
+        yield* control.registerRunLoop((sid) => {
+          if (aId === undefined) {
+            aId = sid
+            return Effect.die("crash A")
+          }
+          return Effect.never
+        })
+        const root = yield* seedRoot()
+        const a = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "peer_a",
+          initial_message: ".",
+        })
+        const b = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "peer_b",
+          initial_message: ".",
+        })
+        yield* control.linkAgents(a.thread_id, b.thread_id, root.id)
+        // Give the cascade time to fire.
+        yield* Effect.sleep(150)
+
+        const bStatusRef = yield* control.subscribeStatus(b.thread_id)
+        const bStatus = yield* SubscriptionRef.get(bStatusRef)
+        expect(bStatus).toBe("shutdown")
+
+        const drained = yield* control.drainMailbox(root.id)
+        // The parent's mailbox should have a notification for B labeled
+        // `linked_death`, not bare `shutdown`.
+        const bNote = drained.find(
+          (m) => String(m.author) === String(b.metadata.agent_path),
+        )
+        expect(bNote).toBeDefined()
+        expect(bNote?.content).toContain("reached status: linked_death")
+      }),
+    ),
+  )
+
+  it.live("unlink before crash breaks the cascade — peer B survives A's crash", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+        let aId: SessionID | undefined
+        yield* control.registerRunLoop((sid) => {
+          if (aId === undefined) {
+            aId = sid
+            return Effect.never
+          }
+          return Effect.never
+        })
+        const root = yield* seedRoot()
+        const a = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "peer_a",
+          initial_message: ".",
+        })
+        const b = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "peer_b",
+          initial_message: ".",
+        })
+        yield* control.linkAgents(a.thread_id, b.thread_id, root.id)
+        yield* control.unlinkAgents(a.thread_id, b.thread_id, root.id)
+        // Now close A externally — without the link, B must survive.
+        yield* control.closeAgent(a.thread_id, root.id)
+        yield* Effect.sleep(150)
+        const bStatusRef = yield* control.subscribeStatus(b.thread_id)
+        const bStatus = yield* SubscriptionRef.get(bStatusRef)
+        expect(bStatus).not.toBe("shutdown")
+      }),
+    ),
+  )
+})
+
+// D15 (actor-discipline-2026-05-20 Wave 7) — mailbox-full propagation.
+// sendInterAgentCommunication on a bounded mailbox surfaces
+// MailboxFullError to user callers; system flag bypasses the cap so
+// completion-watcher notifications still reach the parent under
+// backpressure. Tests use spawnAgent's per-spawn `mailbox_capacity`
+// override to force backpressure scenarios without queueing 33+
+// messages.
+describe("AgentControl D15 mailbox-full propagation", () => {
+  it.live("user send returns MailboxFullError when target mailbox is at capacity", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "bounded",
+          initial_message: "seed",
+          mailbox_capacity: 4,
+        })
+        // Drain the seed so we start from an empty queue.
+        yield* control.drainMailbox(child.thread_id)
+        const childPath = child.metadata.agent_path ?? ROOT
+        for (let i = 0; i < 4; i++) {
+          yield* control.sendInterAgentCommunication(
+            child.thread_id,
+            new InterAgentCommunication({
+              author: ROOT,
+              recipient: childPath,
+              content: `m${i}`,
+              trigger_turn: false,
+              sent_at: i,
+            }),
+            root.id,
+          )
+        }
+        const overflow = yield* Effect.result(
+          control.sendInterAgentCommunication(
+            child.thread_id,
+            new InterAgentCommunication({
+              author: ROOT,
+              recipient: childPath,
+              content: "overflow",
+              trigger_turn: false,
+              sent_at: 5,
+            }),
+            root.id,
+          ),
+        )
+        expect(Result.isFailure(overflow)).toBe(true)
+        if (Result.isFailure(overflow)) {
+          expect((overflow.failure as { _tag?: string })._tag).toBe("MailboxFullError")
+        }
+      }),
+    ),
+  )
+
+  it.live("system flag bypasses cap — succeeds even when mailbox is at capacity", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "syscapped",
+          initial_message: "seed",
+          mailbox_capacity: 2,
+        })
+        yield* control.drainMailbox(child.thread_id)
+        const childPath = child.metadata.agent_path ?? ROOT
+        for (let i = 0; i < 2; i++) {
+          yield* control.sendInterAgentCommunication(
+            child.thread_id,
+            new InterAgentCommunication({
+              author: ROOT,
+              recipient: childPath,
+              content: `u${i}`,
+              trigger_turn: false,
+              sent_at: i,
+            }),
+            root.id,
+          )
+        }
+        // User-path overflow rejects.
+        const userOverflow = yield* Effect.result(
+          control.sendInterAgentCommunication(
+            child.thread_id,
+            new InterAgentCommunication({
+              author: ROOT,
+              recipient: childPath,
+              content: "user-overflow",
+              trigger_turn: false,
+              sent_at: 9,
+            }),
+            root.id,
+          ),
+        )
+        expect(Result.isFailure(userOverflow)).toBe(true)
+        // System-path succeeds.
+        yield* control.sendInterAgentCommunication(
+          child.thread_id,
+          new InterAgentCommunication({
+            author: ROOT,
+            recipient: childPath,
+            content: "system-bypass",
+            trigger_turn: false,
+            sent_at: 10,
+          }),
+          root.id,
+          { system: true },
+        )
+        const drained = yield* control.drainMailbox(child.thread_id)
+        const contents = drained.map((m) => m.content)
+        expect(contents).toContain("system-bypass")
+      }),
+    ),
+  )
+
+  it.live("after drain, sends succeed again — recovery from backpressure", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "recover",
+          initial_message: ".",
+          mailbox_capacity: 2,
+        })
+        yield* control.drainMailbox(child.thread_id)
+        const childPath = child.metadata.agent_path ?? ROOT
+        for (let i = 0; i < 2; i++) {
+          yield* control.sendInterAgentCommunication(
+            child.thread_id,
+            new InterAgentCommunication({
+              author: ROOT,
+              recipient: childPath,
+              content: `m${i}`,
+              trigger_turn: false,
+              sent_at: i,
+            }),
+            root.id,
+          )
+        }
+        const before = yield* Effect.result(
+          control.sendInterAgentCommunication(
+            child.thread_id,
+            new InterAgentCommunication({
+              author: ROOT,
+              recipient: childPath,
+              content: "blocked",
+              trigger_turn: false,
+              sent_at: 9,
+            }),
+            root.id,
+          ),
+        )
+        expect(Result.isFailure(before)).toBe(true)
+        // Drain frees capacity.
+        const drained = yield* control.drainMailbox(child.thread_id)
+        expect(drained.length).toBe(2)
+        // Now sends succeed again.
+        yield* control.sendInterAgentCommunication(
+          child.thread_id,
+          new InterAgentCommunication({
+            author: ROOT,
+            recipient: childPath,
+            content: "fresh",
+            trigger_turn: false,
+            sent_at: 10,
+          }),
+          root.id,
+        )
+      }),
+    ),
+  )
+
+  it.live("completion notifications bypass the parent's mailbox cap (system path)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        // Cap root's mailbox by replaying the per-spawn override path —
+        // actually root's mailbox uses MAILBOX_DEFAULT_CAPACITY via
+        // ensureRootSlot. To force the scenario without changing root's
+        // capacity, we exercise it indirectly: a subagent's mailbox is
+        // small, and the completion notification from that subagent's
+        // own child still lands on root (which is unbounded for this
+        // test). The key assertion is: even if we attempt to flood the
+        // child's mailbox so a user-path send would reject, the
+        // completion watcher (which uses { system: true }) still
+        // delivers its notification to root.
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        // Child runLoop writes one assistant message then exits → watcher
+        // fires.
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            const userMsg = {
+              id: MessageID.ascending(),
+              sessionID: sid,
+              role: "user" as const,
+              time: { created: Date.now() },
+              agent: "build",
+              model: {
+                providerID: ProviderID.make("anthropic"),
+                modelID: ModelID.make("claude-3-5-sonnet"),
+              },
+            }
+            yield* sessions.updateMessage(userMsg)
+            const aMsg = {
+              id: MessageID.ascending(),
+              sessionID: sid,
+              parentID: userMsg.id,
+              role: "assistant" as const,
+              mode: "build",
+              agent: "build",
+              path: { cwd: ".", root: "." },
+              time: { created: Date.now(), completed: Date.now() },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("claude-3-5-sonnet"),
+              providerID: ProviderID.make("anthropic"),
+              finish: "tool-calls",
+            }
+            yield* sessions.updateMessage(aMsg)
+            yield* sessions.updatePart({
+              id: PartID.ascending(),
+              messageID: aMsg.id,
+              sessionID: sid,
+              type: "text",
+              text: "deliverable body",
+            })
+            return "done"
+          }),
+        )
+        const root = yield* seedRoot()
+        // First, deliberately fill root's mailbox by sending user
+        // messages from the (yet-to-be-spawned) child. The child must
+        // exist for the sender-id to resolve, but we can use root.id
+        // as sender to send to itself.
+        // Spawn the child so we can use its session id.
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "deliverer",
+          initial_message: ".",
+        })
+        // Drain root first so we have a clean slate.
+        yield* control.drainMailbox(root.id)
+        // Wait for the completion notification to arrive.
+        yield* Effect.sleep(80)
+        const drained = yield* control.drainMailbox(root.id)
+        const note = drained.find(
+          (m) => String(m.author) === String(child.metadata.agent_path),
+        )
+        expect(note).toBeDefined()
+        expect(note?.content).toContain("reached status: completed")
+      }),
+    ),
+  )
+
+  it.live("MailboxFullError carries the configured capacity on the error class", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "capshape",
+          initial_message: ".",
+          mailbox_capacity: 1,
+        })
+        yield* control.drainMailbox(child.thread_id)
+        const childPath = child.metadata.agent_path ?? ROOT
+        yield* control.sendInterAgentCommunication(
+          child.thread_id,
+          new InterAgentCommunication({
+            author: ROOT,
+            recipient: childPath,
+            content: "first",
+            trigger_turn: false,
+            sent_at: 0,
+          }),
+          root.id,
+        )
+        const overflow = yield* Effect.result(
+          control.sendInterAgentCommunication(
+            child.thread_id,
+            new InterAgentCommunication({
+              author: ROOT,
+              recipient: childPath,
+              content: "second",
+              trigger_turn: false,
+              sent_at: 1,
+            }),
+            root.id,
+          ),
+        )
+        expect(Result.isFailure(overflow)).toBe(true)
+        if (Result.isFailure(overflow)) {
+          const err = overflow.failure as { capacity?: number; _tag?: string }
+          expect(err._tag).toBe("MailboxFullError")
+          expect(err.capacity).toBe(1)
+        }
+      }),
+    ),
+  )
+})

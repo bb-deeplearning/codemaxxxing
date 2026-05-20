@@ -1,9 +1,9 @@
 import { describe, expect } from "bun:test"
-import { Effect, Fiber, Layer, Stream, SubscriptionRef } from "effect"
+import { Effect, Fiber, Layer, Result, Stream, SubscriptionRef } from "effect"
 import { testEffect } from "../../test/lib/effect"
 import { AgentPath } from "./agent-path"
 import { InterAgentCommunication } from "./inter-agent-communication"
-import { Mailbox } from "./mailbox"
+import { Mailbox, MAILBOX_DEFAULT_CAPACITY, MailboxFullError } from "./mailbox"
 
 const it = testEffect(Layer.empty)
 
@@ -210,6 +210,136 @@ describe("Mailbox concurrency", () => {
       // Mailbox state contains all N messages, regardless of arrival order.
       const drained = yield* mb.drain()
       expect(drained.length).toBe(N)
+    }),
+  )
+})
+
+// D15 (actor-discipline-2026-05-20 Wave 7) — bounded mailbox + backpressure.
+// `send` enforces a capacity cap (default MAILBOX_DEFAULT_CAPACITY=32);
+// crossing the cap fails with MailboxFullError rather than queueing
+// indefinitely. `sendSystem` bypasses the cap so the completion watcher's
+// lifecycle notifications still reach the parent even under user-mailbox
+// backpressure (WAVE.md gotcha 5 option (a) — the "reserved system slot"
+// implemented as an uncapped fast-path on the same underlying queue).
+describe("Mailbox D15 bounded capacity", () => {
+  it.live("MAILBOX_DEFAULT_CAPACITY is 32", () =>
+    Effect.sync(() => {
+      expect(MAILBOX_DEFAULT_CAPACITY).toBe(32)
+    }),
+  )
+
+  it.live("default capacity rejects the 33rd user send with MailboxFullError", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make()
+      for (let i = 0; i < MAILBOX_DEFAULT_CAPACITY; i++) {
+        yield* mb.send(mail(`m${i}`))
+      }
+      const overflow = yield* Effect.result(mb.send(mail("overflow")))
+      expect(Result.isFailure(overflow)).toBe(true)
+      if (Result.isFailure(overflow)) {
+        expect(overflow.failure).toBeInstanceOf(MailboxFullError)
+        expect((overflow.failure as MailboxFullError).capacity).toBe(
+          MAILBOX_DEFAULT_CAPACITY,
+        )
+      }
+      // Queue stays at capacity — overflow was rejected BEFORE any append.
+      expect((yield* mb.peek()).length).toBe(MAILBOX_DEFAULT_CAPACITY)
+    }),
+  )
+
+  it.live("explicit capacity=4 caps user sends; 5th rejects + message text matches", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make(4)
+      yield* mb.send(mail("a"))
+      yield* mb.send(mail("b"))
+      yield* mb.send(mail("c"))
+      yield* mb.send(mail("d"))
+      const overflow = yield* Effect.result(mb.send(mail("e")))
+      expect(Result.isFailure(overflow)).toBe(true)
+      if (Result.isFailure(overflow)) {
+        const err = overflow.failure as MailboxFullError
+        expect(err).toBeInstanceOf(MailboxFullError)
+        expect(err.capacity).toBe(4)
+        expect(err.message).toContain("capacity=4")
+      }
+    }),
+  )
+
+  it.live("sendSystem bypasses the cap — succeeds even when mailbox is full", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make(2)
+      yield* mb.send(mail("u1"))
+      yield* mb.send(mail("u2"))
+      // User send rejects.
+      const overflow = yield* Effect.result(mb.send(mail("u3")))
+      expect(Result.isFailure(overflow)).toBe(true)
+      // System send still lands.
+      const sysSeq = yield* mb.sendSystem(mail("system notification"))
+      expect(sysSeq).toBe(3)
+      const peeked = yield* mb.peek()
+      expect(peeked.length).toBe(3)
+      expect(peeked[2]?.content).toBe("system notification")
+    }),
+  )
+
+  it.live("drain frees capacity — subsequent sends succeed after drain", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make(2)
+      yield* mb.send(mail("a"))
+      yield* mb.send(mail("b"))
+      const firstOverflow = yield* Effect.result(mb.send(mail("c")))
+      expect(Result.isFailure(firstOverflow)).toBe(true)
+
+      // Drain frees the slots.
+      const drained = yield* mb.drain()
+      expect(drained.length).toBe(2)
+
+      // Capacity is freed; new sends succeed.
+      yield* mb.send(mail("d"))
+      yield* mb.send(mail("e"))
+      // And the cap still applies after recovery.
+      const overflowAgain = yield* Effect.result(mb.send(mail("f")))
+      expect(Result.isFailure(overflowAgain)).toBe(true)
+    }),
+  )
+
+  it.live("concurrent sends past cap interleave between success and MailboxFullError", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make(3)
+      const N = 10
+      const results = yield* Effect.all(
+        Array.from({ length: N }, (_, i) => Effect.result(mb.send(mail(`m${i}`)))),
+        { concurrency: "unbounded" },
+      )
+      const successes = results.filter((r) => Result.isSuccess(r))
+      const failures = results.filter((r) => Result.isFailure(r))
+      // Exactly 3 succeed (the cap); the remaining 7 fail.
+      expect(successes.length).toBe(3)
+      expect(failures.length).toBe(N - 3)
+      for (const f of failures) {
+        if (Result.isFailure(f)) {
+          expect(f.failure).toBeInstanceOf(MailboxFullError)
+        }
+      }
+      expect((yield* mb.peek()).length).toBe(3)
+    }),
+  )
+
+  it.live("sendSystem advances seq and wakes subscribers like send does", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make(1)
+      const ref = yield* mb.subscribe()
+      const waiter = yield* SubscriptionRef.changes(ref).pipe(
+        Stream.dropWhile((c) => c <= 0),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.timeout("200 millis"),
+        Effect.forkScoped,
+      )
+      yield* mb.sendSystem(mail("system wakeup"))
+      yield* Fiber.join(waiter)
+      const seq = yield* SubscriptionRef.get(ref)
+      expect(seq).toBe(1)
     }),
   )
 })

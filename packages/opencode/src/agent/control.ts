@@ -29,6 +29,7 @@ import { AgentStatus } from "./status"
 import { LiveAgent } from "./live-agent"
 import { InterAgentCommunication } from "./inter-agent-communication"
 import { Mailbox } from "./mailbox"
+import { MailboxFullError } from "./mailbox"
 import {
   AGENT_MAX_DEPTH,
   AGENT_MAX_THREADS,
@@ -337,6 +338,12 @@ export interface SpawnAgentInput {
   // surface. See SpawnAgentInput's D12 type aliases above.
   readonly on_failure?: OnFailureStrategy
   readonly pool_strategy?: PoolStrategy
+  // Wave 7 (D15) — per-spawn override of the child mailbox capacity.
+  // Defaults to MAILBOX_DEFAULT_CAPACITY (32) when undefined. Used by
+  // integration tests and the future spawn_agent `mailbox_cap` param
+  // (Wave 7 T4) to force backpressure scenarios without queueing 33
+  // messages. Production callers leave undefined.
+  readonly mailbox_capacity?: number
 }
 
 export type SpawnError =
@@ -401,7 +408,8 @@ export interface Interface {
     targetID: SessionID,
     comm: InterAgentCommunication,
     senderID: SessionID,
-  ) => Effect.Effect<void, AgentNotFoundError>
+    flags?: { system?: boolean },
+  ) => Effect.Effect<void, AgentNotFoundError | MailboxFullError>
   readonly closeAgent: (
     id: SessionID,
     callerID?: SessionID,
@@ -477,6 +485,29 @@ export interface Interface {
     callerID: SessionID,
     except?: SessionID,
   ) => Effect.Effect<void>
+  // D14 (actor-discipline-2026-05-20 Wave 7) — link primitives. Both
+  // peers must resolve to the same per-root slot via callerID's
+  // slotFor; cross-root pairs fail with AgentNotFoundError matching
+  // the cross-root-send-rejection shape. Self-link is a no-op (no
+  // self-edge stored). Re-link is a no-op (idempotent symmetric add).
+  // Unlink of a non-linked pair is a no-op (no error per WAVE.md
+  // gotcha 2). agentLinks returns the sorted SessionID[] of peers
+  // `id` is linked to; empty when no links exist or callerID can't
+  // resolve a slot.
+  readonly linkAgents: (
+    a: SessionID,
+    b: SessionID,
+    callerID: SessionID,
+  ) => Effect.Effect<void, AgentNotFoundError>
+  readonly unlinkAgents: (
+    a: SessionID,
+    b: SessionID,
+    callerID: SessionID,
+  ) => Effect.Effect<void>
+  readonly agentLinks: (
+    id: SessionID,
+    callerID: SessionID,
+  ) => Effect.Effect<readonly SessionID[]>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/AgentControl") {}
@@ -548,6 +579,21 @@ interface PerRootData {
   // rest of the slot on per-root teardown / instance disposal.
   readonly poolMembers: Map<string, ReadonlyArray<SessionID>>
   readonly poolOf: Map<SessionID, string>
+  // D14 (actor-discipline-2026-05-20 Wave 7) — link primitives.
+  // `links` is a symmetric adjacency map: when A and B are linked, the
+  // entry exists on BOTH A's Set and B's Set. Symmetry is enforced by
+  // the linkAgents/unlinkAgents methods — never construct one-sided
+  // edges. `linkedDeathOf` is the cascade marker set: when the
+  // completion watcher tears down a peer because its partner crashed,
+  // the peer's SessionID lands here BEFORE closeAgent runs. The watcher
+  // consults this set in the status-label branch to render
+  // `linked_death` instead of plain `shutdown` so the parent's mailbox
+  // notification surfaces the cascade cause. Both fields are cleared
+  // alongside the rest of the slot on per-root teardown / instance
+  // disposal — see the Session.Event.Deleted subscriber + the disposal
+  // finalizer below.
+  readonly links: Map<SessionID, Set<SessionID>>
+  readonly linkedDeathOf: Set<SessionID>
 }
 
 interface InternalState {
@@ -660,6 +706,8 @@ export const layer = Layer.effect(
           slot.respawnInputByPath.clear()
           slot.poolMembers.clear()
           slot.poolOf.clear()
+          slot.links.clear()
+          slot.linkedDeathOf.clear()
           perRoot.delete(deletedID)
           for (const [sid, rid] of sessionToRoot.entries()) {
             if (rid === deletedID) sessionToRoot.delete(sid)
@@ -691,6 +739,8 @@ export const layer = Layer.effect(
               data.respawnInputByPath.clear()
               data.poolMembers.clear()
               data.poolOf.clear()
+              data.links.clear()
+              data.linkedDeathOf.clear()
             }
             perRoot.clear()
             sessionToRoot.clear()
@@ -736,6 +786,8 @@ export const layer = Layer.effect(
           respawnInputByPath: new Map(),
           poolMembers: new Map(),
           poolOf: new Map(),
+          links: new Map(),
+          linkedDeathOf: new Set(),
         }
         data.perRoot.set(id, slot)
         data.sessionToRoot.set(id, id)
@@ -891,10 +943,10 @@ export const layer = Layer.effect(
               },
             })
 
-            const mailbox = yield* Mailbox.make()
+            const mailbox = yield* Mailbox.make(input.mailbox_capacity)
             const status = yield* SubscriptionRef.make<AgentStatus>("pending_init")
 
-            yield* mailbox.send(
+            yield* mailbox.sendSystem(
               new InterAgentCommunication({
                 author: input.parentPath,
                 recipient: childPath,
@@ -1036,6 +1088,7 @@ export const layer = Layer.effect(
                           },
                         }),
                         child.id,
+                        { system: true },
                       ).pipe(Effect.catch(() => Effect.void))
                       slot.respawnCountByPath.set(pathKey, attempt)
                       const cachedInput = slot.respawnInputByPath.get(pathKey) ?? input
@@ -1067,7 +1120,7 @@ export const layer = Layer.effect(
                     }
                   }
                   const label = isShutdown
-                    ? "shutdown"
+                    ? (slot.linkedDeathOf.has(child.id) ? "linked_death" : "shutdown")
                     : typeof next === "object" && "completed" in next
                       ? "completed"
                       : "errored"
@@ -1157,7 +1210,51 @@ export const layer = Layer.effect(
                       abort_reason: effectiveAbortReason,
                     }),
                     child.id,
+                    { system: true },
                   ).pipe(Effect.catch(() => Effect.void))
+                  // D14 (actor-discipline-2026-05-20 Wave 7) — linked-death
+                  // cascade. When this child reaches a terminal NON-shutdown
+                  // status (completed / errored), every peer linked to it
+                  // dies too. Iterate slot.links.get(child.id); for each
+                  // peer that's still alive (status non-final, not already
+                  // queued by another cascade), mark the peer in
+                  // linkedDeathOf BEFORE closing so its watcher renders the
+                  // status label as `linked_death` instead of bare
+                  // `shutdown`. closeAgent runs with child.id as caller so
+                  // it does NOT inherit the strict-ancestor skip
+                  // optimisation — the peer's parent still needs the
+                  // linked_death notification on its mailbox.
+                  if (!isShutdown) {
+                    const peers = slot.links.get(child.id)
+                    if (peers && peers.size > 0) {
+                      // Snapshot peer ids — closeAgent on each will
+                      // mutate the underlying maps; iterate the copy.
+                      const peerSnapshot = [...peers]
+                      for (const peerID of peerSnapshot) {
+                        if (peerID === child.id) continue
+                        const peerStatus = slot.statuses.get(peerID)
+                        if (!peerStatus) continue
+                        const peerNow = yield* SubscriptionRef.get(peerStatus)
+                        if (AgentStatus.isFinal(peerNow)) continue
+                        if (slot.linkedDeathOf.has(peerID)) continue
+                        slot.linkedDeathOf.add(peerID)
+                        yield* closeAgent(peerID, child.id).pipe(
+                          Effect.catch(() => Effect.void),
+                        )
+                      }
+                      // Clear child.id from every peer's adjacency set,
+                      // then drop child.id's own entry. The link is gone
+                      // because the child is gone — leave no stale edges.
+                      for (const peerID of peerSnapshot) {
+                        const peerLinks = slot.links.get(peerID)
+                        if (peerLinks) {
+                          peerLinks.delete(child.id)
+                          if (peerLinks.size === 0) slot.links.delete(peerID)
+                        }
+                      }
+                      slot.links.delete(child.id)
+                    }
+                  }
                   // Shutdown is terminal — the fiber is gone, the mailbox
                   // (and therefore any revival possibility) is gone. Interrupt
                   // the watcher so it doesn't sit forever on a defunct status
@@ -1274,7 +1371,12 @@ export const layer = Layer.effect(
     }
 
     const sendInterAgentCommunication = Effect.fn("AgentControl.sendInterAgentCommunication")(
-      function* (targetID: SessionID, comm: InterAgentCommunication, senderID: SessionID) {
+      function* (
+        targetID: SessionID,
+        comm: InterAgentCommunication,
+        senderID: SessionID,
+        flags?: { system?: boolean },
+      ) {
         const data = yield* InstanceState.get(state)
         // Cross-root rejection. Sender and target must belong to the SAME
         // root's slot — otherwise the target either doesn't exist for this
@@ -1296,7 +1398,18 @@ export const layer = Layer.effect(
           yield* new AgentNotFoundError({ session: targetID })
           return
         }
-        yield* mailbox.send(comm)
+        // Wave 7 (D15) — system path bypasses the user-mailbox capacity
+        // cap so completion-watcher notifications + internal lifecycle
+        // sends still reach the parent even when its mailbox is at
+        // capacity. User-facing sends use the bounded `send` and surface
+        // `MailboxFullError` upward; tool wrappers (agent-send /
+        // agent-followup) translate that into a structured `mailbox_full`
+        // retry hint per WAVE.md gotcha 5.
+        if (flags?.system) {
+          yield* mailbox.sendSystem(comm)
+        } else {
+          yield* mailbox.send(comm)
+        }
         yield* slot.registry.updateLastTaskMessage(targetID, comm.content)
         // D5 (actor-discipline-2026-05-20) — safety-net tracking. If the
         // sender is a registered child AND the recipient is the sender's
@@ -1910,6 +2023,75 @@ export const layer = Layer.effect(
       }
     })
 
+    // D14 (actor-discipline-2026-05-20 Wave 7) — link primitives. Per-root
+    // scoped via callerID. Symmetric: link(A,B) === link(B,A); the edge
+    // is stored on BOTH peers' Sets so cascade lookups from either side
+    // see the partner. Cross-root pairs surface AgentNotFoundError
+    // matching cross-root-send-rejection's shape. Self-link is a no-op
+    // (no self-edge stored). Re-link is a no-op (Set.add is idempotent
+    // by construction). The cascade lives in the completion watcher, not
+    // here — these methods only manage the adjacency map.
+    const linkAgents = Effect.fn("AgentControl.linkAgents")(function* (
+      a: SessionID,
+      b: SessionID,
+      callerID: SessionID,
+    ) {
+      const data = yield* InstanceState.get(state)
+      const callerSlot = slotFor(data, callerID)
+      if (!callerSlot) return yield* new AgentNotFoundError({ session: callerID })
+      const aRoot = data.sessionToRoot.get(a)
+      const bRoot = data.sessionToRoot.get(b)
+      if (!aRoot || aRoot !== callerSlot.rootID) {
+        return yield* new AgentNotFoundError({ session: a })
+      }
+      if (!bRoot || bRoot !== callerSlot.rootID) {
+        return yield* new AgentNotFoundError({ session: b })
+      }
+      // Self-link is a no-op — no self-edge stored. The user-facing
+      // tool surface (Wave 7 T2) rejects self-link upfront with a
+      // structured `self_link` error, but defending here keeps the
+      // primitive safe against test-only callers.
+      if (a === b) return
+      const aSet = callerSlot.links.get(a) ?? new Set<SessionID>()
+      const bSet = callerSlot.links.get(b) ?? new Set<SessionID>()
+      aSet.add(b)
+      bSet.add(a)
+      callerSlot.links.set(a, aSet)
+      callerSlot.links.set(b, bSet)
+    })
+
+    const unlinkAgents = Effect.fn("AgentControl.unlinkAgents")(function* (
+      a: SessionID,
+      b: SessionID,
+      callerID: SessionID,
+    ) {
+      const data = yield* InstanceState.get(state)
+      const slot = slotFor(data, callerID)
+      if (!slot) return
+      const aSet = slot.links.get(a)
+      const bSet = slot.links.get(b)
+      if (aSet) {
+        aSet.delete(b)
+        if (aSet.size === 0) slot.links.delete(a)
+      }
+      if (bSet) {
+        bSet.delete(a)
+        if (bSet.size === 0) slot.links.delete(b)
+      }
+    })
+
+    const agentLinks = Effect.fn("AgentControl.agentLinks")(function* (
+      id: SessionID,
+      callerID: SessionID,
+    ) {
+      const data = yield* InstanceState.get(state)
+      const slot = slotFor(data, callerID)
+      if (!slot) return [] as readonly SessionID[]
+      const set = slot.links.get(id)
+      if (!set) return [] as readonly SessionID[]
+      return [...set].sort() as readonly SessionID[]
+    })
+
     return Service.of({
       registerRunLoop,
       registerSessionRoot,
@@ -1933,6 +2115,9 @@ export const layer = Layer.effect(
       collectPool: collectPool,
       listPoolMembers: listPoolMembers,
       closePoolMembers: closePoolMembers,
+      linkAgents: linkAgents,
+      unlinkAgents: unlinkAgents,
+      agentLinks: agentLinks,
     })
   }),
 )

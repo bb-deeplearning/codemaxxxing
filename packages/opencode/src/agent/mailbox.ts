@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect"
 import * as Ref from "effect/Ref"
+import { Schema } from "effect"
 import * as SubscriptionRef from "effect/SubscriptionRef"
 import type { InterAgentCommunication } from "./inter-agent-communication"
 
@@ -15,10 +16,55 @@ import type { InterAgentCommunication } from "./inter-agent-communication"
 // through a `SubscriptionRef<number>`. The atomic Ref.modify gives every
 // concurrent caller a unique seq without a separate counter; the broadcast
 // is fire-and-forget, matching codex's `seq_tx.send_replace(seq)` semantics.
+//
+// Wave 7 (D15 bounded mailbox) — `send` is now bounded by an optional
+// per-mailbox `capacity` (default `MAILBOX_DEFAULT_CAPACITY = 32`). Crossing
+// the cap fails with `MailboxFullError` rather than queueing indefinitely;
+// the caller (agent-send / agent-followup tools) surfaces a structured
+// `mailbox_full` retry hint. Per WAVE.md gotcha 5 option (a), a separate
+// `sendSystem` path bypasses the cap so the completion watcher's lifecycle
+// notifications still reach the parent under backpressure — the conceptual
+// "system notification slot" is implemented as the same queue plus an
+// uncapped fast-path rather than a literal separate buffer.
+
+/**
+ * Default per-mailbox capacity. Cap chosen as a starting number per
+ * WAVE.md gotcha 4 — tune from Wave 9 observability.
+ */
+export const MAILBOX_DEFAULT_CAPACITY = 32
+
+/**
+ * Raised by `send` when the mailbox already holds `capacity` messages.
+ * The `capacity` field carries the per-mailbox cap so callers can
+ * compute a meaningful retry hint (or just print the limit). Internal
+ * lifecycle notifications use `sendSystem` and never see this error.
+ */
+export class MailboxFullError extends Schema.TaggedErrorClass<MailboxFullError>()(
+  "MailboxFullError",
+  { capacity: Schema.Number },
+) {
+  override get message(): string {
+    return `Mailbox full (capacity=${this.capacity}); retry after backoff or drain.`
+  }
+}
 
 export interface Interface {
-  /** Append a message; returns its monotonic seq number. Concurrent senders each get a unique seq. */
-  readonly send: (msg: InterAgentCommunication) => Effect.Effect<number>
+  /**
+   * Append a user message; returns its monotonic seq number. Concurrent
+   * senders each get a unique seq. Fails with `MailboxFullError` when the
+   * mailbox already holds `capacity` messages — the cap is enforced
+   * BEFORE the atomic-modify so no half-state lingers.
+   */
+  readonly send: (msg: InterAgentCommunication) => Effect.Effect<number, MailboxFullError>
+  /**
+   * Append a SYSTEM message; returns its monotonic seq number. Bypasses
+   * the capacity cap — used by control.ts's completion watcher so
+   * lifecycle notifications still reach the parent under backpressure.
+   * Per WAVE.md gotcha 5 option (a), this is the conceptual reserved
+   * "system notification slot" implemented as an uncapped fast-path on
+   * the same underlying queue.
+   */
+  readonly sendSystem: (msg: InterAgentCommunication) => Effect.Effect<number>
   /** The seq notification channel. Subscribers `Stream.changes` to react. */
   readonly subscribe: () => Effect.Effect<SubscriptionRef.SubscriptionRef<number>>
   /** Take all queued messages in delivery order; leaves the mailbox empty. */
@@ -38,24 +84,35 @@ interface State {
 
 const initialState: State = { seq: 0, messages: [] }
 
-export const make = (): Effect.Effect<Interface> =>
+export const make = (capacity: number = MAILBOX_DEFAULT_CAPACITY): Effect.Effect<Interface> =>
   Effect.gen(function* () {
     const state = yield* Ref.make(initialState)
     const notify = yield* SubscriptionRef.make(0)
 
-    const send = (msg: InterAgentCommunication): Effect.Effect<number> =>
+    // Shared append path. `bypassCap=true` skips the capacity check used
+    // by the system-notification surface; user sends go through the
+    // capped path. The Ref.modify is the only atomic seq+push site.
+    const appendInternal = (msg: InterAgentCommunication) =>
       Effect.gen(function* () {
-        // Atomic seq increment + push. Two concurrent fibers each see their own
-        // monotonic seq because Ref.modify is uninterruptible per fiber step.
         const seq = yield* Ref.modify(state, (s) => {
           const next = s.seq + 1
           return [next, { seq: next, messages: [...s.messages, msg] }]
         })
-        // Broadcast after the append so any subscriber waking on this notify
-        // sees the message via drain(). Codex equivalent at mailbox.rs:46.
         yield* SubscriptionRef.set(notify, seq)
         return seq
       })
+
+    const send = (msg: InterAgentCommunication): Effect.Effect<number, MailboxFullError> =>
+      Effect.gen(function* () {
+        const current = yield* Ref.get(state)
+        if (current.messages.length >= capacity) {
+          return yield* new MailboxFullError({ capacity })
+        }
+        return yield* appendInternal(msg)
+      })
+
+    const sendSystem = (msg: InterAgentCommunication): Effect.Effect<number> =>
+      appendInternal(msg)
 
     const subscribe = (): Effect.Effect<SubscriptionRef.SubscriptionRef<number>> =>
       Effect.succeed(notify)
@@ -72,7 +129,7 @@ export const make = (): Effect.Effect<Interface> =>
     const peek = (): Effect.Effect<readonly InterAgentCommunication[]> =>
       Effect.map(Ref.get(state), (s) => s.messages)
 
-    return { send, subscribe, drain, hasPending, hasPendingTriggerTurn, peek }
+    return { send, sendSystem, subscribe, drain, hasPending, hasPendingTriggerTurn, peek }
   })
 
 export * as Mailbox from "./mailbox"
