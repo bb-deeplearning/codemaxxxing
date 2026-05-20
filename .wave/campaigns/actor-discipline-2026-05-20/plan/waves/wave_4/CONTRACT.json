@@ -306,7 +306,7 @@
     "depends_on": ["T1", "T2", "T3"],
     "pre_agreed_by_orchestrator": true,
     "signed": true,
-    "commit_sha": "",
+    "commit_sha": "389d14d2ec4e60c555b67e515585aa3dc55f93cd",
     "criteria": [
       {
         "id": "C1",
@@ -314,8 +314,8 @@
         "assertion": "multi-agent-invariants.test.ts contains the literal slug INV-D-12-abort-reason-delivered-as-structured-payload on an it.instance line.",
         "verify": "grep -E 'it\\.instance\\(\"INV-D-12-abort-reason-delivered-as-structured-payload\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
         "weight": 0.05,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; match: `it.instance(\"INV-D-12-abort-reason-delivered-as-structured-payload\", () =>`"
       },
       {
         "id": "C2",
@@ -323,8 +323,8 @@
         "assertion": "multi-agent-invariants.test.ts contains the literal slug INV-D-13-orchestrator-pivots-on-abort-approach-failed on an it.instance line.",
         "verify": "grep -E 'it\\.instance\\(\"INV-D-13-orchestrator-pivots-on-abort-approach-failed\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
         "weight": 0.05,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; match: `it.instance(\"INV-D-13-orchestrator-pivots-on-abort-approach-failed\", () =>`"
       },
       {
         "id": "C3",
@@ -332,8 +332,8 @@
         "assertion": "multi-agent-invariants.test.ts contains the literal slug INV-D-14-set-phrase-ladder-extended-to-all-subagent-types on an it.instance line.",
         "verify": "grep -E 'it\\.instance\\(\"INV-D-14-set-phrase-ladder-extended-to-all-subagent-types\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
         "weight": 0.05,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; match: `it.instance(\"INV-D-14-set-phrase-ladder-extended-to-all-subagent-types\", () =>`"
       },
       {
         "id": "C4",
@@ -341,8 +341,8 @@
         "assertion": "INV-D-12 passes when filtered by exact slug.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-12-abort-reason-delivered-as-structured-payload' 2>&1 | tee /tmp/wave4-t4-c4.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t4-c4.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t4-c4.log",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; 1 pass / 30 filtered out / 0 fail / 4 expect() calls in 1322ms"
       },
       {
         "id": "C5",
@@ -350,8 +350,8 @@
         "assertion": "INV-D-13 passes when filtered by exact slug.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-13-orchestrator-pivots-on-abort-approach-failed' 2>&1 | tee /tmp/wave4-t4-c5.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t4-c5.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t4-c5.log",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; 1 pass / 30 filtered out / 0 fail / 7 expect() calls in 1.53s"
       },
       {
         "id": "C6",
@@ -359,8 +359,8 @@
         "assertion": "INV-D-14 passes when filtered by exact slug.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-14-set-phrase-ladder-extended-to-all-subagent-types' 2>&1 | tee /tmp/wave4-t4-c6.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t4-c6.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t4-c6.log",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; 1 pass / 30 filtered out / 0 fail / 6 expect() calls in 1317ms"
       },
       {
         "id": "C7",
@@ -368,8 +368,8 @@
         "assertion": "Full multi-agent-invariants.test.ts passes (>= 31 tests: 28 existing + 3 new).",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave4-t4-c7.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t4-c7.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t4-c7.log",
         "weight": 0.15,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; 31 pass / 0 fail / 140 expect() calls in 6.84s"
       },
       {
         "id": "C8",
@@ -377,8 +377,8 @@
         "assertion": "subagent-prompts.test.ts contains a new describe block referencing 'Wave 4' AND covers all six reasons + ABORT format + three base prompt references.",
         "verify": "grep -F 'Wave 4' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && for r in spec_wrong transient_tool_error out_of_scope context_full approach_failed user_question; do grep -F \"$r\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts || { echo \"missing: $r\"; exit 1; }; done",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; `describe(\"Wave 4 — ABORT protocol prose\", ...)` present; all 6 reasons grep-matched (each count >= 1)"
       },
       {
         "id": "C9",
@@ -386,8 +386,8 @@
         "assertion": "Full prose suite passes (>= 30 tests: 27 existing + new Wave 4 block).",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test test/prose/subagent-prompts.test.ts 2>&1 | tee /tmp/wave4-t4-c9.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t4-c9.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t4-c9.log",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; 38 pass / 0 fail / 38 expect() calls in 1138ms"
       },
       {
         "id": "C10",
@@ -395,8 +395,8 @@
         "assertion": "bun typecheck passes from packages/opencode.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; tsgo --noEmit clean"
       }
     ]
   }
