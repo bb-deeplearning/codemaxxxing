@@ -77,7 +77,7 @@
     "depends_on": ["T1"],
     "pre_agreed_by_orchestrator": true,
     "signed": true,
-    "commit_sha": "",
+    "commit_sha": "bbce94f5128cae2ade41671f47b4b8925832d3d1",
     "criteria": [
       {
         "id": "C1",
@@ -85,8 +85,8 @@
         "assertion": "control.ts defines a top-level helper named parseAbortReason (or equivalent) that returns { reason, details } | undefined.",
         "verify": "grep -E '(const|function)\\s+parseAbortReason' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
         "weight": 0.08,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; match: `const parseAbortReason = (body: string): { reason: string; details: string } | undefined => {`"
       },
       {
         "id": "C2",
@@ -94,8 +94,8 @@
         "assertion": "control.ts contains the literal regex pattern matching `ABORT(<reason>):` line-anchored (using `^ABORT` and `\\(` somewhere in the source).",
         "verify": "grep -E '\\^ABORT\\\\\\(' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
         "weight": 0.05,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; L225 match: `const m = lastLine.match(/^ABORT\\(([a-z_]+)\\):\\s*(.+?)\\s*$/)`"
       },
       {
         "id": "C3",
@@ -103,8 +103,8 @@
         "assertion": "control.ts completion-watcher InterAgentCommunication construction includes `abort_reason:` (parsed payload passed to the notification).",
         "verify": "grep -F 'abort_reason:' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; L928 match: `                      abort_reason: abortParsed,`"
       },
       {
         "id": "C4",
@@ -112,8 +112,8 @@
         "assertion": "control.test.ts contains a new describe block referencing 'ABORT' / 'D11' AND at least 4 tests asserting ABORT recognition shapes.",
         "verify": "grep -E 'describe\\(.*(ABORT|D11)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.test.ts && grep -F 'abort_reason' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.test.ts | wc -l | awk '$1 >= 4 { exit 0 } { exit 1 }'",
         "weight": 0.15,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; `describe(\"AgentControl D11 ABORT recognition\", () => {` present + abort_reason occurrence count meets >=4 threshold."
       },
       {
         "id": "C5",
@@ -121,8 +121,8 @@
         "assertion": "GOTCHAS.md gains an entry mentioning `agentcontrol-d11-abort-line-parser` or similar slug (per AGENT_INSTRUCTIONS Hard Rules: append discovered gotchas).",
         "verify": "grep -iE 'agentcontrol-d11-abort|abort-line-parser|abort.*last.*line' /Users/rohan/Documents/Personal/codemaxxxing/GOTCHAS.md",
         "weight": 0.05,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; By-surface table + By-category index at L181 + full entry registered with slug `agentcontrol-d11-abort-line-parser-last-line-only`."
       },
       {
         "id": "C6",
@@ -130,8 +130,8 @@
         "assertion": "bun typecheck passes from packages/opencode.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
         "weight": 0.12,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; tsgo --noEmit clean."
       },
       {
         "id": "C7",
@@ -139,8 +139,8 @@
         "assertion": "Full control.test.ts passes.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/agent/control.test.ts 2>&1 | tee /tmp/wave4-t2-c7.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t2-c7.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t2-c7.log",
         "weight": 0.2,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; 88 pass / 0 fail / 196 expect() calls in 4.79s."
       },
       {
         "id": "C8",
@@ -148,8 +148,8 @@
         "assertion": "Per-file coverage on control.ts via control.test.ts is 100% lines (allowing pre-existing TaggedErrorClass function-coverage gap).",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/agent/control.test.ts 2>&1 | tee /tmp/wave4-t2-c8.log && grep -E 'control\\.ts.*100\\.00' /tmp/wave4-t2-c8.log",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; src/agent/control.ts | 94.78% functions | 100.00% lines (functions% gap is the pre-existing Schema.TaggedErrorClass quirk per GOTCHA `schema-class-function-coverage`)."
       },
       {
         "id": "C9",
@@ -157,8 +157,17 @@
         "assertion": "Multi-agent invariants suite stays green.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave4-t2-c9.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t2-c9.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t2-c9.log",
         "weight": 0.15,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; 28 pass / 0 fail / 123 expect() calls in 5.41s."
+      },
+      {
+        "id": "ORCHESTRATOR_NOTE",
+        "category": "discipline",
+        "assertion": "T2 evaluator (`/root/t2_eval`) was reaped by the harness before committing its CONTRACT.json slice. Orchestrator inline-adjudicated per Wave 3 NOTES.md precedent (run pre-defined verify recipes literally, no interpretation). All 9 criteria verified pass with evidence above.",
+        "verify": "n/a — adjudication note",
+        "weight": 0,
+        "status": "passed",
+        "evidence": "Generator commit bbce94f51 landed cleanly; evaluator session terminated mid-grade (likely LRU eviction). Orchestrator re-ran every verify recipe; results match the contract spec exactly."
       }
     ]
   },
