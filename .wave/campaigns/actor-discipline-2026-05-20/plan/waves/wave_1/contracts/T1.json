@@ -8,15 +8,17 @@
       "assertion": "File contains a 'Delivery contract' (or '## Delivery contract') section heading.",
       "verify": "grep -E -q '^## Delivery contract' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
       "weight": 0.12,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "verify recipe exited 0 against commit 17f7b1513"
     },
     {
       "id": "C2",
       "category": "correctness",
       "assertion": "Delivery-contract section literally contains both 'send_message' AND 'close_agent' substrings.",
       "verify": "grep -q -F 'send_message' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -q -F 'close_agent' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
-      "weight": 0.10,
-      "status": "pending"
+      "weight": 0.1,
+      "status": "passed",
+      "evidence": "verify recipe exited 0 against commit 17f7b1513"
     },
     {
       "id": "C3",
@@ -24,7 +26,8 @@
       "assertion": "Delivery-contract section literally states a SEPARATE next step for close_agent (substring 'separate next step', case-insensitive).",
       "verify": "grep -i -q -F 'separate next step' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
       "weight": 0.08,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "verify recipe exited 0 against commit 17f7b1513"
     },
     {
       "id": "C4",
@@ -32,7 +35,8 @@
       "assertion": "Delivery-contract section mentions the canonical-path reminder (substring 'canonical path' appears).",
       "verify": "grep -i -q -F 'canonical path' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
       "weight": 0.08,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "verify recipe exited 0 against commit 17f7b1513"
     },
     {
       "id": "C5",
@@ -40,7 +44,8 @@
       "assertion": "D7-mirror unicast sentence present: file contains substring 'unicast' AND substring 'no broadcast' (or 'not a broadcast' / 'no broadcast primitive').",
       "verify": "grep -i -q -F 'unicast' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -i -E -q 'no broadcast|not a broadcast|no.*broadcast primitive' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
       "weight": 0.08,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "verify recipe exited 0 against commit 17f7b1513"
     },
     {
       "id": "C6",
@@ -48,7 +53,8 @@
       "assertion": "Existing required sections preserved: '## Your context', '## You can spawn too', '## Cross-agent messaging', '## Closing yourself' all present as headings.",
       "verify": "grep -q -E '^## Your context' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -q -E '^## You can spawn too' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -q -E '^## Cross-agent messaging' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -q -E '^## Closing yourself' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
       "weight": 0.12,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "verify recipe exited 0 against commit 17f7b1513"
     },
     {
       "id": "C7",
@@ -56,7 +62,8 @@
       "assertion": "'Final answer' section header REMOVED (since it is replaced by 'Delivery contract').",
       "verify": "! grep -q -E '^## Final answer' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
       "weight": 0.06,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "verify recipe exited 0 against commit 17f7b1513"
     },
     {
       "id": "C8",
@@ -64,7 +71,8 @@
       "assertion": "Forbidden unqualified phrases per PROMPT_SURFACES.md ABSENT from this file: 'your text response IS the deliverable' AND no occurrence of 'your response goes to the parent agent' AND no occurrence of 'the parent agent reads your output'.",
       "verify": "! grep -q -F 'your text response IS the deliverable' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && ! grep -q -F 'your response goes to the parent agent' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && ! grep -q -F 'the parent agent reads your output' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
       "weight": 0.08,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "verify recipe exited 0 against commit 17f7b1513"
     },
     {
       "id": "C9",
@@ -72,7 +80,8 @@
       "assertion": "File length between 30 and 100 lines.",
       "verify": "lines=$(wc -l < /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt); test \"$lines\" -ge 30 && test \"$lines\" -le 100",
       "weight": 0.06,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "verify recipe exited 0 against commit 17f7b1513"
     },
     {
       "id": "C10",
@@ -80,7 +89,8 @@
       "assertion": "Mutual-exclusion: file does NOT add a deep D7 'Sibling coordination' section heading or a 'Limits' section heading (ownership belongs to multi-agent-root.txt T2). One inline mirror sentence only.",
       "verify": "! grep -q -E '^## Sibling coordination' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && ! grep -q -E '^## Limits' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
       "weight": 0.06,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "verify recipe exited 0 against commit 17f7b1513"
     },
     {
       "id": "C11",
@@ -88,15 +98,17 @@
       "assertion": "Delivery-contract section explicitly names the spawner as the send_message target (literal substring matching 'target: <?spawner').",
       "verify": "grep -E -q 'target:[[:space:]]*<?spawner' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
       "weight": 0.08,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "verify recipe exited 0 against commit 17f7b1513"
     },
     {
       "id": "C12",
       "category": "correctness",
-      "assertion": "Delivery-contract section mentions 'omit target' for self-close semantics (close_agent(self) by omitting target — D3-aligned).",
+      "assertion": "Delivery-contract section mentions 'omit target' for self-close semantics (close_agent(self) by omitting target \u2014 D3-aligned).",
       "verify": "grep -i -q -F 'omit target' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
       "weight": 0.08,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "verify recipe exited 0 against commit 17f7b1513"
     }
   ]
 }
