@@ -23,6 +23,14 @@ export const ID = "spawn_agent" as const
 // gate spawn_agent (and the 5 v2 friend tools). Saved per-friend rules
 // (`permission.spawn_agent: ...`) silently stop matching; documented in
 // BACKWARD_COMPAT.md § "Out of scope" + Wave 6 spec doc.
+//
+// D12 (actor-discipline-2026-05-20 Wave 5) — the schema below adds two
+// supervision-strategy parameters (`on_failure`, `pool_strategy`).
+// Defaults are designed to match today's implicit behavior so existing
+// callers see NO surface change: omitting both is equivalent to
+// `on_failure: "escalate"` + `pool_strategy: "one_for_one"`. The literal
+// sets mirror `OnFailureStrategy` and `PoolStrategy` from
+// `@/agent/control`; consult that module for the runtime semantics.
 export const PermissionKey = "task" as const
 
 export const Parameters = Schema.Struct({
@@ -48,6 +56,27 @@ export const Parameters = Schema.Struct({
   reasoning_effort: Schema.optional(Schema.String).annotate({
     description:
       "Optional reasoning effort override for the new agent. Leave unset to inherit the parent's reasoning effort. Only set when the task clearly requires more or less reasoning than the parent's default.",
+  }),
+  on_failure: Schema.optional(
+    Schema.Union([
+      Schema.Literal("respawn"),
+      Schema.Literal("escalate"),
+      Schema.Literal("ignore"),
+      Schema.Literal("kill_pool"),
+    ]),
+  ).annotate({
+    description:
+      "How the runtime supervises this child's terminal failure (D12). `escalate` (default) = today's behavior: forward an errored notification to your mailbox. `respawn` = the runtime re-spawns the child at the same task_name with a fresh session id (capped at 3 attempts, then escalates with a respawn-cap-exceeded notification). `ignore` = swallow the failure silently (no completion notification). `kill_pool` is stub-only in this release; Wave 6 wires pool semantics.",
+  }),
+  pool_strategy: Schema.optional(
+    Schema.Union([
+      Schema.Literal("one_for_one"),
+      Schema.Literal("one_for_all"),
+      Schema.Literal("rest_for_one"),
+    ]),
+  ).annotate({
+    description:
+      "Pool failure semantics (D12, stub-only this release). Stored on the per-child slot for Wave 6 to read when `spawn_pool` lands. `one_for_one` (default) isolates failures; `one_for_all` will tear down the entire pool on any single failure; `rest_for_one` will tear down pool members spawned after the failing one. Today this param has no runtime effect beyond being stored.",
   }),
 })
 
@@ -176,6 +205,8 @@ export const AgentSpawnTool = Tool.define(
                   agent_type: params.agent_type,
                   initial_message: params.message,
                   options: { fork_turns: fork.value },
+                  on_failure: params.on_failure,
+                  pool_strategy: params.pool_strategy,
                 })
                 .pipe(
                   Effect.map((live) => ({ kind: "ok" as const, live })),

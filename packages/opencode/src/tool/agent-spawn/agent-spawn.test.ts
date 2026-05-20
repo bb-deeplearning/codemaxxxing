@@ -1,5 +1,5 @@
 import { afterEach, describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Agent } from "@/agent/agent"
 import { AgentControl } from "@/agent/control"
@@ -11,7 +11,7 @@ import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
 import type { Permission } from "@/permission"
 import * as Tool from "../tool"
-import { AgentSpawnTool, errorTagFor } from "./agent-spawn"
+import { AgentSpawnTool, errorTagFor, Parameters } from "./agent-spawn"
 import { disposeAllInstances, provideTmpdirInstance } from "../../../test/fixture/fixture"
 import { testEffect } from "../../../test/lib/effect"
 
@@ -401,5 +401,207 @@ describe("tool.spawn_agent", () => {
         expect(result.title).toContain("/root/shape")
       }),
     ),
+  )
+
+  // D12 (actor-discipline-2026-05-20 Wave 5) — supervision-strategy params.
+  // Each test asserts the new on_failure / pool_strategy enum value passes
+  // through the Schema layer and reaches `control.spawnAgent` without
+  // surfacing an error. Cascading behavior (respawn loop, ignore swallow,
+  // pool semantics) is covered by control.test.ts (T1) + invariants (T3).
+
+  it.live("agent_type='nonexistent' returns model-recoverable error", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const root = yield* sessions.create({ title: "root" })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+
+        const result = yield* def.execute(
+          { message: "x", task_name: "nope", agent_type: "build" },
+          ctx,
+        )
+        expect(result.metadata.error).toBe("agent_type_invalid")
+        expect(result.output.toLowerCase()).toMatch(/spawnable subagent|available/)
+      }),
+    ),
+  )
+
+  it.live("on_failure='respawn' passes through (no error)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const root = yield* sessions.create({ title: "root" })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+
+        const result = yield* def.execute(
+          { message: "x", task_name: "ofr", agent_type: "explore", on_failure: "respawn" },
+          ctx,
+        )
+        expect(result.metadata.task_name).toBe("/root/ofr")
+        expect(result.metadata.error).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("on_failure='escalate' passes through (no error)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const root = yield* sessions.create({ title: "root" })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+
+        const result = yield* def.execute(
+          { message: "x", task_name: "ofe", agent_type: "explore", on_failure: "escalate" },
+          ctx,
+        )
+        expect(result.metadata.task_name).toBe("/root/ofe")
+        expect(result.metadata.error).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("on_failure='ignore' passes through (no error)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const root = yield* sessions.create({ title: "root" })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+
+        const result = yield* def.execute(
+          { message: "x", task_name: "ofi", agent_type: "explore", on_failure: "ignore" },
+          ctx,
+        )
+        expect(result.metadata.task_name).toBe("/root/ofi")
+        expect(result.metadata.error).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("on_failure='kill_pool' passes through (no error)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const root = yield* sessions.create({ title: "root" })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+
+        const result = yield* def.execute(
+          { message: "x", task_name: "ofk", agent_type: "explore", on_failure: "kill_pool" },
+          ctx,
+        )
+        expect(result.metadata.task_name).toBe("/root/ofk")
+        expect(result.metadata.error).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("pool_strategy='one_for_one' passes through (no error)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const root = yield* sessions.create({ title: "root" })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+
+        const result = yield* def.execute(
+          { message: "x", task_name: "ps1", agent_type: "explore", pool_strategy: "one_for_one" },
+          ctx,
+        )
+        expect(result.metadata.task_name).toBe("/root/ps1")
+        expect(result.metadata.error).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("pool_strategy='one_for_all' passes through (no error)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const root = yield* sessions.create({ title: "root" })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+
+        const result = yield* def.execute(
+          { message: "x", task_name: "psa", agent_type: "explore", pool_strategy: "one_for_all" },
+          ctx,
+        )
+        expect(result.metadata.task_name).toBe("/root/psa")
+        expect(result.metadata.error).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("pool_strategy='rest_for_one' passes through (no error)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const root = yield* sessions.create({ title: "root" })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+
+        const result = yield* def.execute(
+          { message: "x", task_name: "psr", agent_type: "explore", pool_strategy: "rest_for_one" },
+          ctx,
+        )
+        expect(result.metadata.task_name).toBe("/root/psr")
+        expect(result.metadata.error).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("on_failure + pool_strategy combined pass through (no error)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const root = yield* sessions.create({ title: "root" })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+
+        const result = yield* def.execute(
+          {
+            message: "x",
+            task_name: "combo",
+            agent_type: "explore",
+            on_failure: "respawn",
+            pool_strategy: "one_for_all",
+          },
+          ctx,
+        )
+        expect(result.metadata.task_name).toBe("/root/combo")
+        expect(result.metadata.error).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("Schema rejects invalid on_failure / pool_strategy literal values", () =>
+    Effect.sync(() => {
+      const bogusOnFailure = Schema.decodeUnknownExit(Parameters)({
+        message: "x",
+        task_name: "bad",
+        agent_type: "explore",
+        on_failure: "bogus",
+      } as never)
+      expect(bogusOnFailure._tag).toBe("Failure")
+      const bogusPoolStrategy = Schema.decodeUnknownExit(Parameters)({
+        message: "x",
+        task_name: "bad",
+        agent_type: "explore",
+        pool_strategy: "round_robin",
+      } as never)
+      expect(bogusPoolStrategy._tag).toBe("Failure")
+    }),
   )
 })
