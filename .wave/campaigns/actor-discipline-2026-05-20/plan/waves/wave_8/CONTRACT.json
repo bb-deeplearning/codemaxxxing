@@ -415,8 +415,8 @@
     ],
     "depends_on": ["T1", "T2", "T3"],
     "pre_agreed_by_orchestrator": true,
-    "signed": false,
-    "commit_sha": null,
+    "signed": true,
+    "commit_sha": "674027786",
     "criteria": [
       {
         "id": "C1",
@@ -424,7 +424,8 @@
         "assertion": "multi-agent-invariants.test.ts contains it.instance blocks named INV-D-24 / INV-D-25 / INV-D-26 inside the existing INTEGRATION_INVARIANTS describe block.",
         "verify": "bash -c 'grep -qE \"INV-D-24-agent-type-behavior-contract-validated-at-spawn\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts && grep -qE \"INV-D-25-behavior-contract-version-bump-coexists-with-prior-version\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts && grep -qE \"INV-D-26-behavior-contract-violation-fails-orchestrated-wave-not-spawn\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts'",
         "weight": 0.12,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "all 3 INV-D-24/25/26 slug greps present"
       },
       {
         "id": "C2",
@@ -432,7 +433,8 @@
         "assertion": "INV-D-24 test exercises agent_type='general' + child that DOES NOT call send_message → parent notification's behavior_violation.contract_version='subagent_v1' AND violations[0].kind='missing_delivery'.",
         "verify": "bash -c 'sed -n \"/INV-D-24-agent-type-behavior-contract-validated-at-spawn/,/it\\\\.instance/p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"agent_type.*general\" && sed -n \"/INV-D-24-agent-type-behavior-contract-validated-at-spawn/,/it\\\\.instance/p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"missing_delivery|behavior_violation\"'",
         "weight": 0.08,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "INV-D-24 block contains agent_type general + missing_delivery/behavior_violation"
       },
       {
         "id": "C3",
@@ -440,7 +442,8 @@
         "assertion": "INV-D-25 test spawns TWO children — one with behavior_version='subagent_v1', one with behavior_version='subagent_v2' — under the same agent_type='general' AND asserts contract_version on each notification matches the spawn-time-selected version (no cross-contamination).",
         "verify": "bash -c 'sed -n \"/INV-D-25-behavior-contract-version-bump-coexists/,/it\\\\.instance/p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"behavior_version.*subagent_v1\" && sed -n \"/INV-D-25-behavior-contract-version-bump-coexists/,/it\\\\.instance/p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"behavior_version.*subagent_v2\"'",
         "weight": 0.08,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "INV-D-25 block contains both subagent_v1 + subagent_v2 behavior_version spawns"
       },
       {
         "id": "C4",
@@ -448,7 +451,8 @@
         "assertion": "INV-D-26 test asserts spawnAgent returns success (LiveAgent) even when subsequent runtime violates contract — validation observed AFTER spawn via mailbox notification, not at spawn time. Uses Result wrapper to demonstrate spawn does not fail.",
         "verify": "bash -c 'sed -n \"/INV-D-26-behavior-contract-violation-fails-orchestrated-wave-not-spawn/,/^  it\\\\.instance/p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"Result\\.isSuccess|expect.*thread_id|toBeDefined\"'",
         "weight": 0.08,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "INV-D-26 block contains Result.isSuccess / thread_id / toBeDefined spawn-success assertion"
       },
       {
         "id": "C5",
@@ -456,7 +460,8 @@
         "assertion": "bun typecheck passes from packages/opencode.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "tsgo --noEmit exit 0"
       },
       {
         "id": "C6",
@@ -464,7 +469,8 @@
         "assertion": "The 3 new INV-D-24..26 tests pass when filtered via -t 'INV-D-2'.",
         "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t \"INV-D-2\" 2>&1 | tee /tmp/wave8-t5-c6.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave8-t5-c6.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave8-t5-c6.log'",
         "weight": 0.15,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "INV-D-2 filter: 7 pass / 0 fail (3 new + 4 pre-existing INV-D-2x)"
       },
       {
         "id": "C7",
@@ -472,7 +478,8 @@
         "assertion": "Full multi-agent-invariants.test.ts passes (no regressions; new total = 40 + 3 = 43).",
         "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave8-t5-c7.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave8-t5-c7.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave8-t5-c7.log'",
         "weight": 0.15,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "full file: 43 pass / 0 fail / 223 expect() calls"
       },
       {
         "id": "C8",
@@ -480,7 +487,8 @@
         "assertion": "Generator commit exists matching 'wave 8 T5' AND touches ONLY multi-agent-invariants.test.ts.",
         "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 8 T5\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat=200 --format= \"$sha\" | grep -qE \"test/integration/multi-agent-invariants\\\\.test\\\\.ts\"'",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "commit 674027786 touches test/integration/multi-agent-invariants.test.ts"
       },
       {
         "id": "C9",
@@ -488,7 +496,8 @@
         "assertion": "agent-pool / agent-spawn / agent-followup / agent-send / agent-link existing tool tests all continue to pass (regression check — additive behavior_violation field must not break existing assertions).",
         "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-pool/agent-pool.test.ts src/tool/agent-spawn/agent-spawn.test.ts src/tool/agent-followup/agent-followup.test.ts src/tool/agent-send/agent-send.test.ts src/tool/agent-link/agent-link.test.ts 2>&1 | tee /tmp/wave8-t5-c9.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave8-t5-c9.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave8-t5-c9.log'",
         "weight": 0.14,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "5-file tool regression bundle: 95 pass / 0 fail"
       }
     ]
   }
