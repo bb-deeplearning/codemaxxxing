@@ -9,14 +9,14 @@ executor_agent: caveman
 executor_model: ""
 executor_variant: ""
 current_wave: 0
-wave_status: pending
+wave_status: running
 failure_kind: ""
 retry_count: 0
 verify_count: 1
 user_question: ""
-loop_state: armed
-active_session_id: ses_1bb885fa8ffeNO75XPcNJFVH2P
-active_session_kind: verifier
+loop_state: paused
+active_session_id: ses_1bb7ee509ffeEvVSvg7ggfBj6m
+active_session_kind: executor
 total_waves: 10
 session_count: 0
 created: 2026-05-20
@@ -27,7 +27,7 @@ last_updated: 2026-05-20
 
 | Wave | Status   | Session | Commit | Notes |
 |------|----------|---------|--------|-------|
-| 0 | pending  | — | — | Bootstrap: extractor narrowing (D5) + canonical-path injection (D2) + safety-net warning (D5) + root-hold for in-flight mail (D6) + close_agent error split (D9) + first-class self-close (D3). Executor-solo (no orchestration). Lands the floor so Wave 1+ can orchestrate safely. |
+| 0 | running  | ses_1bb7ee509ffeEvVSvg7ggfBj6m | — | Bootstrap: extractor narrowing (D5) + canonical-path injection (D2) + safety-net warning (D5) + root-hold for in-flight mail (D6) + close_agent error split (D9) + first-class self-close (D3). Executor-solo (no orchestration). Lands the floor so Wave 1+ can orchestrate safely. |
 | 1 | pending  | — | — | Prose: rewrite multi-agent-subagent.txt "Final answer" → "Delivery contract" (D1); add sibling-coordination + limits sections in multi-agent-root.txt (D7, D8); defer-edits in general/anthropic.txt, general/gemini.txt, explore.txt (D4); 4.7 literalism adaptation (D4). First orchestrated wave. |
 | 2 | pending  | — | — | Validation: drive INV-D-01..08 to green. Reproduce ses_1c2e8d84affe... extractor failure and ses_1d84f236bffe... sibling deadlock end-to-end as regression tests. |
 | 3 | pending  | — | — | Ask pattern (Phase 2A): correlation_id on send_message/followup_task; wait_for_reply variant on wait_agent; mandatory-timeout doctrine in prose. INV-D-09..11. |
