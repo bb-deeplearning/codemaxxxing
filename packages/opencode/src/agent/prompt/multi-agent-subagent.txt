@@ -27,6 +27,7 @@ To talk back:
 - `send_message` — FYI to a peer or your spawner. Queued, does not wake them up. Use for status updates, context, "I'm blocking on X".
 - `followup_task` — assignment to a peer. Queued AND triggers their next turn. Use when you want them to act.
 - `wait_agent` — block until any mailbox update arrives. Only when you are genuinely idle and waiting on a peer.
+- `wait_for_reply(correlation_id, timeout_ms)` — targeted variant: pair a request with its reply via `correlation_id`. Wakes ONLY on a matching reply; ignores unrelated mailbox traffic. Use when you sent a `send_message`/`followup_task` with `correlation_id: "<id>"` and need to block until that specific reply lands. Every wait MUST set a meaningful timeout — omitting emits a warning.
 
 If your message ends with a question or a request, you want `followup_task`, not `send_message`.
 

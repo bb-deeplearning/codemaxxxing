@@ -131,3 +131,40 @@ describe("Wave 2 — INV-D-06 regression: unicast doctrine pinned (ses_1d84f236b
     expect(text).toContain("unicast")
   })
 })
+
+// Wave 3 — Phase 2A. Mandatory-timeout doctrine and wait_for_reply variant
+// land in the root + subagent prompts. The root prompt owns the full
+// "Wait timeouts" doctrine; the subagent prompt mirrors with a single bullet
+// pointing at wait_for_reply. Grep-asserts pin the prose so a future prompt
+// rewrite that drops the doctrine fails this test.
+describe("Wave 3 — mandatory-timeout doctrine + wait_for_reply variant", () => {
+  test("multi-agent-root.txt contains '## Wait timeouts' section header", async () => {
+    const text = await Bun.file(rootHintPath).text()
+    expect(text).toContain("## Wait timeouts")
+  })
+
+  test("multi-agent-root.txt mentions wait_for_reply", async () => {
+    const text = await Bun.file(rootHintPath).text()
+    expect(text).toContain("wait_for_reply")
+  })
+
+  test("multi-agent-root.txt 'Wait timeouts' section states 'Every wait MUST'", async () => {
+    const text = await Bun.file(rootHintPath).text()
+    expect(text).toContain("Every wait MUST")
+  })
+
+  test("multi-agent-root.txt mentions missing_timeout warning tag", async () => {
+    const text = await Bun.file(rootHintPath).text()
+    expect(text).toContain("missing_timeout")
+  })
+
+  test("multi-agent-subagent.txt mentions wait_for_reply", async () => {
+    const text = await Bun.file(subagentHintPath).text()
+    expect(text).toContain("wait_for_reply")
+  })
+
+  test("multi-agent-subagent.txt mentions correlation_id (mirror sentence references the parameter)", async () => {
+    const text = await Bun.file(subagentHintPath).text()
+    expect(text).toContain("correlation_id")
+  })
+})

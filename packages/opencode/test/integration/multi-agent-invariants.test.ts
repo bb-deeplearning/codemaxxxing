@@ -27,7 +27,7 @@ import { SystemPrompt } from "@/session/system"
 import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
 import { AgentCloseTool } from "@/tool/agent-close/agent-close"
-import { AgentWaitTool } from "@/tool/agent-wait/agent-wait"
+import { AgentWaitTool, AgentWaitForReplyTool } from "@/tool/agent-wait/agent-wait"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { ProviderID, ModelID } from "@/provider/schema"
 import { MessageID, PartID, SessionID } from "@/session/schema"
@@ -70,6 +70,11 @@ const installNeverLoop = Effect.gen(function* () {
 // Tool.Info.init() returns the Def; the outer Effect resolves the Info.
 const initWaitTool = Effect.gen(function* () {
   const info = yield* AgentWaitTool
+  return yield* info.init()
+})
+
+const initWaitForReplyTool = Effect.gen(function* () {
+  const info = yield* AgentWaitForReplyTool
   return yield* info.init()
 })
 
@@ -1506,6 +1511,177 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
       // that made the Demo 2 deadlock a prose bug, not a runtime bug.
       expect(drainProsecutor).toHaveLength(0)
       expect(drainDefense).toHaveLength(0)
+    }),
+  )
+
+  // INV-D-09 — wait_for_reply pairs a reply to a request via correlation_id.
+  // Parent and child exchange messages with matching correlation_id; the
+  // parent's wait_for_reply call wakes on the matching reply, returns the
+  // body, and the matched message stays in the mailbox so the next turn's
+  // drain delivers it to the model. A second wait_for_reply for the same
+  // correlation_id returns immediately with the queued message.
+  it.instance("INV-D-09-correlation-id-pairs-reply-to-request", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "replier",
+        initial_message: "init",
+      })
+      // Drain spawn-seed echoes so the rest of the test sees a clean state.
+      yield* control.drainMailbox(child.thread_id)
+      yield* control.drainMailbox(root.id)
+
+      const childPath = child.metadata.agent_path ?? AgentPath.root()
+
+      // Child replies to parent with matching correlation_id.
+      yield* control.sendInterAgentCommunication(
+        root.id,
+        new InterAgentCommunication({
+          author: childPath,
+          recipient: AgentPath.root(),
+          content: "the reply body",
+          trigger_turn: false,
+          sent_at: 1,
+          correlation_id: "req-1",
+        }),
+        child.thread_id,
+      )
+
+      const def = yield* initWaitForReplyTool
+      const ctx = makeCtx(root.id)
+      const result = yield* def.execute({ correlation_id: "req-1", timeout_ms: 5000 }, ctx)
+
+      // Matched: timed_out=false, output carries the body.
+      expect(result.metadata.timed_out).toBe(false)
+      expect(result.metadata.matched).toBe(true)
+      expect(result.metadata.correlation_id).toBe("req-1")
+      const payload = JSON.parse(result.output)
+      expect(payload.timed_out).toBe(false)
+      expect(payload.message).toBe("the reply body")
+      expect(payload.correlation_id).toBe("req-1")
+
+      // A second wait_for_reply for the same correlation_id returns
+      // immediately with the still-queued message (idempotent within
+      // mailbox lifetime — wait_for_reply does NOT drain).
+      const result2 = yield* def.execute({ correlation_id: "req-1", timeout_ms: 5000 }, ctx)
+      expect(result2.metadata.timed_out).toBe(false)
+      expect(JSON.parse(result2.output).message).toBe("the reply body")
+    }),
+  )
+
+  // INV-D-10 — wait_for_reply times out when no message carries the
+  // matching correlation_id. An unrelated message arriving mid-wait
+  // (different correlation_id) does NOT wake the targeted wait — the
+  // filter operates on correlation_id, not on raw mailbox-seq updates.
+  it.instance("INV-D-10-wait-for-reply-times-out-without-matching-correlation", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "noisy",
+        initial_message: "init",
+      })
+      yield* control.drainMailbox(child.thread_id)
+      yield* control.drainMailbox(root.id)
+
+      const childPath = child.metadata.agent_path ?? AgentPath.root()
+
+      // Schedule a NON-matching send mid-wait (correlation_id "other" — not
+      // "req-1"). The targeted wait_for_reply must NOT wake on this.
+      yield* Effect.forkScoped(
+        Effect.gen(function* () {
+          yield* Effect.sleep("150 millis")
+          yield* control.sendInterAgentCommunication(
+            root.id,
+            new InterAgentCommunication({
+              author: childPath,
+              recipient: AgentPath.root(),
+              content: "unrelated traffic",
+              trigger_turn: false,
+              sent_at: 2,
+              correlation_id: "other",
+            }),
+            child.thread_id,
+          )
+        }),
+      )
+
+      const def = yield* initWaitForReplyTool
+      const ctx = makeCtx(root.id)
+      const start = Date.now()
+      const result = yield* def.execute({ correlation_id: "req-1", timeout_ms: 1000 }, ctx)
+      const elapsed = Date.now() - start
+
+      // Filter rejected the non-matching message; wait ran the full timeout.
+      expect(result.metadata.timed_out).toBe(true)
+      expect(result.metadata.matched).toBe(false)
+      expect(elapsed).toBeGreaterThan(900)
+      expect(elapsed).toBeLessThan(2000)
+      const payload = JSON.parse(result.output)
+      expect(payload.timed_out).toBe(true)
+
+      // The unrelated message still landed in the mailbox (the seq advance
+      // works; only the wait_for_reply filter ignored it). Drain confirms.
+      const drained = yield* control.drainMailbox(root.id)
+      const unrelated = drained.find((m) => m.correlation_id === "other")
+      expect(unrelated).toBeDefined()
+    }),
+  )
+
+  // INV-D-11 — wait_agent emits a structured warning when timeout_ms is
+  // omitted OR exceeds MAX_WAIT_TIMEOUT_MS. The warning rides in result
+  // metadata; the call still completes (informational, not fatal).
+  it.instance("INV-D-11-missing-timeout-on-wait-emits-warning", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      // Pre-pending mailbox so the wait returns immediately and we can
+      // read the warning without waiting the full default 30s.
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "warned",
+        initial_message: "seed",
+      })
+
+      const def = yield* initWaitTool
+      const ctx = makeCtx(child.thread_id)
+
+      // Sub-case A: omitted timeout_ms → metadata.warning === "missing_timeout".
+      const r1 = yield* def.execute({}, ctx)
+      expect((r1.metadata as { warning?: string }).warning).toBe("missing_timeout")
+      // Call still completed normally.
+      expect(r1.metadata.timed_out).toBe(false)
+
+      // Re-spawn a fresh child for sub-case B (the prior child's mailbox
+      // was already drained by the wait call).
+      const child2 = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "warned2",
+        initial_message: "seed",
+      })
+      const ctx2 = makeCtx(child2.thread_id)
+
+      // Sub-case B: timeout_ms above MAX (>600000) → metadata.warning ===
+      // "timeout_clamped". Use 1_000_000 (well above cap).
+      const r2 = yield* def.execute({ timeout_ms: 1_000_000 }, ctx2)
+      expect((r2.metadata as { warning?: string }).warning).toBe("timeout_clamped")
+      expect(r2.metadata.timed_out).toBe(false)
     }),
   )
 })

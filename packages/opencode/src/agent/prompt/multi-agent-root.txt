@@ -88,6 +88,12 @@ The actor surface is deliberately small. Know what it does NOT give you:
 - **no deadlock detection.** The runtime will not break a wait cycle for you. Two agents each `wait_agent`-ing on the other will both sit until their timeouts fire. Set finite timeouts on every `wait_agent`. Design coordination so no agent waits on a message that requires the waiter to act first.
 - **idle ≠ alive.** An agent parked at `wait_agent` is alive but not making progress; it holds a slot in the 64-process cap and its context budget. When you are done with an agent — result integrated, no further turns expected — `close_agent` it. Don't leave done agents idling; close it if you are done.
 
+## Wait timeouts
+
+Every wait MUST specify a meaningful timeout. Omitting `timeout_ms` is allowed but emits a `missing_timeout` warning — pick a value that reflects how long your peer should plausibly take, not 30s by accident. Above-cap timeouts (>600000ms) silently clamp and emit `timeout_clamped`. Warnings ride in result metadata; the call still completes.
+
+For request/reply pairing, use `wait_for_reply(correlation_id, timeout_ms)` instead of the broad `wait_agent`. Set `correlation_id` on the upstream `send_message`/`followup_task`; `wait_for_reply` wakes ONLY on the matching reply and ignores unrelated mailbox traffic (peer FYIs, completion notes from other children). This turns silent stalls into structured timeouts: if the reply never comes you see `timed_out: true` instead of waking on something else and missing the missed reply.
+
 ## Cost
 
 Every spawned agent makes its own LLM calls and consumes context budget. Cost is multiplicative — five concurrent agents is roughly five times the token spend per turn. The depth cap is 4 levels under `/root`; the per-session concurrent thread cap may also reject a spawn (close finished agents to free slots). Spawn deliberately, not reflexively.

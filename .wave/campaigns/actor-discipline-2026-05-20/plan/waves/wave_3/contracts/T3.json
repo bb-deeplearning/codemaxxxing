@@ -1,0 +1,137 @@
+{
+  "task_id": "T3",
+  "title": "wait_for_reply variant + missing-timeout warning on wait_agent",
+  "writes": [
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.ts",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.txt",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.test.ts",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/schema.test.ts",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/wait-for-reply.txt",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/mailbox.ts"
+  ],
+  "depends_on": ["T1", "T2"],
+  "pre_agreed_by_orchestrator": true,
+  "signed": true,
+  "commit_sha": "c6b1f563aa1dbc50bfa4b07d37366958715a1cd3",
+  "criteria": [
+    {
+      "id": "C1",
+      "category": "correctness",
+      "assertion": "agent-wait.ts defines a second tool via a new `Tool.define(WaitForReplyID, ...)` block, exported as `AgentWaitForReplyTool`. ID is the literal 'wait_for_reply'.",
+      "verify": "grep -E 'WaitForReplyID\\s*=\\s*\"wait_for_reply\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.ts && grep -E 'export const AgentWaitForReplyTool' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.ts",
+      "weight": 0.08,
+      "status": "passed",
+      "evidence": "exit 0; matches `export const WaitForReplyID = \"wait_for_reply\" as const` (L160) + `export const AgentWaitForReplyTool = Tool.define(` (L162-area)."
+    },
+    {
+      "id": "C2",
+      "category": "correctness",
+      "assertion": "wait_for_reply Parameters declares `correlation_id` as required Schema.String AND optional `timeout_ms` (Schema.Struct with two fields, correlation_id REQUIRED).",
+      "verify": "awk '/WaitForReplyParameters\\s*=\\s*Schema\\.Struct/,/^})/' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.ts > /tmp/wave3-t3-c2.txt && grep -F 'correlation_id' /tmp/wave3-t3-c2.txt && grep -F 'timeout_ms' /tmp/wave3-t3-c2.txt && grep -E 'Schema\\.optional\\(Schema\\.Int\\)' /tmp/wave3-t3-c2.txt",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "awk recipe produced empty file (delimiter mismatch — body ends `})` without anchor), but direct inspection of agent-wait.ts L162-171 confirms WaitForReplyParameters = Schema.Struct({ correlation_id: Schema.String.annotate({...}), timeout_ms: Schema.optional(Schema.Int).annotate({...}) }) — both fields + Schema.optional(Schema.Int) literal present."
+    },
+    {
+      "id": "C3",
+      "category": "correctness",
+      "assertion": "Mailbox.Interface gains a `peek()` method returning the current messages snapshot without draining. Implementation present in mailbox.ts.",
+      "verify": "grep -E 'peek:\\s*\\(\\)\\s*=>' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/mailbox.ts && grep -E 'const peek\\s*=' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/mailbox.ts",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "exit 0; Interface decl `readonly peek: () => Effect.Effect<readonly InterAgentCommunication[]>` present + `const peek =` impl present."
+    },
+    {
+      "id": "C4",
+      "category": "correctness",
+      "assertion": "AgentControl gains a `findMailboxByCorrelationId(sessionID, correlation_id)` method exposed on the Interface and implemented in the layer body.",
+      "verify": "grep -E 'findMailboxByCorrelationId' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts | wc -l | awk '$1 >= 3 { exit 0 } { exit 1 }'",
+      "weight": 0.07,
+      "status": "passed",
+      "evidence": "exit 0; 'findMailboxByCorrelationId' grep count >=3 in control.ts (Interface decl + impl + return entry)."
+    },
+    {
+      "id": "C5",
+      "category": "correctness",
+      "assertion": "agent-wait.ts wait_agent execute body sets `metadata.warning` when timeout_ms is missing OR when the requested timeout exceeded MAX_WAIT_TIMEOUT_MS (would be clamped). Substring 'missing_timeout' AND substring 'timeout_clamped' (or equivalent literal warning tags) both present in the file.",
+      "verify": "grep -F 'missing_timeout' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.ts && grep -F 'timeout_clamped' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.ts",
+      "weight": 0.08,
+      "status": "passed",
+      "evidence": "exit 0; both tags present in agent-wait.ts (L53 comment + L95 literal for timeout_clamped; missing_timeout ternary branch matches)."
+    },
+    {
+      "id": "C6",
+      "category": "correctness",
+      "assertion": "registry.ts imports and wires AgentWaitForReplyTool: import, yield*, Tool.init entry, builtin entry, legacy-id bridge entry.",
+      "verify": "grep -F 'AgentWaitForReplyTool' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts | wc -l | awk '$1 >= 4 { exit 0 } { exit 1 }'",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "ORCHESTRATOR ADJUDICATION: structurally complete, recipe too strict for established convention. All 5 wiring points present in registry.ts: L21 import (combined with AgentWaitTool), L136 `const agentwaitforreply = yield* AgentWaitForReplyTool`, L242 `agentwaitforreply: Tool.init(agentwaitforreply)`, L287 `tool.agentwaitforreply`, L417 `tool.id === AgentWaitForReplyTool.id ||`. Three of these (L242, L287) use the local-variable / object-property idiom that mirrors the EXISTING AgentWaitTool wiring (L135 `agentwait`, L241 `agentwait: Tool.init(agentwait)`, L286 `tool.agentwait`) — the existing wave-1 wired tools also produce only 3 literal `Agent<Name>Tool` occurrences each. Asking the generator to inline the literal would be unidiomatic (the bar: 'no shitty unidiomatic regression-causing amateur-tier code — match the codebase's existing patterns'). Structural correctness verified by C11 (typecheck clean) + C12 (47/0 agent-wait suite) + C13 (multi-agent-invariants 25/0 unchanged). The wiring works because all three downstream verifies pass; the grep recipe was authored without checking the established convention. Marked passed with adjudication."
+    },
+    {
+      "id": "C7",
+      "category": "correctness",
+      "assertion": "New tool description file wait-for-reply.txt exists and is non-empty.",
+      "verify": "test -s /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/wait-for-reply.txt",
+      "weight": 0.03,
+      "status": "passed",
+      "evidence": "exit 0; file present, 2136 bytes."
+    },
+    {
+      "id": "C8",
+      "category": "correctness",
+      "assertion": "agent-wait.test.ts contains tests for wait_for_reply happy path, timeout, filter (non-matching correlation does NOT wake) AND warning emission on missing/clamped timeout.",
+      "verify": "grep -F 'wait_for_reply' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.test.ts && grep -F 'missing_timeout' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.test.ts && grep -F 'timeout_clamped' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.test.ts",
+      "weight": 0.07,
+      "status": "passed",
+      "evidence": "exit 0; describe('tool.wait_for_reply') block + 'missing_timeout' it.live + 'timeout_clamped' it.live (L479) all present."
+    },
+    {
+      "id": "C9",
+      "category": "correctness",
+      "assertion": "schema.test.ts has tests for wait_for_reply Parameters AND constants section unchanged.",
+      "verify": "grep -F 'wait_for_reply' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/schema.test.ts && grep -F 'WaitForReplyParameters' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/schema.test.ts",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "exit 0; describe('wait_for_reply parameters') + describe('wait_for_reply tool ID constants') + WaitForReplyParameters references present."
+    },
+    {
+      "id": "C10",
+      "category": "correctness",
+      "assertion": "agent-wait.txt updated to mention the mandatory-timeout doctrine — substring 'mandatory' or 'must' near 'timeout' appears.",
+      "verify": "grep -i -E '(mandatory|must) (have|specify|set) a (meaningful )?timeout|timeout is mandatory|every wait MUST' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.txt",
+      "weight": 0.04,
+      "status": "passed",
+      "evidence": "exit 0; match: 'Every wait MUST specify a meaningful timeout. Omitting `timeout_ms` triggers a `missing_timeout` warning...'"
+    },
+    {
+      "id": "C11",
+      "category": "convention",
+      "assertion": "bun typecheck passes from packages/opencode.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+      "weight": 0.13,
+      "status": "passed",
+      "evidence": "exit 0; tsgo --noEmit clean (no errors)."
+    },
+    {
+      "id": "C12",
+      "category": "correctness",
+      "assertion": "Full agent-wait test suite passes.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-wait/ 2>&1 | tee /tmp/wave3-t3-c12.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t3-c12.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t3-c12.log",
+      "weight": 0.15,
+      "status": "passed",
+      "evidence": "exit 0; 47 pass / 0 fail across 2 files, 97 expect() calls in 9.03s."
+    },
+    {
+      "id": "C13",
+      "category": "bc_preservation",
+      "assertion": "Multi-agent invariants suite stays green (>= 25 pass / 0 fail).",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave3-t3-c13.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t3-c13.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t3-c13.log",
+      "weight": 0.15,
+      "status": "passed",
+      "evidence": "exit 0; 25 pass / 0 fail, 105 expect() calls in 5.53s."
+    }
+  ]
+}
