@@ -31,6 +31,7 @@ import { InterAgentCommunication } from "./inter-agent-communication"
 import { Mailbox } from "./mailbox"
 import { MailboxFullError } from "./mailbox"
 import { Behaviors, BehaviorContract } from "./behaviors"
+import { Metric } from "@/wave/metric"
 import {
   AGENT_MAX_DEPTH,
   AGENT_MAX_THREADS,
@@ -474,6 +475,21 @@ export interface Interface {
     sessionID: SessionID,
     callID: string,
     timedOut: boolean,
+  ) => Effect.Effect<void>
+  // Wave 9 (D18) — observability metric emitters. Callers (agent-wait,
+  // agent-send, agent-followup) yield these on the relevant transitions;
+  // emission is fire-and-forget at the implementation. Centralizing
+  // here keeps the bus reference in one service and lets tests subscribe
+  // to `Metric.Event.*` without spinning up the tools.
+  readonly emitSiblingDeadlock: (
+    sessionID: SessionID,
+    timeoutMs: number,
+    tool_id: string,
+  ) => Effect.Effect<void>
+  readonly emitSubagentToolError: (
+    sessionID: SessionID,
+    tool_id: string,
+    error_kind: string,
   ) => Effect.Effect<void>
   // D13 (actor-discipline-2026-05-20 Wave 6) — pool primitives. Every
   // method takes the caller's SessionID and resolves the per-root slot
@@ -1270,6 +1286,38 @@ export const layer = Layer.effect(
                     child.id,
                     { system: true },
                   ).pipe(Effect.catch(() => Effect.void))
+                  // Wave 9 (D18) — observability metric emission. One
+                  // `DeliverableArrived` per completion (source derived
+                  // from D5's childDelivered + needsWarning); paired
+                  // `SafetyNetFired` when the warning was prepended.
+                  // Fire-and-forget; PubSub failures during disposal
+                  // race with the watcher and are absorbed via
+                  // `Effect.ignore` per the Wave 0 lifecycle invariant.
+                  const metricSource: Metric.DeliverableSource = childDelivered
+                    ? "explicit_send"
+                    : needsWarning
+                      ? "safety_net"
+                      : "extracted"
+                  yield* bus
+                    .publish(Metric.Event.DeliverableArrived, {
+                      sessionID: input.parentID,
+                      timestamp: Date.now(),
+                      child_path: childPath,
+                      child_session_id: child.id,
+                      source: metricSource,
+                      body_length: body.length,
+                    })
+                    .pipe(Effect.ignore)
+                  if (needsWarning) {
+                    yield* bus
+                      .publish(Metric.Event.SafetyNetFired, {
+                        sessionID: input.parentID,
+                        timestamp: Date.now(),
+                        child_path: childPath,
+                        child_session_id: child.id,
+                      })
+                      .pipe(Effect.ignore)
+                  }
                   // D14 (actor-discipline-2026-05-20 Wave 7) — linked-death
                   // cascade. When this child reaches a terminal NON-shutdown
                   // status (completed / errored), every peer linked to it
@@ -1898,6 +1946,42 @@ export const layer = Layer.effect(
       yield* bus.publish(Event.WaitEnded, data).pipe(Effect.ignore)
     })
 
+    // Wave 9 (D18) — observability metric emitters. Fire-and-forget; PubSub
+    // failures during disposal race with concurrent shutdown and are absorbed
+    // via `Effect.ignore` so callers (tools, completion-watcher) never crash
+    // on a torn-down bus. Centralizing emission here keeps the bus reference
+    // inside one service and lets tests subscribe to `Metric.Event.*` without
+    // spinning up the full tool surface.
+    const emitSiblingDeadlock = Effect.fn("AgentControl.emitSiblingDeadlock")(function* (
+      sessionID: SessionID,
+      timeoutMs: number,
+      tool_id: string,
+    ) {
+      yield* bus
+        .publish(Metric.Event.SiblingDeadlock, {
+          sessionID,
+          timestamp: Date.now(),
+          timeout_ms: timeoutMs,
+          tool_id,
+        })
+        .pipe(Effect.ignore)
+    })
+
+    const emitSubagentToolError = Effect.fn("AgentControl.emitSubagentToolError")(function* (
+      sessionID: SessionID,
+      tool_id: string,
+      error_kind: string,
+    ) {
+      yield* bus
+        .publish(Metric.Event.SubagentToolError, {
+          sessionID,
+          timestamp: Date.now(),
+          tool_id,
+          error_kind,
+        })
+        .pipe(Effect.ignore)
+    })
+
     // D13 (actor-discipline-2026-05-20 Wave 6) — spawn N pool members
     // under a shared pool_id. Per WAVE.md gotcha 1 the spawn is
     // non-atomic: a per-worker spawnAgent failure is caught into the
@@ -2169,6 +2253,8 @@ export const layer = Layer.effect(
       wasKnownPath,
       emitWaitStarted,
       emitWaitEnded,
+      emitSiblingDeadlock,
+      emitSubagentToolError,
       createPool: createPool,
       collectPool: collectPool,
       listPoolMembers: listPoolMembers,

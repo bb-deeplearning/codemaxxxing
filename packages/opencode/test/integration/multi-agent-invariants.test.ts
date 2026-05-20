@@ -18,6 +18,7 @@ import { AgentControl, AgentNotFoundError } from "@/agent/control"
 import { AgentPath } from "@/agent/agent-path"
 import { AgentStatus } from "@/agent/status"
 import { InterAgentCommunication } from "@/agent/inter-agent-communication"
+import { Bus } from "@/bus"
 import { Config } from "@/config/config"
 import { Permission } from "@/permission"
 import { Pty } from "@/pty"
@@ -27,6 +28,7 @@ import type { SessionPrompt } from "@/session/prompt"
 import { SystemPrompt } from "@/session/system"
 import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
+import { Metric } from "@/wave/metric"
 import { AgentCloseTool } from "@/tool/agent-close/agent-close"
 import { AgentWaitTool, AgentWaitForReplyTool } from "@/tool/agent-wait/agent-wait"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
@@ -50,6 +52,7 @@ const it = testEffect(
   Layer.mergeAll(
     Agent.defaultLayer,
     AgentControl.defaultLayer,
+    Bus.defaultLayer,
     Config.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
     Pty.defaultLayer,
@@ -2967,6 +2970,128 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
       expect(note?.behavior_violation?.contract_version).toBe("subagent_v1")
       const kinds = note?.behavior_violation?.violations.map((v) => v.kind) ?? []
       expect(kinds).toContain("missing_delivery")
+    }),
+  )
+
+  // INV-D-27 (actor-discipline-2026-05-20 Wave 9) — D18 observability.
+  // The completion-watcher emits `Metric.Event.DeliverableArrived` once per
+  // child completion AND `Metric.Event.SafetyNetFired` when the D5 warning
+  // was prepended. Subscribes via `Bus.Service.subscribeCallback` per the
+  // `bus-subscribe-helper-vs-service-method-cross-runtime-mismatch` GOTCHA.
+  //
+  // The runLoop dies immediately (no assistant text, no send_message) →
+  // child reaches errored terminal status → completion-watcher fires the
+  // safety net AND the metric pair. Same scenario as the D5 INV-D-03 invariant
+  // but with explicit metric assertions added on top.
+  it.instance("INV-D-27-deliverable-arrival-and-safety-net-metrics-fire-on-completion", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const bus = yield* Bus.Service
+
+      yield* control.registerRunLoop(() => Effect.die("immediate"))
+
+      const arrived: Array<{
+        source: Metric.DeliverableSource
+        child_path: string
+        body_length: number
+      }> = []
+      const fired: Array<{ child_path: string }> = []
+      const offArrived = yield* bus.subscribeCallback(
+        Metric.Event.DeliverableArrived,
+        (evt) =>
+          arrived.push({
+            source: evt.properties.source,
+            child_path: String(evt.properties.child_path),
+            body_length: evt.properties.body_length,
+          }),
+      )
+      const offFired = yield* bus.subscribeCallback(
+        Metric.Event.SafetyNetFired,
+        (evt) => fired.push({ child_path: String(evt.properties.child_path) }),
+      )
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "metric_silent",
+        initial_message: "go",
+      })
+      yield* Effect.sleep(80)
+
+      const arr = arrived.find((a) => a.child_path === "/root/metric_silent")
+      expect(arr).toBeDefined()
+      expect(arr?.source).toBe("safety_net")
+      const fire = fired.find((f) => f.child_path === "/root/metric_silent")
+      expect(fire).toBeDefined()
+
+      // Sanity: the rate helpers compute reasonable values over a sample.
+      // One safety_net out of one observation = 100% firing rate, 0% arrival.
+      const subset = arrived.filter((a) => a.child_path === "/root/metric_silent")
+      expect(Metric.safetyNetFiringRate(subset)).toBe(1)
+      expect(Metric.deliverableArrivalRate(subset)).toBe(0)
+
+      offArrived()
+      offFired()
+    }),
+  )
+
+  // INV-D-28 (actor-discipline-2026-05-20 Wave 9) — D18 sibling-deadlock
+  // metric. wait_agent's timeout path calls `control.emitSiblingDeadlock`
+  // with the configured timeout_ms and tool_id="wait_agent". The wait
+  // tool itself races a mailbox seq change against the timeout — if no
+  // message arrives within the timeout, the timeout branch fires and
+  // the metric is published.
+  it.instance("INV-D-28-sibling-deadlock-metric-fires-on-wait-timeout", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const bus = yield* Bus.Service
+
+      const deadlocks: Array<{ tool_id: string; timeout_ms: number }> = []
+      const off = yield* bus.subscribeCallback(
+        Metric.Event.SiblingDeadlock,
+        (evt) =>
+          deadlocks.push({
+            tool_id: evt.properties.tool_id,
+            timeout_ms: evt.properties.timeout_ms,
+          }),
+      )
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      // Spawn a child so the parent's mailbox exists. wait_agent on a
+      // session without a mailbox falls through to the early-sleep
+      // branch which ALSO emits the metric — same shape either way.
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "deadlock_target",
+        initial_message: "go",
+      })
+      // Drain any spawn-time messages so the wait actually waits.
+      yield* control.drainMailbox(root.id)
+
+      const def = yield* initWaitTool
+      const result = yield* def.execute({ timeout_ms: 1000 }, makeCtx(root.id))
+      expect(result.metadata.timed_out).toBe(true)
+
+      // Allow the bus callback to fire.
+      yield* Effect.sleep(20)
+      const match = deadlocks.find((d) => d.tool_id === "wait_agent" && d.timeout_ms === 1000)
+      expect(match).toBeDefined()
+      // Rate sanity: 1 timeout out of 1 wait = 100% deadlock rate.
+      expect(
+        Metric.siblingDeadlockRate(
+          deadlocks
+            .filter((d) => d.timeout_ms === 1000 && d.tool_id === "wait_agent")
+            .map(() => ({ timed_out: true })),
+        ),
+      ).toBe(1)
+      off()
     }),
   )
 })

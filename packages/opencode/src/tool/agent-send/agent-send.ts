@@ -59,6 +59,7 @@ export const AgentSendTool = Tool.define(
             Effect.gen(function* () {
               // 1. Empty-message guard (codex message_tool.rs:49-55).
               if (params.message.trim().length === 0) {
+                yield* control.emitSubagentToolError(ctx.sessionID, ID, "empty_message")
                 return {
                   title: `send_message ${params.target}`,
                   metadata: { target: params.target, error: "empty_message" },
@@ -81,6 +82,7 @@ export const AgentSendTool = Tool.define(
                 control.resolveAgentReference(currentPath, params.target, ctx.sessionID),
               )
               if (Result.isFailure(resolved)) {
+                yield* control.emitSubagentToolError(ctx.sessionID, ID, "target_not_found")
                 return {
                   title: `send_message ${params.target}`,
                   metadata: {
@@ -139,6 +141,15 @@ export const AgentSendTool = Tool.define(
                   target: params.target,
                   target_session_id: targetSessionID,
                 }
+                // Wave 9 (D18) — observability metric. Subagent saw a
+                // tool-recoverable error; downstream consumers aggregate
+                // `subagent_tool_error_rate` from this stream. Fire-and-
+                // forget per the metric module's lifecycle invariant.
+                yield* control.emitSubagentToolError(
+                  ctx.sessionID,
+                  ID,
+                  isFull ? "mailbox_full" : "send_failed",
+                )
                 return {
                   title: `send_message ${params.target}`,
                   metadata: isFull

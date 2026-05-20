@@ -76,6 +76,7 @@ export const AgentWaitTool = Tool.define(
             Effect.gen(function* () {
               const requested = params.timeout_ms ?? DEFAULT_WAIT_TIMEOUT_MS
               if (requested <= 0) {
+                yield* control.emitSubagentToolError(ctx.sessionID, ID, "invalid_timeout")
                 return {
                   title: "wait_agent",
                   metadata: {
@@ -122,6 +123,7 @@ export const AgentWaitTool = Tool.define(
               if (Result.isFailure(seqRef)) {
                 yield* Effect.sleep(`${timeoutMs} millis`)
                 yield* control.emitWaitEnded(ctx.sessionID, callID, true)
+                yield* control.emitSiblingDeadlock(ctx.sessionID, timeoutMs, ID)
                 return formatResult(true, timeoutMs, warning)
               }
 
@@ -147,6 +149,9 @@ export const AgentWaitTool = Tool.define(
               const outcome = yield* Effect.raceAll([changesEffect, timeoutEffect])
               const timedOut = outcome === "timeout"
               yield* control.emitWaitEnded(ctx.sessionID, callID, timedOut)
+              if (timedOut) {
+                yield* control.emitSiblingDeadlock(ctx.sessionID, timeoutMs, ID)
+              }
               return formatResult(timedOut, timeoutMs, warning)
             }),
     }
@@ -211,6 +216,7 @@ export const AgentWaitForReplyTool = Tool.define(
         Effect.gen(function* () {
           const requested = params.timeout_ms ?? DEFAULT_WAIT_TIMEOUT_MS
           if (requested <= 0) {
+            yield* control.emitSubagentToolError(ctx.sessionID, WaitForReplyID, "invalid_timeout")
             return {
               title: `wait_for_reply ${params.correlation_id}`,
               metadata: {
@@ -247,6 +253,7 @@ export const AgentWaitForReplyTool = Tool.define(
           )
           if (Result.isFailure(seqRef)) {
             yield* Effect.sleep(`${timeoutMs} millis`)
+            yield* control.emitSiblingDeadlock(ctx.sessionID, timeoutMs, WaitForReplyID)
             return formatReplyResult(undefined, timeoutMs, params.correlation_id)
           }
 
@@ -273,6 +280,7 @@ export const AgentWaitForReplyTool = Tool.define(
           if (outcome.kind === "matched") {
             return formatReplyResult(outcome.msg, timeoutMs, params.correlation_id)
           }
+          yield* control.emitSiblingDeadlock(ctx.sessionID, timeoutMs, WaitForReplyID)
           return formatReplyResult(undefined, timeoutMs, params.correlation_id)
         }),
     }

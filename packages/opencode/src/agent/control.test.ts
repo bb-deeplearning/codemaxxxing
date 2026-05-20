@@ -21,6 +21,7 @@ import {
 import { AgentPath, AgentPathInvalidError } from "./agent-path"
 import { AgentLimitReachedError, NoNicknameAvailableError, PathAlreadyExistsError } from "./registry"
 import { InterAgentCommunication } from "./inter-agent-communication"
+import { Metric } from "@/wave/metric"
 
 // AgentControl tests use real Session.Service so the spawn flow exercises the
 // actual session-create code path. The runLoop is stubbed via
@@ -4729,5 +4730,275 @@ describe("AgentControl D16 behavior contract validation", () => {
           }
         }),
       ),
+  )
+})
+
+// Wave 9 (D18 — actor-discipline-2026-05-20) — observability metric emission.
+// Two surfaces tested here:
+//
+//   1. Completion-watcher emits `Metric.Event.DeliverableArrived` once per
+//      child completion with `source` derived from D5's
+//      `childDelivered` + `needsWarning` flags. `Metric.Event.SafetyNetFired`
+//      additionally fires when the safety-net warning was prepended.
+//   2. `control.emitSiblingDeadlock` and `control.emitSubagentToolError`
+//      publish their respective metric events on demand (the tool surfaces
+//      call these directly).
+//
+// Subscribes via `Bus.Service.subscribeCallback` (in-effect, NOT the
+// top-level helper) per GOTCHA
+// `bus-subscribe-helper-vs-service-method-cross-runtime-mismatch`.
+describe("AgentControl D18 observability metric emission", () => {
+  // Reuse the writeAssistantMessage shape from the D5/D11/D12/D16 blocks.
+  const writeAssistantMessage = (
+    sessions: Session.Interface,
+    sessionID: SessionID,
+    text: string,
+    finish: string,
+  ) =>
+    Effect.gen(function* () {
+      const userMsg = {
+        id: MessageID.ascending(),
+        sessionID,
+        role: "user" as const,
+        time: { created: Date.now() },
+        agent: "build",
+        model: {
+          providerID: ProviderID.make("anthropic"),
+          modelID: ModelID.make("claude-3-5-sonnet"),
+        },
+      }
+      yield* sessions.updateMessage(userMsg)
+      const assistantMsg = {
+        id: MessageID.ascending(),
+        sessionID,
+        parentID: userMsg.id,
+        role: "assistant" as const,
+        mode: "build",
+        agent: "build",
+        path: { cwd: ".", root: "." },
+        time: { created: Date.now(), completed: Date.now() },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("claude-3-5-sonnet"),
+        providerID: ProviderID.make("anthropic"),
+        finish,
+      }
+      yield* sessions.updateMessage(assistantMsg)
+      yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: assistantMsg.id,
+        sessionID,
+        type: "text",
+        text,
+      })
+      return assistantMsg
+    })
+
+  it.live("DeliverableArrived fires with source=extracted on substantive completion", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const bus = yield* Bus.Service
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            yield* writeAssistantMessage(
+              sessions,
+              sid,
+              "Here is the substantive deliverable body — long enough to defeat the safety-net heuristic.",
+              "tool-calls",
+            )
+            return "done"
+          }),
+        )
+
+        const collected: Array<{
+          source: string
+          body_length: number
+          child_path: string
+        }> = []
+        const unsubscribe = yield* bus.subscribeCallback(
+          Metric.Event.DeliverableArrived,
+          (evt) =>
+            collected.push({
+              source: evt.properties.source,
+              body_length: evt.properties.body_length,
+              child_path: String(evt.properties.child_path),
+            }),
+        )
+        const root = yield* seedRoot()
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "m_extracted",
+          initial_message: ".",
+        })
+        yield* Effect.sleep(80)
+
+        const match = collected.find(
+          (c) => c.child_path === String(child.metadata.agent_path),
+        )
+        expect(match).toBeDefined()
+        expect(match?.source).toBe("extracted")
+        expect(match?.body_length).toBeGreaterThan(0)
+        unsubscribe()
+      }),
+    ),
+  )
+
+  it.live(
+    "DeliverableArrived fires with source=safety_net AND SafetyNetFired pair when child never delivered",
+    () =>
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const control = yield* AgentControl.Service
+          const bus = yield* Bus.Service
+          // Run loop dies immediately; no assistant text emitted; safety net
+          // fires (same setup as the D5 "<no text emitted>" test).
+          yield* control.registerRunLoop(() => Effect.die("immediate death"))
+
+          const arrived: Array<{ source: string; child_path: string }> = []
+          const fired: Array<{ child_path: string }> = []
+          const off1 = yield* bus.subscribeCallback(
+            Metric.Event.DeliverableArrived,
+            (evt) =>
+              arrived.push({
+                source: evt.properties.source,
+                child_path: String(evt.properties.child_path),
+              }),
+          )
+          const off2 = yield* bus.subscribeCallback(
+            Metric.Event.SafetyNetFired,
+            (evt) => fired.push({ child_path: String(evt.properties.child_path) }),
+          )
+
+          const root = yield* seedRoot()
+          yield* control.spawnAgent({
+            parentID: root.id,
+            parentPath: ROOT,
+            task_name: "m_safety",
+            initial_message: ".",
+          })
+          yield* Effect.sleep(50)
+
+          const arr = arrived.find((a) => a.child_path === "/root/m_safety")
+          expect(arr).toBeDefined()
+          expect(arr?.source).toBe("safety_net")
+          const fire = fired.find((f) => f.child_path === "/root/m_safety")
+          expect(fire).toBeDefined()
+          off1()
+          off2()
+        }),
+      ),
+  )
+
+  it.live(
+    "DeliverableArrived fires with source=explicit_send when child sent message to spawner",
+    () =>
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const control = yield* AgentControl.Service
+          const bus = yield* Bus.Service
+          const root = yield* seedRoot()
+          yield* control.registerRunLoop((sid) =>
+            Effect.gen(function* () {
+              yield* control
+                .sendInterAgentCommunication(
+                  root.id,
+                  new InterAgentCommunication({
+                    author: AgentPath.root(),
+                    recipient: AgentPath.root(),
+                    content: "explicit deliverable",
+                    trigger_turn: false,
+                    sent_at: Date.now(),
+                  }),
+                  sid,
+                )
+                .pipe(Effect.catch(() => Effect.void))
+              yield* writeAssistantMessage(sessions, sid, "wrap", "tool-calls")
+              return "done"
+            }),
+          )
+
+          const arrived: Array<{ source: string; child_path: string }> = []
+          const off = yield* bus.subscribeCallback(
+            Metric.Event.DeliverableArrived,
+            (evt) =>
+              arrived.push({
+                source: evt.properties.source,
+                child_path: String(evt.properties.child_path),
+              }),
+          )
+          yield* control.spawnAgent({
+            parentID: root.id,
+            parentPath: ROOT,
+            task_name: "m_explicit",
+            initial_message: ".",
+          })
+          yield* Effect.sleep(80)
+
+          const arr = arrived.find((a) => a.child_path === "/root/m_explicit")
+          expect(arr).toBeDefined()
+          expect(arr?.source).toBe("explicit_send")
+          off()
+        }),
+      ),
+  )
+
+  it.live("emitSiblingDeadlock publishes SiblingDeadlock with tool_id + timeout_ms", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+        const bus = yield* Bus.Service
+        const collected: Array<{ tool_id: string; timeout_ms: number }> = []
+        const off = yield* bus.subscribeCallback(
+          Metric.Event.SiblingDeadlock,
+          (evt) =>
+            collected.push({
+              tool_id: evt.properties.tool_id,
+              timeout_ms: evt.properties.timeout_ms,
+            }),
+        )
+        const root = yield* seedRoot()
+        yield* control.emitSiblingDeadlock(root.id, 5_000, "wait_agent")
+        yield* control.emitSiblingDeadlock(root.id, 12_345, "wait_for_reply")
+        yield* Effect.sleep(20)
+        expect(collected.length).toBeGreaterThanOrEqual(2)
+        const wa = collected.find((c) => c.tool_id === "wait_agent")
+        const wfr = collected.find((c) => c.tool_id === "wait_for_reply")
+        expect(wa?.timeout_ms).toBe(5_000)
+        expect(wfr?.timeout_ms).toBe(12_345)
+        off()
+      }),
+    ),
+  )
+
+  it.live("emitSubagentToolError publishes SubagentToolError with tool_id + error_kind", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+        const bus = yield* Bus.Service
+        const collected: Array<{ tool_id: string; error_kind: string }> = []
+        const off = yield* bus.subscribeCallback(
+          Metric.Event.SubagentToolError,
+          (evt) =>
+            collected.push({
+              tool_id: evt.properties.tool_id,
+              error_kind: evt.properties.error_kind,
+            }),
+        )
+        const root = yield* seedRoot()
+        yield* control.emitSubagentToolError(root.id, "send_message", "mailbox_full")
+        yield* control.emitSubagentToolError(root.id, "wait_agent", "invalid_timeout")
+        yield* Effect.sleep(20)
+        expect(collected.length).toBeGreaterThanOrEqual(2)
+        const sm = collected.find((c) => c.tool_id === "send_message")
+        const wa = collected.find((c) => c.tool_id === "wait_agent")
+        expect(sm?.error_kind).toBe("mailbox_full")
+        expect(wa?.error_kind).toBe("invalid_timeout")
+        off()
+      }),
+    ),
   )
 })

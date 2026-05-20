@@ -51,6 +51,7 @@ export const AgentFollowupTool = Tool.define(
               //    resolution — saves a registry round-trip on garbage input.
               //    Codex equivalent: message_tool.rs:49-56 (message_content).
               if (params.message.trim().length === 0) {
+                yield* control.emitSubagentToolError(ctx.sessionID, ID, "empty_message")
                 return {
                   title: `followup_task ${params.target}`,
                   metadata: { error: "empty_message", target: params.target },
@@ -70,6 +71,7 @@ export const AgentFollowupTool = Tool.define(
                 control.resolveAgentReference(currentPath, params.target, ctx.sessionID),
               )
               if (Result.isFailure(resolved)) {
+                yield* control.emitSubagentToolError(ctx.sessionID, ID, "reference_invalid")
                 return {
                   title: `followup_task ${params.target}`,
                   metadata: {
@@ -89,6 +91,7 @@ export const AgentFollowupTool = Tool.define(
               //    don't want to ask permission for an action we'll refuse.
               //    Codex equivalent: message_tool.rs:78-87.
               if (targetPath !== undefined && AgentPath.isRoot(targetPath)) {
+                yield* control.emitSubagentToolError(ctx.sessionID, ID, "root_target")
                 return {
                   title: `followup_task ${params.target}`,
                   metadata: { error: "root_target", target: params.target },
@@ -146,6 +149,14 @@ export const AgentFollowupTool = Tool.define(
                   target: params.target,
                   target_session_id: targetSessionID,
                 }
+                // Wave 9 (D18) — observability metric. Same shape as
+                // agent-send's emission so downstream `subagent_tool_error_rate`
+                // counts both tools uniformly.
+                yield* control.emitSubagentToolError(
+                  ctx.sessionID,
+                  ID,
+                  isFull ? "mailbox_full" : "send_failed",
+                )
                 return {
                   title: `followup_task ${params.target}`,
                   metadata: isFull
