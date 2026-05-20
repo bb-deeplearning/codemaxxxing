@@ -105,3 +105,29 @@ describe("Wave 1 — multi-agent-root.txt carries D7 sibling coordination + D8 l
     expect(text).toContain("idle")
   })
 })
+
+// Wave 2 — INV-D-06 regression. Pins the unicast doctrine in both the
+// root prompt (D7 + D8 — unicast + no broadcast) and the subagent prompt
+// (D7 mirror sentence Wave 1 landed). The traceability slug
+// `ses_1d84f236bffe` ties this block to diagnostic-session-2 (Demo 2:
+// The People v. Frankfurter), where prosecutor and defense both filed
+// to /root and idled waiting for each other's reply. The runtime IS
+// unicast (locked by INV-D-06-regression-ses_1d84f236bffe in the
+// integration suite); the bug was prose — the prompts did not tell the
+// model to address peers directly. This block keeps that prose pin.
+describe("Wave 2 — INV-D-06 regression: unicast doctrine pinned (ses_1d84f236bffe Demo 2)", () => {
+  test("multi-agent-root.txt contains 'unicast'", async () => {
+    const text = await Bun.file(rootHintPath).text()
+    expect(text).toContain("unicast")
+  })
+
+  test("multi-agent-root.txt contains 'no broadcast'", async () => {
+    const text = await Bun.file(rootHintPath).text()
+    expect(text).toContain("no broadcast")
+  })
+
+  test("multi-agent-subagent.txt contains 'unicast'", async () => {
+    const text = await Bun.file(subagentHintPath).text()
+    expect(text).toContain("unicast")
+  })
+})

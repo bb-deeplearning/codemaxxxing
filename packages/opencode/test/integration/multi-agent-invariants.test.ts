@@ -1424,6 +1424,90 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
       expect(note.content).toContain("FULL REPORT BODY")
     }),
   )
+
+  // INV-D-06-regression-ses_1d84f236bffe — Demo 2 (The People v.
+  // Frankfurter) sibling-deadlock reproduction. Prosecutor and defense
+  // both filed openings to /root and then idled, each waiting for the
+  // other's reply that never arrived. This test pins the doctrine that
+  // the deadlock IS the runtime's correct unicast behavior: each sibling
+  // addresses /root, root receives BOTH openings, and neither sibling's
+  // mailbox ever receives the other's message (the runtime does not
+  // broadcast). The bug was in PROSE — the prompts did not tell the
+  // model to address peers directly. Wave 1 D7 fixed the prose; this
+  // regression locks the runtime contract that made the prose fix the
+  // right fix.
+  it.instance("INV-D-06-regression-ses_1d84f236bffe", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      const root = yield* sessions.create({ title: "frankfurter" })
+      yield* control.registerSessionRoot(root.id)
+
+      const prosecutor = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "prosecutor",
+        initial_message: "prosecutor init",
+      })
+      const defense = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "defense",
+        initial_message: "defense init",
+      })
+      // Drain spawn-seed mailboxes on BOTH siblings and on root so the
+      // post-send drains reflect ONLY the openings this test issues.
+      yield* control.drainMailbox(prosecutor.thread_id)
+      yield* control.drainMailbox(defense.thread_id)
+      yield* control.drainMailbox(root.id)
+
+      const prosecutorPath = prosecutor.metadata.agent_path ?? AgentPath.root()
+      const defensePath = defense.metadata.agent_path ?? AgentPath.root()
+
+      // Each sibling addresses /root with its opening (the Demo 2 shape:
+      // both filings land at root, no sibling-to-sibling sends).
+      yield* control.sendInterAgentCommunication(
+        root.id,
+        new InterAgentCommunication({
+          author: prosecutorPath,
+          recipient: AgentPath.root(),
+          content: "prosecutor opening",
+          trigger_turn: false,
+          sent_at: 1,
+        }),
+        prosecutor.thread_id,
+      )
+      yield* control.sendInterAgentCommunication(
+        root.id,
+        new InterAgentCommunication({
+          author: defensePath,
+          recipient: AgentPath.root(),
+          content: "defense opening",
+          trigger_turn: false,
+          sent_at: 2,
+        }),
+        defense.thread_id,
+      )
+
+      const drainRoot = yield* control.drainMailbox(root.id)
+      const drainProsecutor = yield* control.drainMailbox(prosecutor.thread_id)
+      const drainDefense = yield* control.drainMailbox(defense.thread_id)
+
+      // Root received BOTH openings (one per unicast send).
+      expect(drainRoot).toHaveLength(2)
+      expect(drainRoot.map((m) => m.content).sort()).toEqual([
+        "defense opening",
+        "prosecutor opening",
+      ])
+      // The unicast invariant — neither sibling addressed the other, so
+      // both sibling mailboxes stay empty. This is the runtime contract
+      // that made the Demo 2 deadlock a prose bug, not a runtime bug.
+      expect(drainProsecutor).toHaveLength(0)
+      expect(drainDefense).toHaveLength(0)
+    }),
+  )
 })
 
 describe("bug 3 audit — agent_type role-vocabulary fix is intact", () => {
