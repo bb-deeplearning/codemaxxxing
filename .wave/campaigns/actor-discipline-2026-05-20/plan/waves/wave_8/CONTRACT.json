@@ -312,8 +312,8 @@
     ],
     "depends_on": ["T1"],
     "pre_agreed_by_orchestrator": true,
-    "signed": false,
-    "commit_sha": null,
+    "signed": true,
+    "commit_sha": "f1b9b98a9",
     "criteria": [
       {
         "id": "C1",
@@ -321,7 +321,8 @@
         "assertion": "multi-agent-subagent.txt contains a `## Your behavior contract` section AFTER the existing `## ABORT` section AND the section contains the substrings 'behavior_violation' AND 'declared failure modes' (or 'declared_failure_modes').",
         "verify": "bash -c 'grep -qE \"^## Your behavior contract\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -qE \"behavior_violation\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -qiE \"declared (failure modes|_failure_modes)\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt'",
         "weight": 0.15,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "section header + behavior_violation + declared failure modes all present"
       },
       {
         "id": "C2",
@@ -329,7 +330,8 @@
         "assertion": "The Your behavior contract section appears AFTER the ABORT section (file order — D16 prose lands at end of file per WAVE.md item 5).",
         "verify": "bash -c 'abort_line=$(grep -n \"^## ABORT\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt | head -1 | cut -d: -f1); contract_line=$(grep -n \"^## Your behavior contract\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt | head -1 | cut -d: -f1); [ -n \"$abort_line\" ] && [ -n \"$contract_line\" ] && [ \"$contract_line\" -gt \"$abort_line\" ] || { echo \"ordering: abort=$abort_line contract=$contract_line\"; exit 1; }'",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "abort=L57 contract=L76 — contract after abort"
       },
       {
         "id": "C3",
@@ -337,7 +339,8 @@
         "assertion": "multi-agent-subagent.txt section mentions both 'general' and 'explore' agent_type variations (per WAVE.md item 2 — explore excludes approach_failed).",
         "verify": "bash -c 'awk \"/^## Your behavior contract/,0\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt | grep -qE \"general\" && awk \"/^## Your behavior contract/,0\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt | grep -qE \"explore\"'",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "section mentions both general and explore agent_types"
       },
       {
         "id": "C4",
@@ -345,7 +348,8 @@
         "assertion": "prose/subagent-prompts.test.ts extends with assertions checking the new section + required phrases in multi-agent-subagent.txt.",
         "verify": "bash -c 'grep -qE \"Your behavior contract\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -qE \"behavior_violation\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts'",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "both required-phrase greps present in subagent-prompts.test.ts"
       },
       {
         "id": "C5",
@@ -353,7 +357,8 @@
         "assertion": "NO other prompt file in packages/opencode/src/agent/prompt/ is modified (D16 prose lives in multi-agent-subagent.txt ONLY per PROMPT_SURFACES ownership map).",
         "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 8 T4\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && ! git -C /Users/rohan/Documents/Personal/codemaxxxing show --name-only --format= \"$sha\" | grep -E \"packages/opencode/src/agent/prompt/\" | grep -v \"multi-agent-subagent.txt\" || { echo \"unexpected prompt file modified — D16 prose lives only in multi-agent-subagent.txt\"; exit 1; }'",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "commit f1b9b98a9 touches only multi-agent-subagent.txt within prompt/ dir"
       },
       {
         "id": "C6",
@@ -361,7 +366,8 @@
         "assertion": "bun typecheck passes from packages/opencode.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "tsgo --noEmit exit 0"
       },
       {
         "id": "C7",
@@ -369,7 +375,8 @@
         "assertion": "Full prose/subagent-prompts.test.ts passes (no regression to existing 27+ tests + new D16 assertions).",
         "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/prose/subagent-prompts.test.ts 2>&1 | tee /tmp/wave8-t4-c7.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave8-t4-c7.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave8-t4-c7.log'",
         "weight": 0.15,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "54 pass / 0 fail"
       },
       {
         "id": "C8",
@@ -377,7 +384,8 @@
         "assertion": "Generator commit exists matching 'wave 8 T4' AND includes ONLY the 2 contracted writes.",
         "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 8 T4\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat=200 --format= \"$sha\" | grep -qE \"packages/opencode/src/agent/prompt/multi-agent-subagent\\\\.txt\" && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat=200 --format= \"$sha\" | grep -qE \"packages/opencode/test/prose/subagent-prompts\\\\.test\\\\.ts\"'",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "commit f1b9b98a9 stat: 2 files changed — multi-agent-subagent.txt + subagent-prompts.test.ts"
       }
     ]
   },
