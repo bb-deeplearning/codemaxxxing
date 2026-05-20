@@ -1,0 +1,64 @@
+{
+  "task_id": "T4",
+  "title": "Defer-edit explore.txt (D4): remove text-is-deliverable framing, preserve read-only enforcement",
+  "writes": ["/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt"],
+  "signed_by": ["generator", "evaluator"],
+  "criteria": [
+    {
+      "id": "C1",
+      "assertion": "explore.txt does NOT contain forbidden phrase 'your text response IS the deliverable'.",
+      "weight": 0.10,
+      "verify_recipe": "! grep -q -F 'your text response IS the deliverable' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt",
+      "status": "pending"
+    },
+    {
+      "id": "C2",
+      "assertion": "explore.txt does NOT contain forbidden phrase 'your response goes to the parent agent'.",
+      "weight": 0.10,
+      "verify_recipe": "! grep -q -F 'your response goes to the parent agent' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt",
+      "status": "pending"
+    },
+    {
+      "id": "C3",
+      "assertion": "explore.txt does NOT contain forbidden phrase 'the parent agent reads your output'.",
+      "weight": 0.10,
+      "verify_recipe": "! grep -q -F 'the parent agent reads your output' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt",
+      "status": "pending"
+    },
+    {
+      "id": "C4",
+      "assertion": "explore.txt contains the literal required phrase 'See the delivery contract in your multi-agent coordination guidance.' (identical wording to T3 anthropic.txt + gemini.txt).",
+      "weight": 0.15,
+      "verify_recipe": "grep -q -F 'See the delivery contract in your multi-agent coordination guidance.' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt",
+      "status": "pending"
+    },
+    {
+      "id": "C5",
+      "assertion": "explore.txt preserves the CRITICAL: READ-ONLY MODE block verbatim — header + 7 prohibition bullets + 'You do NOT have access...' line all present, AND first bullet is adjacent (within 10 lines) to header.",
+      "weight": 0.20,
+      "verify_recipe": "grep -q -F '=== CRITICAL: READ-ONLY MODE — NO FILE MODIFICATIONS ===' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F -e '- Creating files (no Write, touch, or file creation of any kind)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F -e '- Modifying files (no Edit operations)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F -e '- Deleting files (no rm or deletion)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F -e '- Moving or copying files (no mv or cp)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F -e '- Creating temporary files anywhere, including /tmp' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F -e '- Using redirect operators (>, >>) to write to files' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F -e '- Running ANY command that changes system state' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F 'You do NOT have access to file editing tools. Attempting to use them will fail.' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -A 10 -F '=== CRITICAL: READ-ONLY MODE — NO FILE MODIFICATIONS ===' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt | grep -q -F -e '- Creating files (no Write, touch, or file creation of any kind)'",
+      "status": "pending"
+    },
+    {
+      "id": "C6",
+      "assertion": "explore.txt preserves Caveman output rules block — header + 4 key subsection headers present.",
+      "weight": 0.15,
+      "verify_recipe": "grep -q -F '# Caveman output rules' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F '## What to remove from output' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F '## What to preserve EXACTLY in output (never modify)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F '## How to compress findings' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F '## Output pattern' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt",
+      "status": "pending"
+    },
+    {
+      "id": "C7",
+      "assertion": "Line 1 uses neutral framing — no 'Your response is consumed by another agent', no 'reports findings to a parent agent, not directly to a user'; must mention 'read-only'.",
+      "weight": 0.10,
+      "verify_recipe": "! head -1 /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt | grep -q -F 'Your response is consumed by another agent' && ! head -1 /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt | grep -q -F 'reports findings to a parent agent, not directly to a user' && head -1 /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt | grep -q -F 'read-only'",
+      "status": "pending"
+    },
+    {
+      "id": "C8",
+      "assertion": "Response Format section lead sentence no longer contains 'Your response is consumed by another agent'; numbered items preserving Absolute paths, Concise snippets, Relevance order, Explicit negatives, No emojis all present.",
+      "weight": 0.10,
+      "verify_recipe": "! grep -q -F 'Your response is consumed by another agent' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F 'Absolute paths' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F 'Concise snippets' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F 'Relevance order' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F 'Explicit negatives' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt && grep -q -F 'No emojis' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt",
+      "status": "pending"
+    }
+  ]
+}
