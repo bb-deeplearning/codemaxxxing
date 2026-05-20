@@ -1,0 +1,491 @@
+[
+  {
+    "task_id": "T1",
+    "title": "control.ts link primitives + linked-death cascade + mailbox.ts bounded queue + sendInterAgentCommunication mailbox-full propagation",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.test.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/mailbox.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/mailbox.test.ts"
+    ],
+    "depends_on": [],
+    "pre_agreed_by_orchestrator": true,
+    "signed": true,
+    "commit_sha": "ebfaaf30b",
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "mailbox.ts exports MAILBOX_DEFAULT_CAPACITY = 32 const AND MailboxFullError extending Schema.TaggedErrorClass with capacity field AND sendSystem method on Interface.",
+        "verify": "bash -c 'grep -qE \"MAILBOX_DEFAULT_CAPACITY\\s*=\\s*32\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/mailbox.ts && grep -qE \"class MailboxFullError extends Schema\\.TaggedErrorClass\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/mailbox.ts && grep -qF \"sendSystem:\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/mailbox.ts'",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "All three structural greps matched: MAILBOX_DEFAULT_CAPACITY=32 const, class MailboxFullError extends Schema.TaggedErrorClass, sendSystem: on Interface."
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "Mailbox.make accepts an optional capacity arg (defaulting to MAILBOX_DEFAULT_CAPACITY) AND send returns Effect<number, MailboxFullError> AND sendSystem returns Effect<number> bypassing the cap.",
+        "verify": "bash -c 'grep -qE \"make\\s*=.*capacity\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/mailbox.ts && grep -qE \"Effect<number, MailboxFullError>|Effect\\.Effect<number,\\s*MailboxFullError>\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/mailbox.ts'",
+        "weight": 0.05,
+        "status": "passed",
+        "evidence": "make signature includes capacity arg AND send returns Effect<number, MailboxFullError>."
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "control.ts PerRootData has links: Map<SessionID, Set<SessionID>> AND linkedDeathOf: Set<SessionID> fields AND both are initialized in ensureRootSlot AND cleared in BOTH the Session.Event.Deleted subscriber AND the disposal finalizer (>=2 .clear() call sites per field).",
+        "verify": "bash -c 'grep -qF \"links: Map<SessionID, Set<SessionID>>\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -qF \"linkedDeathOf: Set<SessionID>\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -qF \"links: new Map\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -qF \"linkedDeathOf: new Set\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && c1=$(grep -cF \".links.clear\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts) && c2=$(grep -cF \".linkedDeathOf.clear\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts) && [ \"$c1\" -ge 2 ] && [ \"$c2\" -ge 2 ]'",
+        "weight": 0.07,
+        "status": "passed",
+        "evidence": "All field/init/clear greps matched: links/linkedDeathOf fields present; init via new Map/new Set; .links.clear count=2; .linkedDeathOf.clear count=2."
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "AgentControl Interface declares linkAgents + unlinkAgents + agentLinks methods AND Service.of returns them (each name appears >= 2x — interface + Service.of binding).",
+        "verify": "bash -c 'for p in \"linkAgents:\" \"unlinkAgents:\" \"agentLinks:\"; do c=$(grep -cF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts); [ \"$c\" -ge 2 ] || { echo \"need >=2 of $p (interface + Service.of); saw $c\"; exit 1; }; done'",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "linkAgents/unlinkAgents/agentLinks each appear >=2x (interface decl + Service.of binding)."
+      },
+      {
+        "id": "C5",
+        "category": "correctness",
+        "assertion": "linkAgents body uses slotFor for per-root scoping AND linked-death cascade in the completion-watcher iterates slot.links.get(child.id) AND calls closeAgent(peer, child.id) AND marks peers in linkedDeathOf BEFORE the close.",
+        "verify": "bash -c 'grep -qF \"slot.links.get(child.id)\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -qE \"linkedDeathOf\\.add\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -qE \"closeAgent\\(.+,\\s*child\\.id\\)\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts'",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "Cascade greps matched: slot.links.get(child.id), linkedDeathOf.add, closeAgent(peer, child.id)."
+      },
+      {
+        "id": "C6",
+        "category": "correctness",
+        "assertion": "Completion-watcher's status label is overridden to 'linked_death' when slot.linkedDeathOf.has(child.id) AND isShutdown true (the override is conditioned on BOTH).",
+        "verify": "bash -c 'grep -qE \"linkedDeathOf\\.has\\(child\\.id\\).*linked_death|linked_death.*linkedDeathOf\\.has\\(child\\.id\\)\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts'",
+        "weight": 0.05,
+        "status": "passed",
+        "evidence": "linked_death label override conditioned on linkedDeathOf.has(child.id) present."
+      },
+      {
+        "id": "C7",
+        "category": "correctness",
+        "assertion": "sendInterAgentCommunication accepts optional flags param with system field AND internal callers (completion-watcher / respawn / spawnAgent seed) opt into the system path (>=2 grep hits for system: true OR a sendSystem call).",
+        "verify": "bash -c 'grep -qE \"flags\\?:\\s*\\{\\s*system\\?:\\s*boolean\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && c=$(grep -cE \"system:\\s*true|mailbox\\.sendSystem\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts); [ \"$c\" -ge 2 ] || { echo \"need >=2 system: true / sendSystem hits in control.ts; saw $c\"; exit 1; }'",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "flags?: { system?: boolean } param present; 4 system: true / sendSystem hits (internal callers opted in)."
+      },
+      {
+        "id": "C8",
+        "category": "correctness",
+        "assertion": "mailbox.test.ts adds new tests covering capacity default 32, explicit capacity rejection, MailboxFullError shape, sendSystem bypass — >=4 new it.live (or it.instance) tests referencing capacity / MailboxFullError / sendSystem keywords inside a D15 (or 'bounded mailbox' / 'capacity') describe block.",
+        "verify": "bash -c 'count=$(awk \"/describe\\\\(.*(D15|bounded|capacity)/,/^\\\\}\\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/mailbox.test.ts | grep -cE \"it\\\\.(live|instance)\\\\(\"); [ \"$count\" -ge 4 ] || { echo \"D15 mailbox test count=$count\"; exit 1; }'",
+        "weight": 0.08,
+        "status": "passed",
+        "evidence": "D15/bounded describe block contains 7 it.live/it.instance tests (need >=4)."
+      },
+      {
+        "id": "C9",
+        "category": "correctness",
+        "assertion": "control.test.ts adds D14 link describe block AND D15 mailbox-full propagation describe block AND each has >=4 it.live/it.instance tests.",
+        "verify": "bash -c 'c1=$(awk \"/describe\\\\(.*(D14|link primitive|link\\\\\\\\b)/,/^\\\\}\\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.test.ts | grep -cE \"it\\\\.(live|instance)\\\\(\"); c2=$(awk \"/describe\\\\(.*(D15|mailbox-full|mailbox_full)/,/^\\\\}\\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.test.ts | grep -cE \"it\\\\.(live|instance)\\\\(\"); [ \"$c1\" -ge 4 ] && [ \"$c2\" -ge 4 ] || { echo \"D14=$c1 D15=$c2\"; exit 1; }'",
+        "weight": 0.08,
+        "status": "passed",
+        "evidence": "D14 block has 12 it.live/it.instance tests; D15 block has 5 (need >=4 each)."
+      },
+      {
+        "id": "C10",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.1,
+        "status": "passed",
+        "evidence": "bun typecheck → exit 0 (tsgo --noEmit clean)."
+      },
+      {
+        "id": "C11",
+        "category": "correctness",
+        "assertion": "Full mailbox.test.ts AND control.test.ts pass (no failures).",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/agent/mailbox.test.ts src/agent/control.test.ts 2>&1 | tee /tmp/wave7-t1-c11.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave7-t1-c11.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave7-t1-c11.log'",
+        "weight": 0.12,
+        "status": "passed",
+        "evidence": "149 pass / 0 fail / 348 expect() calls across mailbox.test.ts + control.test.ts."
+      },
+      {
+        "id": "C12",
+        "category": "convention",
+        "assertion": "Per-file 100% LINE coverage on mailbox.ts via single-file run.",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/agent/mailbox.test.ts 2>&1 | tee /tmp/wave7-t1-c12.log | grep -E \"src/agent/mailbox\\\\.ts\" | head -1 | awk -F\"|\" \"{gsub(/^[ \\t]+|[ \\t]+\\$/, \\\"\\\", \\$3); if (\\$3 == \\\"100.00\\\") exit 0; else { print \\\"line coverage = \\\" \\$3 \\\" (need 100.00)\\\"; exit 1 }}\"'",
+        "weight": 0.07,
+        "status": "passed",
+        "evidence": "mailbox.ts coverage: Funcs=95.65, Lines=100.00 (recipe extracts column-3 via awk -F'|' which corresponds to %Lines column — verified RC=0)."
+      },
+      {
+        "id": "C13",
+        "category": "convention",
+        "assertion": "Per-file 100% LINE coverage on control.ts via single-file run. Function coverage may stay at the pre-existing Schema.TaggedErrorClass baseline per GOTCHA schema-class-function-coverage; LINE coverage MUST be 100.00.",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/agent/control.test.ts 2>&1 | tee /tmp/wave7-t1-c13.log | grep -E \"src/agent/control\\\\.ts\" | head -1 | awk -F\"|\" \"{gsub(/^[ \\t]+|[ \\t]+\\$/, \\\"\\\", \\$3); if (\\$3 == \\\"100.00\\\") exit 0; else { print \\\"line coverage = \\\" \\$3 \\\" (need 100.00)\\\"; exit 1 }}\"'",
+        "weight": 0.07,
+        "status": "passed",
+        "evidence": "control.ts coverage: Funcs=93.15 (Schema.TaggedErrorClass baseline per gotcha), Lines=100.00 (RC=0)."
+      },
+      {
+        "id": "C14",
+        "category": "convention",
+        "assertion": "Generator commit exists on the codemaxxxing branch matching 'wave 7 T1:' OR similar; the diff includes ALL writes from this task and no others (no spillover into wave-6 or unrelated files).",
+        "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 7 T1\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat --format= \"$sha\" | grep -qE \"packages/opencode/src/agent/(control|mailbox)\\\\.(test\\\\.)?ts\"'",
+        "weight": 0.07,
+        "status": "passed",
+        "evidence": "Commit ebfaaf30b 'wave 7 T1: link primitives + bounded mailbox + cascade' touches exactly the 4 contracted writes (control.ts, control.test.ts, mailbox.ts, mailbox.test.ts) — no spillover."
+      }
+    ]
+  },
+  {
+    "task_id": "T2",
+    "title": "agent-link tool — NEW directory + tools + tests + registry+permission wiring",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.txt",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.test.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/permission/index.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/permission/disabled.test.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts"
+    ],
+    "depends_on": ["T1"],
+    "pre_agreed_by_orchestrator": true,
+    "signed": false,
+    "commit_sha": null,
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "agent-link.ts exports LinkAgentsTool AND UnlinkAgentsTool AND constants LINK_ID='link_agents' / UNLINK_ID='unlink_agents' / PermissionKey='task' (literal-as-const form).",
+        "verify": "bash -c 'for p in \"export const LinkAgentsTool\" \"export const UnlinkAgentsTool\" \"export const LINK_ID = \\\"link_agents\\\" as const\" \"export const UNLINK_ID = \\\"unlink_agents\\\" as const\" \"export const PermissionKey = \\\"task\\\" as const\"; do grep -qF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.ts || { echo \"missing: $p\"; exit 1; }; done'",
+        "weight": 0.07,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "Parameters Schema for the link tools declares target_a + target_b as required String fields (both appear in the Schema AST; neither isOptional).",
+        "verify": "bash -c 'grep -qE \"target_a:\\s*Schema\\.String\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.ts && grep -qE \"target_b:\\s*Schema\\.String\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.ts'",
+        "weight": 0.04,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "LinkAgentsTool execute body rejects self-link (target_a resolves to same SessionID as target_b → errorOutput with tag 'self_link') AND handles cross-root rejection (control.linkAgents AgentNotFoundError → errorOutput tag 'cross_root') AND target_not_found case.",
+        "verify": "bash -c 'grep -qE \"self_link\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.ts && grep -qE \"cross_root\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.ts && grep -qE \"target_not_found\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.ts'",
+        "weight": 0.06,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "Both tools call ctx.ask with PermissionKey + patterns array (the resolved link permission gate fires before the runtime call).",
+        "verify": "bash -c 'c=$(grep -cE \"ctx\\\\.ask\\\\(\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.ts); [ \"$c\" -ge 2 ] || { echo \"need >=2 ctx.ask calls (one per tool); saw $c\"; exit 1; }'",
+        "weight": 0.04,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C5",
+        "category": "prose_quality",
+        "assertion": "agent-link.txt exists AND has length >= 60 lines AND covers sections on 'When to use' / 'When NOT to use' (or equivalent operational manual sections) AND mentions 'symmetric' / 'idempotent' / 'paired death' (or 'bidirectional').",
+        "verify": "bash -c 'lines=$(wc -l < /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.txt); [ \"$lines\" -ge 60 ] && grep -qiE \"when (to|not) use|when not to use\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.txt && grep -qiE \"symmetric|bidirectional|paired death|linked\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.txt'",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C6",
+        "category": "correctness",
+        "assertion": "permission/index.ts MULTI_AGENT_TOOLS includes 'link_agents' AND 'unlink_agents' (canonical order — appended after spawn_pool).",
+        "verify": "bash -c 'grep -qE \"\\\"link_agents\\\",\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/permission/index.ts && grep -qE \"\\\"unlink_agents\\\",?\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/permission/index.ts'",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C7",
+        "category": "correctness",
+        "assertion": "permission/disabled.test.ts test updates include link_agents AND unlink_agents under MULTI_AGENT_TOOLS canonical-order assertions AND the wildcard-deny stripping test.",
+        "verify": "bash -c 'grep -qE "\\"link_agents\\"" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/permission/disabled.test.ts && grep -qE "\\"unlink_agents\\"" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/permission/disabled.test.ts'",
+        "weight": 0.04,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C8",
+        "category": "correctness",
+        "assertion": "tool/registry.ts imports LinkAgentsTool + UnlinkAgentsTool AND adds both to builtin array AND extends the legacy-bridge OR chain to include them.",
+        "verify": "bash -c 'grep -qE \"import \\{ LinkAgentsTool, UnlinkAgentsTool \\} from\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts && grep -qF \"tool.linkagents\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts && grep -qF \"tool.unlinkagents\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts && grep -qE \"LinkAgentsTool\\.id|UnlinkAgentsTool\\.id\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts'",
+        "weight": 0.06,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C9",
+        "category": "correctness",
+        "assertion": "agent-link.test.ts contains >=10 it.live (or it.instance) tests AND tests rebuild against real AgentControl (no mocks of the multi-agent surface).",
+        "verify": "bash -c 'c=$(grep -cE \"it\\\\.(live|instance)\\\\(\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.test.ts); [ \"$c\" -ge 10 ] || { echo \"link test count=$c (need >=10)\"; exit 1; }'",
+        "weight": 0.07,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C10",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C11",
+        "category": "correctness",
+        "assertion": "agent-link.test.ts AND permission/disabled.test.ts AND tool/registry.test.ts all pass (no failures).",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-link/agent-link.test.ts src/permission/disabled.test.ts src/tool/registry.test.ts 2>&1 | tee /tmp/wave7-t2-c11.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave7-t2-c11.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave7-t2-c11.log'",
+        "weight": 0.12,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C12",
+        "category": "convention",
+        "assertion": "Per-file 100% LINE coverage on agent-link.ts via single-file run.",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/tool/agent-link/agent-link.test.ts 2>&1 | tee /tmp/wave7-t2-c12.log | grep -E \"src/tool/agent-link/agent-link\\\\.ts\" | head -1 | awk -F\"|\" \"{gsub(/^[ \\t]+|[ \\t]+\\$/, \\\"\\\", \\$3); if (\\$3 == \\\"100.00\\\") exit 0; else { print \\\"line coverage = \\\" \\$3 \\\" (need 100.00)\\\"; exit 1 }}\"'",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C13",
+        "category": "convention",
+        "assertion": "Generator commit exists matching 'wave 7 T2:' AND includes the new agent-link/ directory AND the permission/registry diffs.",
+        "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 7 T2\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat --format= \"$sha\" | grep -qE \"packages/opencode/src/tool/agent-link/\"'",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": null
+      }
+    ]
+  },
+  {
+    "task_id": "T3",
+    "title": "agent-send + agent-followup mailbox_full handling + tests",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.test.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.test.ts"
+    ],
+    "depends_on": ["T1"],
+    "pre_agreed_by_orchestrator": true,
+    "signed": false,
+    "commit_sha": null,
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "agent-send.ts handles MailboxFullError with a structured error shape: metadata.error === 'mailbox_full' AND metadata.retry_after_ms present (numeric).",
+        "verify": "bash -c 'grep -qE \"error:\\s*\\\"mailbox_full\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.ts && grep -qE \"retry_after_ms\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.ts'",
+        "weight": 0.08,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "agent-followup.ts replaces Effect.orDie on sendInterAgentCommunication with Effect.result AND handles MailboxFullError with the same mailbox_full structured shape.",
+        "verify": "bash -c '! grep -qF \"sendInterAgentCommunication(\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts || ! grep -qE \"\\.pipe\\(Effect\\.orDie\\)\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts; grep -qE \"Effect\\.result\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts && grep -qE \"error:\\s*\\\"mailbox_full\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts && grep -qE \"retry_after_ms\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts'",
+        "weight": 0.08,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "agent-send.test.ts adds a new it.live (or it.instance) test exercising the mailbox_full path end-to-end (real AgentControl + bounded mailbox; no mocks of the multi-agent surface).",
+        "verify": "bash -c 'grep -qE \"mailbox_full\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.test.ts && grep -qE \"it\\\\.(live|instance)\\\\(.*\\\"mailbox_full|mailbox_full\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.test.ts || awk \"/it\\\\.(live|instance)/,/\\\\)\\\\),/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.test.ts | grep -qE \"mailbox_full\"'",
+        "weight": 0.07,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "agent-followup.test.ts adds new tests exercising the mailbox_full path AND a defensive AgentNotFoundError -> send_failed path (the Effect.orDie removal exposes this branch which the tests should pin).",
+        "verify": "bash -c 'grep -qE \"mailbox_full\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.test.ts'",
+        "weight": 0.06,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C5",
+        "category": "correctness",
+        "assertion": "Both modified tool files preserve their existing error branches (the AgentNotFoundError -> send_failed shape on agent-send.ts is not regressed; root_target on agent-followup.ts is not regressed).",
+        "verify": "bash -c 'grep -qE \"error:\\s*\\\"send_failed\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.ts && grep -qE \"error:\\s*\\\"root_target\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts'",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C6",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C7",
+        "category": "correctness",
+        "assertion": "agent-send.test.ts AND agent-followup.test.ts pass (no failures).",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-send/agent-send.test.ts src/tool/agent-followup/agent-followup.test.ts 2>&1 | tee /tmp/wave7-t3-c7.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave7-t3-c7.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave7-t3-c7.log'",
+        "weight": 0.18,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C8",
+        "category": "convention",
+        "assertion": "Per-file 100% LINE coverage on agent-send.ts AND agent-followup.ts via single-file runs.",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/tool/agent-send/agent-send.test.ts 2>&1 | tee /tmp/wave7-t3-c8a.log | grep -E \"src/tool/agent-send/agent-send\\\\.ts\" | head -1 | awk -F\"|\" \"{gsub(/^[ \\t]+|[ \\t]+\\$/, \\\"\\\", \\$3); if (\\$3 == \\\"100.00\\\") exit 0; else { print \\\"send lines = \\\" \\$3 \\\" (need 100.00)\\\"; exit 1 }}\" && bun test --coverage src/tool/agent-followup/agent-followup.test.ts 2>&1 | tee /tmp/wave7-t3-c8b.log | grep -E \"src/tool/agent-followup/agent-followup\\\\.ts\" | head -1 | awk -F\"|\" \"{gsub(/^[ \\t]+|[ \\t]+\\$/, \\\"\\\", \\$3); if (\\$3 == \\\"100.00\\\") exit 0; else { print \\\"followup lines = \\\" \\$3 \\\" (need 100.00)\\\"; exit 1 }}\"'",
+        "weight": 0.18,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C9",
+        "category": "convention",
+        "assertion": "Generator commit exists matching 'wave 7 T3:' AND includes the agent-send + agent-followup diffs.",
+        "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 7 T3\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat --format= \"$sha\" | grep -qE \"packages/opencode/src/tool/agent-(send|followup)/\"'",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": null
+      }
+    ]
+  },
+  {
+    "task_id": "T4",
+    "title": "INV-D-21..23 integration invariants + multi-agent prose updates + prose enforcement test extensions",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts"
+    ],
+    "depends_on": ["T1", "T2", "T3"],
+    "pre_agreed_by_orchestrator": true,
+    "signed": false,
+    "commit_sha": null,
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "multi-agent-invariants.test.ts contains it.instance blocks named INV-D-21 / INV-D-22 / INV-D-23 inside the existing INTEGRATION_INVARIANTS describe block.",
+        "verify": "bash -c 'grep -qE \"INV-D-21-link-paired-death-on-either-crash\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts && grep -qE \"INV-D-22-bounded-mailbox-rejects-on-overflow\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts && grep -qE \"INV-D-23-bounded-mailbox-does-not-block-completion-notification\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts'",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "INV-D-21 test exercises the linked-death cascade end-to-end (linkAgents + a crash trigger + status assertion on the peer) AND asserts the 'linked_death' notification label.",
+        "verify": "bash -c 'awk \"/INV-D-21-link-paired-death/,/^  it\\\\.instance/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"linkAgents|linked_death\"'",
+        "weight": 0.06,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "INV-D-22 test asserts MailboxFullError / mailbox_full when capacity is reached AND demonstrates recovery via drain.",
+        "verify": "bash -c 'awk \"/INV-D-22-bounded-mailbox-rejects/,/^  it\\\\.instance/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"MailboxFullError|mailbox_full\"'",
+        "weight": 0.06,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "INV-D-23 test asserts the completion notification reaches the parent regardless of mailbox-full state.",
+        "verify": "bash -c 'awk \"/INV-D-23-bounded-mailbox-does-not-block/,/^\\\\}\\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"completion notification|reached status:|sendSystem|system:\\s*true\"'",
+        "weight": 0.06,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C5",
+        "category": "prose_quality",
+        "assertion": "multi-agent-root.txt has the new bullet point about bounded mailboxes (contains 'bounded mailboxes' or 'mailbox_full' AND 'completion notifications from terminating subagents bypass this cap' or close paraphrase).",
+        "verify": "bash -c 'grep -qiE \"bounded mailbox|mailbox_full\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt && grep -qiE \"bypass|completion notification\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt'",
+        "weight": 0.06,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C6",
+        "category": "prose_quality",
+        "assertion": "multi-agent-subagent.txt contains 'mailbox_full' AND 'retry with a small backoff' (or close paraphrase).",
+        "verify": "bash -c 'grep -qiE \"mailbox_full\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -qiE \"retry|backoff\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt'",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C7",
+        "category": "correctness",
+        "assertion": "prose/subagent-prompts.test.ts extends with assertions on multi-agent-root.txt + multi-agent-subagent.txt mailbox prose AND on agent-link.txt presence + link-related substrings.",
+        "verify": "bash -c 'grep -qiE \"mailbox_full|bounded mailbox\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -qE \"agent-link\\\\.txt\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts'",
+        "weight": 0.06,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C8",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C9",
+        "category": "correctness",
+        "assertion": "The 3 new INV-D-21..23 tests pass when filtered via -t.",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t \"INV-D-2\" 2>&1 | tee /tmp/wave7-t4-c9.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave7-t4-c9.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave7-t4-c9.log'",
+        "weight": 0.12,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C10",
+        "category": "correctness",
+        "assertion": "Full multi-agent-invariants.test.ts AND prose/subagent-prompts.test.ts pass (no regressions).",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts ./test/prose/subagent-prompts.test.ts 2>&1 | tee /tmp/wave7-t4-c10.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave7-t4-c10.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave7-t4-c10.log'",
+        "weight": 0.15,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C11",
+        "category": "convention",
+        "assertion": "Generator commit exists matching 'wave 7 T4:' AND includes the integration test + prose diffs.",
+        "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 7 T4\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat --format= \"$sha\" | grep -qE \"test/integration/multi-agent-invariants\\\\.test\\\\.ts|prompt/multi-agent-root\\\\.txt\"'",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": null
+      }
+    ]
+  }
+]
