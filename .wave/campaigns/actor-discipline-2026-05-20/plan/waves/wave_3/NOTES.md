@@ -1,7 +1,7 @@
 ## Attempt 1 — WAVE COMPLETE
 
 **Session:** ses_1bb308ef6ffeA3UiI4m70jbr9i
-**Commit:** (settle commit; per-task SHAs in Commit shas section)
+**Commit:** 39ffe0e2f (settle commit; per-task SHAs in Commit shas section)
 **Date:** 2026-05-20
 **Decision on entry:** first attempt
 **Orchestration:** planner + per-task gen+eval pairs (4 tasks), pivot count: 0 (one C6 orchestrator-adjudication on T3 — see below)
@@ -85,7 +85,7 @@ Each evaluator wrote its contracts/T<N>.json AFTER the generator's commit. The N
 - fe856de8d — T2: add correlation_id to send_message + followup_task tools (pass-through)
 - c6b1f563a — T3: wait_for_reply variant + wait_agent timeout warning (D10)
 - 53dc82de0 — T4: mandatory-timeout doctrine + INV-D-09..11 invariants (Phase 2A)
-- (settle) — wave 3 settle: aggregate CONTRACT.json + orchestrator inline coverage hardening (mailbox.peek + findMailboxByCorrelationId + wait_for_reply orphan tests) + STATE.md → wave 4 pending + NOTES.md
+- 39ffe0e2f — wave 3 settle: aggregate CONTRACT.json + orchestrator inline coverage hardening (mailbox.peek + findMailboxByCorrelationId + wait_for_reply orphan tests) + STATE.md → wave 4 pending + NOTES.md
 
 ### Findings / lessons (feed into future waves)
 
