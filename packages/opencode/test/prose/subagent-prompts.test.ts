@@ -168,3 +168,47 @@ describe("Wave 3 — mandatory-timeout doctrine + wait_for_reply variant", () =>
     expect(text).toContain("correlation_id")
   })
 })
+
+// Wave 4 — D11 ABORT protocol prose. The capability hint
+// multi-agent-subagent.txt owns the full ABORT section: header, format
+// string, and the six official reasons. The 3 base prompts (anthropic,
+// gemini, explore) carry a brief reference so model fork choice still
+// surfaces ABORT existence regardless of agent_type. Grep-asserts pin
+// the prose so a future rewrite that drops the doctrine fails this
+// test. Mirrors the structure of T2's runtime parser and T3's prose
+// landings; the integration tests INV-D-12..14 exercise the runtime
+// side.
+describe("Wave 4 — ABORT protocol prose", () => {
+  test("multi-agent-subagent.txt contains '## ABORT' section header", async () => {
+    const text = await Bun.file(subagentHintPath).text()
+    expect(text).toContain("## ABORT")
+  })
+
+  test("multi-agent-subagent.txt contains literal 'ABORT(<reason>):' format string", async () => {
+    const text = await Bun.file(subagentHintPath).text()
+    expect(text).toContain("ABORT(<reason>):")
+  })
+
+  const ABORT_REASONS = [
+    "spec_wrong",
+    "transient_tool_error",
+    "out_of_scope",
+    "context_full",
+    "approach_failed",
+    "user_question",
+  ] as const
+
+  for (const reason of ABORT_REASONS) {
+    test(`multi-agent-subagent.txt contains reason: ${reason}`, async () => {
+      const text = await Bun.file(subagentHintPath).text()
+      expect(text).toContain(reason)
+    })
+  }
+
+  for (const prompt of BASE_PROMPTS) {
+    test(`${prompt.name} contains brief ABORT reference (substring 'ABORT(')`, async () => {
+      const text = await Bun.file(prompt.path).text()
+      expect(text).toContain("ABORT(")
+    })
+  }
+})

@@ -1684,6 +1684,269 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
       expect(r2.metadata.timed_out).toBe(false)
     }),
   )
+
+  // INV-D-12 (actor-discipline-2026-05-20 Wave 4) — D11 ABORT protocol.
+  // Child runLoop emits an assistant message whose body ends with
+  // `ABORT(spec_wrong): details here.` on the LAST line. The
+  // completion-watcher (control.ts:907-928) parses the set-phrase via
+  // parseAbortReason (control.ts:221) and rides the structured payload
+  // alongside the human-readable `content`. Asserts both surfaces:
+  // (a) note.abort_reason carries { reason: 'spec_wrong', details: '…' };
+  // (b) note.content still contains the literal `ABORT(spec_wrong)` so
+  // legacy consumers (TUI, log scrapers) keep working.
+  it.instance("INV-D-12-abort-reason-delivered-as-structured-payload", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      yield* control.registerRunLoop((sid) =>
+        Effect.gen(function* () {
+          const user = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            role: "user" as const,
+            time: { created: Date.now() },
+            agent: "build",
+            model: ref,
+          }
+          yield* sessions.updateMessage(user)
+          const asst = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            parentID: user.id,
+            role: "assistant" as const,
+            mode: "build",
+            agent: "build",
+            path: { cwd: "/tmp", root: "/tmp" },
+            time: { created: Date.now(), completed: Date.now() },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: ref.modelID,
+            providerID: ref.providerID,
+            finish: "tool-calls",
+          }
+          yield* sessions.updateMessage(asst)
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: asst.id,
+            sessionID: sid,
+            type: "text",
+            text: "Some preamble.\nABORT(spec_wrong): details here.",
+          })
+          return "done"
+        }),
+      )
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "aborter",
+        initial_message: "go",
+      })
+      yield* Effect.sleep(80)
+
+      const drained = yield* control.drainMailbox(root.id)
+      const note = drained.find((m) => String(m.author) === "/root/aborter")
+      expect(note).toBeDefined()
+      expect(note?.abort_reason?.reason).toBe("spec_wrong")
+      expect(note?.abort_reason?.details).toBe("details here.")
+      // Legacy consumers still see the literal phrase inside the body.
+      expect(note?.content).toContain("ABORT(spec_wrong)")
+    }),
+  )
+
+  // INV-D-13 (actor-discipline-2026-05-20 Wave 4) — stub orchestrator
+  // pivot on ABORT(approach_failed). Validates the supervisor recovery
+  // pattern: child reports approach_failed, parent reads structured
+  // abort_reason, records a pivot in a local audit array, respawns with a
+  // refined initial_message under a NON-colliding task_name (pivot_v2),
+  // and the respawn delivers a normal completion (no ABORT). No real git,
+  // no real ChildProcess — purely orchestration semantics.
+  it.instance("INV-D-13-orchestrator-pivots-on-abort-approach-failed", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      // Shared runLoop drives BOTH children: the first emits ABORT, the
+      // second (the pivot) emits a normal completion. Branch on the
+      // initial_message contents (which the runLoop can't read directly
+      // — task_name discrimination happens via session distinctness):
+      // we simply count loop invocations via a closure-local counter.
+      let loopInvocation = 0
+      yield* control.registerRunLoop((sid) =>
+        Effect.gen(function* () {
+          const which = ++loopInvocation
+          const user = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            role: "user" as const,
+            time: { created: Date.now() },
+            agent: "build",
+            model: ref,
+          }
+          yield* sessions.updateMessage(user)
+          const asst = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            parentID: user.id,
+            role: "assistant" as const,
+            mode: "build",
+            agent: "build",
+            path: { cwd: "/tmp", root: "/tmp" },
+            time: { created: Date.now(), completed: Date.now() },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: ref.modelID,
+            providerID: ref.providerID,
+            finish: "tool-calls",
+          }
+          yield* sessions.updateMessage(asst)
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: asst.id,
+            sessionID: sid,
+            type: "text",
+            text:
+              which === 1
+                ? "tried approaches A, B, C.\nABORT(approach_failed): tried 3 attempts, recommend reset."
+                : "pivot delivered cleanly.",
+          })
+          return "done"
+        }),
+      )
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+
+      // First child — the one that ABORTs.
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "pivot",
+        initial_message: "go",
+      })
+      yield* Effect.sleep(80)
+
+      const drained1 = yield* control.drainMailbox(root.id)
+      const first = drained1.find((m) => String(m.author) === "/root/pivot")
+      expect(first).toBeDefined()
+      expect(first?.abort_reason?.reason).toBe("approach_failed")
+      expect(first?.abort_reason?.details).toBe("tried 3 attempts, recommend reset.")
+
+      // Stub orchestrator decision logic — local mutable audit array.
+      const audit: string[] = []
+      if (first?.abort_reason?.reason === "approach_failed") {
+        audit.push(`pivot:${first.abort_reason.reason}`)
+      }
+      expect(audit).toEqual(["pivot:approach_failed"])
+
+      // Respawn under a fresh task_name with a refined message derived
+      // from the abort details. Different path → no collision with the
+      // first child's `/root/pivot`.
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "pivot_v2",
+        initial_message: `retry with context: ${first?.abort_reason?.details}`,
+      })
+      yield* Effect.sleep(80)
+
+      const drained2 = yield* control.drainMailbox(root.id)
+      const second = drained2.find((m) => String(m.author) === "/root/pivot_v2")
+      expect(second).toBeDefined()
+      expect(second?.abort_reason).toBeUndefined()
+      expect(second?.content).toContain("pivot delivered cleanly.")
+    }),
+  )
+
+  // INV-D-14 (actor-discipline-2026-05-20 Wave 4) — set-phrase ladder is
+  // agent-type-agnostic. The registry differentiates agent types at the
+  // prompt-selection layer (general/anthropic.txt, general/gemini.txt,
+  // explore.txt), but the runtime parseAbortReason at control.ts:221
+  // operates on bytes — it cannot distinguish "I was spawned as explore"
+  // from "I was spawned as general". This test exercises that property
+  // by spawning two children under different task_names through the
+  // same AgentControl.spawnAgent path (which has no agent_type
+  // parameter — that lives at the tool layer). Both children's runLoops
+  // emit identical ABORT(out_of_scope) phrases; both notifications must
+  // carry the structured payload. Agent-type prose coverage lives in
+  // the prose grep suite added in this same commit.
+  it.instance("INV-D-14-set-phrase-ladder-extended-to-all-subagent-types", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      yield* control.registerRunLoop((sid) =>
+        Effect.gen(function* () {
+          const user = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            role: "user" as const,
+            time: { created: Date.now() },
+            agent: "build",
+            model: ref,
+          }
+          yield* sessions.updateMessage(user)
+          const asst = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            parentID: user.id,
+            role: "assistant" as const,
+            mode: "build",
+            agent: "build",
+            path: { cwd: "/tmp", root: "/tmp" },
+            time: { created: Date.now(), completed: Date.now() },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: ref.modelID,
+            providerID: ref.providerID,
+            finish: "tool-calls",
+          }
+          yield* sessions.updateMessage(asst)
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: asst.id,
+            sessionID: sid,
+            type: "text",
+            text: "preamble.\nABORT(out_of_scope): test",
+          })
+          return "done"
+        }),
+      )
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+
+      // Two spawns under distinct task_names. Both share the same runLoop
+      // (one registerRunLoop call above) — the parser path is the same.
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "g14",
+        initial_message: "go",
+      })
+      yield* Effect.sleep(80)
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "e14",
+        initial_message: "go",
+      })
+      yield* Effect.sleep(80)
+
+      const drained = yield* control.drainMailbox(root.id)
+      const noteG = drained.find((m) => String(m.author) === "/root/g14")
+      const noteE = drained.find((m) => String(m.author) === "/root/e14")
+      expect(noteG).toBeDefined()
+      expect(noteE).toBeDefined()
+      expect(noteG?.abort_reason?.reason).toBe("out_of_scope")
+      expect(noteG?.abort_reason?.details).toBe("test")
+      expect(noteE?.abort_reason?.reason).toBe("out_of_scope")
+      expect(noteE?.abort_reason?.details).toBe("test")
+    }),
+  )
 })
 
 describe("bug 3 audit — agent_type role-vocabulary fix is intact", () => {
