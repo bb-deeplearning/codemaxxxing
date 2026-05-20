@@ -225,8 +225,8 @@
     ],
     "depends_on": ["T1", "T2"],
     "pre_agreed_by_orchestrator": true,
-    "signed": false,
-    "commit_sha": null,
+    "signed": true,
+    "commit_sha": "98d2abf4c",
     "criteria": [
       {
         "id": "C1",
@@ -234,7 +234,8 @@
         "assertion": "multi-agent-invariants.test.ts contains the literal slug INV-D-15-spawn-agent-with-on-failure-respawn-restarts-on-crash on an it.instance line.",
         "verify": "grep -E 'it\\.instance\\(\"INV-D-15-spawn-agent-with-on-failure-respawn-restarts-on-crash\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
         "weight": 0.05,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; matched `  it.instance(\"INV-D-15-spawn-agent-with-on-failure-respawn-restarts-on-crash\", () =>`"
       },
       {
         "id": "C2",
@@ -242,7 +243,8 @@
         "assertion": "multi-agent-invariants.test.ts contains the literal slug INV-D-16-pool-strategy-one-for-all-kills-pair-on-single-failure on an it.instance line.",
         "verify": "grep -E 'it\\.instance\\(\"INV-D-16-pool-strategy-one-for-all-kills-pair-on-single-failure\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
         "weight": 0.05,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; matched `  it.instance(\"INV-D-16-pool-strategy-one-for-all-kills-pair-on-single-failure\", () =>`"
       },
       {
         "id": "C3",
@@ -250,7 +252,8 @@
         "assertion": "multi-agent-invariants.test.ts contains the literal slug INV-D-17-pool-strategy-one-for-one-isolates-failures on an it.instance line.",
         "verify": "grep -E 'it\\.instance\\(\"INV-D-17-pool-strategy-one-for-one-isolates-failures\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
         "weight": 0.05,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; matched `  it.instance(\"INV-D-17-pool-strategy-one-for-one-isolates-failures\", () =>`"
       },
       {
         "id": "C4",
@@ -258,7 +261,8 @@
         "assertion": "INV-D-15 passes when filtered by exact slug.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-15-spawn-agent-with-on-failure-respawn-restarts-on-crash' 2>&1 | tee /tmp/wave5-t3-c4.log && grep -E '[1-9][0-9]* pass' /tmp/wave5-t3-c4.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave5-t3-c4.log",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; 1 pass / 33 filtered out / 0 fail / 5 expect() calls in 1141ms"
       },
       {
         "id": "C5",
@@ -266,7 +270,8 @@
         "assertion": "INV-D-16 passes when filtered by exact slug.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-16-pool-strategy-one-for-all-kills-pair-on-single-failure' 2>&1 | tee /tmp/wave5-t3-c5.log && grep -E '[1-9][0-9]* pass' /tmp/wave5-t3-c5.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave5-t3-c5.log",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; 1 pass / 33 filtered out / 0 fail / 5 expect() calls in 1026ms"
       },
       {
         "id": "C6",
@@ -274,7 +279,8 @@
         "assertion": "INV-D-17 passes when filtered by exact slug.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-17-pool-strategy-one-for-one-isolates-failures' 2>&1 | tee /tmp/wave5-t3-c6.log && grep -E '[1-9][0-9]* pass' /tmp/wave5-t3-c6.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave5-t3-c6.log",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; 1 pass / 33 filtered out / 0 fail / 6 expect() calls in 1096ms"
       },
       {
         "id": "C7",
@@ -282,7 +288,8 @@
         "assertion": "Full multi-agent-invariants.test.ts passes (>= 34 tests: 31 existing + 3 new).",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave5-t3-c7.log && grep -E '[1-9][0-9]* pass' /tmp/wave5-t3-c7.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave5-t3-c7.log",
         "weight": 0.15,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; 34 pass / 0 fail / 156 expect() calls in 8.00s (31 baseline + 3 new INV-D-15..17)"
       },
       {
         "id": "C8",
@@ -290,7 +297,8 @@
         "assertion": "agent-spawn.txt contains the new `## Supervision strategies` section heading.",
         "verify": "grep -E '^## Supervision strategies' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.txt",
         "weight": 0.05,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; matched `## Supervision strategies (D12)`"
       },
       {
         "id": "C9",
@@ -298,7 +306,8 @@
         "assertion": "agent-spawn.txt describes all 4 on_failure values + 3 pool_strategy values.",
         "verify": "bash -c 'for v in respawn escalate ignore kill_pool one_for_one one_for_all rest_for_one; do grep -F \"$v\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.txt || { echo \"missing: $v\"; exit 1; }; done'",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; all 7 literals (respawn, escalate, ignore, kill_pool, one_for_one, one_for_all, rest_for_one) present in agent-spawn.txt"
       },
       {
         "id": "C10",
@@ -306,7 +315,8 @@
         "assertion": "bun typecheck passes from packages/opencode.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
         "weight": 0.15,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; tsgo --noEmit clean"
       }
     ]
   }
