@@ -14,6 +14,7 @@ import PROMPT_GENERAL_ANTHROPIC from "./prompt/general/anthropic.txt"
 import PROMPT_GENERAL_GEMINI from "./prompt/general/gemini.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
+import { Behaviors } from "./behaviors"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@opencode-ai/core/global"
@@ -229,7 +230,15 @@ export const layer = Layer.effect(
               }),
               user,
             ),
-            options: {},
+            options: {
+              // Wave 8 (D16) — attach the declared per-agent_type behavior
+              // contract registry. Control.ts (T3) resolves the contract at
+              // spawn time and the completion-watcher validates the observed
+              // delivery + ABORT reason against it at terminal-status time.
+              // See multi-agent-subagent.txt "Your behavior contract" section
+              // (landed by T4) for the prose facing the model.
+              behaviors: Behaviors.DEFAULT_CONTRACTS["general"],
+            },
             mode: "subagent",
             native: true,
           },
@@ -289,7 +298,15 @@ export const layer = Layer.effect(
             ),
             description: `Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.`,
             prompt: PROMPT_EXPLORE,
-            options: {},
+            options: {
+              // Wave 8 (D16) — attach the declared per-agent_type behavior
+              // contract registry. Control.ts (T3) resolves the contract at
+              // spawn time and the completion-watcher validates the observed
+              // delivery + ABORT reason against it at terminal-status time.
+              // See multi-agent-subagent.txt "Your behavior contract" section
+              // (landed by T4) for the prose facing the model.
+              behaviors: Behaviors.DEFAULT_CONTRACTS["explore"],
+            },
             mode: "subagent",
             native: true,
           },
@@ -528,5 +545,12 @@ export function resolvePrompt(agent: Info, model: { api: { id: string } }) {
   }
   return undefined
 }
+
+// Wave 8 (D16) — proxy for non-Agent.Service consumers (e.g. control.ts) that
+// need to resolve a behavior contract from agent_type + optional version.
+// Currently a straight passthrough to Behaviors.resolveContract; future
+// iterations could inspect user-config overrides via Agent.Service.
+export const behaviorContractFor = (agent_type: string | undefined, version?: string) =>
+  Behaviors.resolveContract(agent_type, version)
 
 export * as Agent from "./agent"
