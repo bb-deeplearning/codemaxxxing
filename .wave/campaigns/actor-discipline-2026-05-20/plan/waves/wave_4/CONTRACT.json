@@ -184,7 +184,7 @@
     "depends_on": [],
     "pre_agreed_by_orchestrator": true,
     "signed": true,
-    "commit_sha": "",
+    "commit_sha": "4f890b5c4eacbe969312616fc392c7da5c505439",
     "criteria": [
       {
         "id": "C1",
@@ -192,8 +192,8 @@
         "assertion": "multi-agent-subagent.txt contains the `## ABORT` section header.",
         "verify": "grep -E '^## ABORT' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
         "weight": 0.05,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; match: `## ABORT — structured failure exits`"
       },
       {
         "id": "C2",
@@ -201,8 +201,8 @@
         "assertion": "multi-agent-subagent.txt enumerates ALL six official reasons: spec_wrong, transient_tool_error, out_of_scope, context_full, approach_failed, user_question.",
         "verify": "for r in spec_wrong transient_tool_error out_of_scope context_full approach_failed user_question; do grep -q \"$r\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt || { echo \"missing: $r\"; exit 1; }; done",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; loop completed for all 6 reasons (spec_wrong, transient_tool_error, out_of_scope, context_full, approach_failed, user_question)"
       },
       {
         "id": "C3",
@@ -210,8 +210,8 @@
         "assertion": "multi-agent-subagent.txt ABORT section states the format literally `ABORT(<reason>):` AND says the LAST line constraint.",
         "verify": "grep -F 'ABORT(<reason>):' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -iE 'last line|last assistant' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
         "weight": 0.08,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; literal `ABORT(<reason>):` matched; `LAST line of your last assistant message MUST be literally ABORT(<reason>): <one-line details>`"
       },
       {
         "id": "C4",
@@ -219,8 +219,8 @@
         "assertion": "Each of the 3 base prompts (anthropic, gemini, explore) contains a brief ABORT reference (substring `ABORT(`).",
         "verify": "grep -F 'ABORT(' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt && grep -F 'ABORT(' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt && grep -F 'ABORT(' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; all 3 base prompts contain `ABORT(<reason>): <details>` reference pointing to multi-agent coordination guidance"
       },
       {
         "id": "C5",
@@ -228,8 +228,8 @@
         "assertion": "All 3 base prompts STILL contain the REQUIRED_PHRASE from Wave 1 (delivery contract pointer).",
         "verify": "for f in general/anthropic.txt general/gemini.txt explore.txt; do grep -F 'See the delivery contract in your multi-agent coordination guidance.' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/$f || { echo \"missing in $f\"; exit 1; }; done",
         "weight": 0.05,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; required phrase present in all 3 base prompts"
       },
       {
         "id": "C6",
@@ -237,8 +237,8 @@
         "assertion": "All 3 base prompts do NOT contain ANY of the Wave 1 FORBIDDEN_PHRASES.",
         "verify": "for f in general/anthropic.txt general/gemini.txt explore.txt; do for p in 'your text response IS the deliverable' 'your response goes to the parent agent' 'the parent agent reads your output'; do ! grep -F \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/$f || { echo \"$f leaked: $p\"; exit 1; }; done; done",
         "weight": 0.07,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; no forbidden phrases leaked in any of the 3 base prompts"
       },
       {
         "id": "C7",
@@ -246,8 +246,8 @@
         "assertion": "ORCHESTRATOR_PROTOCOL.md contains a new note referencing 'Wave 4' AND 'parsed by the runtime' near the ABORT REASONS section.",
         "verify": "grep -iE 'as of Wave 4|wave 4.*parse|parsed by the runtime' /Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/ORCHESTRATOR_PROTOCOL.md",
         "weight": 0.05,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; match: `(Note: as of Wave 4, these reasons are PARSED by the runtime — control.ts`"
       },
       {
         "id": "C8",
@@ -255,8 +255,8 @@
         "assertion": "Existing prose suite stays green (27 tests).",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test test/prose/subagent-prompts.test.ts 2>&1 | tee /tmp/wave4-t3-c8.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t3-c8.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t3-c8.log",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "27 pass / 0 fail / 27 expect() calls in 686ms"
       },
       {
         "id": "C9",
@@ -264,8 +264,8 @@
         "assertion": "Multi-agent invariants suite stays green.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave4-t3-c9.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t3-c9.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t3-c9.log",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "28 pass / 0 fail / 123 expect() calls in 5.48s"
       },
       {
         "id": "C10",
@@ -273,8 +273,8 @@
         "assertion": "INV-D-05 still passes (canonical-path block intact in capability hints).",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-05-subagent-prompt-contains-canonical-path' 2>&1 | tee /tmp/wave4-t3-c10.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t3-c10.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t3-c10.log",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "1 pass / 27 filtered out / 0 fail / 3 expect() calls in 1276ms"
       },
       {
         "id": "C11",
@@ -282,8 +282,8 @@
         "assertion": "Caveman output rules / response-format sections preserved verbatim in all 3 base prompts (no deletion of those headers).",
         "verify": "grep -c '# Caveman output rules' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt | awk '$1 >= 1 { exit 0 } { exit 1 }' && grep -c '# Response Format' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt | awk '$1 >= 1 { exit 0 } { exit 1 }' && grep -c '# Response Format' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt | awk '$1 >= 1 { exit 0 } { exit 1 }'",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; all 3 header counts >= 1 (Caveman output rules in anthropic; Response Format in gemini + explore)"
       },
       {
         "id": "C12",
@@ -291,8 +291,8 @@
         "assertion": "Caveman output rules / response-format sections preserved verbatim in multi-agent-subagent.txt (Delivery contract still present).",
         "verify": "grep -F '## Delivery contract' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "exit 0; `## Delivery contract` header still present in multi-agent-subagent.txt"
       }
     ]
   },
