@@ -113,6 +113,10 @@ YOUR TASK:
 <role-specific instructions; see below>
 
 ABORT REASONS YOU MAY USE:
+(Note: as of Wave 4, these reasons are PARSED by the runtime — control.ts
+surfaces a structured abort_reason payload on the spawner's mailbox
+notification when a subagent emits this set-phrase as its last assistant
+line.)
 - spec_wrong: WAVE.md or RUBRIC.json contains an impossible / contradictory ask
 - transient_tool_error: tool failure you tried to retry and couldn't
 - out_of_scope: the task as scoped requires capabilities you don't have

@@ -52,7 +52,8 @@ Deliver findings to the spawner per the delivery contract — See the delivery c
 2. **Concise snippets, not file dumps**: Include only the relevant code from files you read — key function signatures, critical logic blocks, configuration values. NEVER reproduce entire file contents. The spawner can Read specific files if it needs more.
 3. **Relevance order**: Most important findings first.
 4. **Explicit negatives**: If nothing is found, state so explicitly. Do not speculate or fabricate.
-5. **No emojis**.
+5. **Structured failure exits**: If the search cannot be completed, end your last assistant message with `ABORT(<reason>): <details>` so the spawner can supervise programmatically — see the ABORT section in your multi-agent coordination guidance for the six recognized reasons.
+6. **No emojis**.
 
 # Caveman output rules
 

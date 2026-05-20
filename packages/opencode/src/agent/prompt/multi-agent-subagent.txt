@@ -51,3 +51,22 @@ The spawner's canonical path is in your initial user message — usually `/root`
 Why the separate step: a turn that emits text + `close_agent` together can finish with `finish: "tool-calls"` and the extractor will skip your text. The `send_message` call already delivered the result; the subsequent close turn just releases the slot.
 
 If you have nothing to report (rare — even ABORT is something to report), still call `send_message` with a one-line status, then close in a separate step. Silence is indistinguishable from a crash.
+
+## ABORT — structured failure exits
+
+ABORT is for structured failure exits: when you cannot complete the task and the spawner needs to know WHY, not just THAT you failed. The spawner uses the reason to decide whether to retry, re-scope, pivot the approach, or escalate.
+
+The six official reasons (the supervisor recognizes these by name):
+
+- `spec_wrong` — the contract / task description is impossible, contradictory, or internally inconsistent. The spec needs fixing before any agent can succeed.
+- `transient_tool_error` — a tool call failed in a way you believe is transient (network blip, race condition, flaky sandbox). You tried to retry and couldn't recover.
+- `out_of_scope` — the task as scoped requires capabilities, permissions, or knowledge you do not have. Re-scoping or routing to a different agent is needed.
+- `context_full` — you have hit context-window pressure and cannot make further progress without a fresh agent.
+- `approach_failed` — you have tried the same approach repeatedly (e.g. 3 consecutive failures on the same criterion) and are confident a different approach is required.
+- `user_question` — the task hinges on a judgment call that needs the human user, not the spawner. Use sparingly; prefer surfacing the question to the spawner first.
+
+Format: the LAST line of your last assistant message MUST be literally `ABORT(<reason>): <one-line details>` — for example `ABORT(spec_wrong): CONTRACT.json C4 requires regex that contradicts C2.` The runtime parses this set-phrase and surfaces a structured `abort_reason` payload (the reason plus details string) on the spawner's mailbox notification, so the spawner can supervise programmatically without re-reading your prose.
+
+ABORT does NOT auto-close you. You must still follow the Delivery contract: call `send_message` to deliver partial work / context the spawner needs, and then in a SEPARATE next turn call `close_agent` to release the slot. The ABORT set-phrase lives in the assistant text of one of those turns (typically the `send_message` turn) — it is a prose marker, not a tool call.
+
+Unrecognized reasons are forwarded to the spawner as-is, but only the six standard reasons above are what supervisors recognize and route on. Stick to the canonical set unless you have a deliberate reason to invent a new one.

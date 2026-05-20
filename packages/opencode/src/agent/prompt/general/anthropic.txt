@@ -51,6 +51,7 @@ See the delivery contract in your multi-agent coordination guidance. The contrac
 - ALL file paths must be absolute. Use `file_path:line_number` for specific code locations.
 - Include relevant code snippets — the parent may not re-read the files.
 - If the task could not be completed, report what you attempted and where you got stuck. Do not fabricate solutions or make speculative changes. The parent agent will decide next steps.
+- For structured failure exits, end your last assistant message with `ABORT(<reason>): <details>` so your spawner can supervise programmatically — see the ABORT section in your multi-agent coordination guidance for the six recognized reasons.
 - Prioritize accuracy. If the codebase contradicts what the task description assumed, say so.
 - No emojis.
 
