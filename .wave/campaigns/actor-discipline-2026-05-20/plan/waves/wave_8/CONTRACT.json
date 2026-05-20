@@ -217,8 +217,8 @@
     ],
     "depends_on": ["T1"],
     "pre_agreed_by_orchestrator": true,
-    "signed": false,
-    "commit_sha": null,
+    "signed": true,
+    "commit_sha": "8465cfca7",
     "criteria": [
       {
         "id": "C1",
@@ -226,7 +226,8 @@
         "assertion": "control.ts imports Behaviors namespace AND BehaviorContract type from ./behaviors.",
         "verify": "bash -c 'grep -qE \"import \\{ Behaviors, BehaviorContract \\} from \\\"\\./behaviors\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts || grep -qE \"import \\{ BehaviorContract\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts'",
         "weight": 0.05,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "import { Behaviors, BehaviorContract } from \"./behaviors\" present"
       },
       {
         "id": "C2",
@@ -234,7 +235,8 @@
         "assertion": "SpawnAgentInput extended with optional behavior_version: 'subagent_v1' | 'subagent_v2' field.",
         "verify": "bash -c 'grep -qE \"behavior_version\\?:\\s*(\\\"subagent_v1\\\"\\s*\\|\\s*\\\"subagent_v2\\\"|\\\"subagent_v2\\\"\\s*\\|\\s*\\\"subagent_v1\\\")\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts'",
         "weight": 0.05,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "behavior_version?: \"subagent_v1\" | \"subagent_v2\" field present on SpawnAgentInput"
       },
       {
         "id": "C3",
@@ -242,7 +244,8 @@
         "assertion": "PerRootData declares behaviorOf: Map<SessionID, BehaviorContract> AND initializes via `new Map` in ensureRootSlot AND clears via `.behaviorOf.clear()` >=2 times (one in Session.Event.Deleted subscriber, one in disposal finalizer).",
         "verify": "bash -c 'grep -qE \"behaviorOf:\\s*Map<SessionID,\\s*BehaviorContract>\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -qE \"behaviorOf:\\s*new Map\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && c=$(grep -cE \"\\.behaviorOf\\.clear\\(\\)\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts); [ \"$c\" -ge 2 ] || { echo \"behaviorOf.clear() count=$c (need >=2)\"; exit 1; }'",
         "weight": 0.07,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "PerRootData.behaviorOf declared + new Map init + >=2 .clear() call sites"
       },
       {
         "id": "C4",
@@ -250,7 +253,8 @@
         "assertion": "spawnAgent stores the resolved contract on the per-child slot.behaviorOf via Behaviors.resolveContract lookup.",
         "verify": "bash -c 'grep -qE \"Behaviors\\.resolveContract\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -qE \"slot\\.behaviorOf\\.set\\(child\\.id\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts'",
         "weight": 0.06,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "Behaviors.resolveContract + slot.behaviorOf.set(child.id, ...) present in spawnAgent"
       },
       {
         "id": "C5",
@@ -258,7 +262,8 @@
         "assertion": "completion-watcher computes behavior_violation via Behaviors.computeViolations using childDelivered + effectiveAbortReason AND attaches it (when violations non-empty) as the behavior_violation field on the parent notification InterAgentCommunication.",
         "verify": "bash -c 'grep -qE \"Behaviors\\.computeViolations\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -qE \"behavior_violation\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -qE \"contract_version\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts'",
         "weight": 0.08,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "Behaviors.computeViolations + behavior_violation + contract_version all present"
       },
       {
         "id": "C6",
@@ -266,7 +271,8 @@
         "assertion": "control.test.ts adds D16 describe block with >= 6 it.live (or it.instance) tests referencing 'D16' or 'behavior contract' or 'behavior_violation'.",
         "verify": "bash -c 'c=$(awk \"/describe\\\\(.*(D16|behavior contract|behavior_violation|behaviors)/,/^\\\\}\\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.test.ts | grep -cE \"it\\\\.(live|instance)\\\\(\"); [ \"$c\" -ge 6 ] || { echo \"D16 control.test.ts test count=$c (need >=6)\"; exit 1; }'",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "D16 describe block has 7 it.live/it.instance tests (>=6)"
       },
       {
         "id": "C7",
@@ -274,7 +280,8 @@
         "assertion": "bun typecheck passes from packages/opencode.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "tsgo --noEmit exit 0"
       },
       {
         "id": "C8",
@@ -282,7 +289,8 @@
         "assertion": "Full control.test.ts passes (no regressions to existing 100+ tests).",
         "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/agent/control.test.ts 2>&1 | tee /tmp/wave8-t3-c8.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave8-t3-c8.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave8-t3-c8.log'",
         "weight": 0.14,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "135 pass / 0 fail / 310 expect() calls"
       },
       {
         "id": "C9",
@@ -290,7 +298,8 @@
         "assertion": "Per-file 100% LINE coverage on control.ts via single-file run. Function coverage may stay at the pre-existing Schema.TaggedErrorClass baseline per GOTCHA schema-class-function-coverage; LINES MUST be 100.00.",
         "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/agent/control.test.ts 2>&1 | tee /tmp/wave8-t3-c9.log | grep -E \"src/agent/control\\\\.ts\" | head -1 | awk -F\"|\" \"{gsub(/^[ \\t]+|[ \\t]+\\$/, \\\"\\\", \\$3); if (\\$3 == \\\"100.00\\\") exit 0; else { print \\\"line coverage = \\\" \\$3 \\\" (need 100.00)\\\"; exit 1 }}\"'",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "src/agent/control.ts LINES=100.00 (funcs=93.20 per Schema.TaggedErrorClass baseline)"
       },
       {
         "id": "C10",
@@ -298,7 +307,8 @@
         "assertion": "Generator commit exists matching 'wave 8 T3' AND includes ONLY control.ts + control.test.ts.",
         "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 8 T3\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat=200 --format= \"$sha\" | grep -qE \"packages/opencode/src/agent/control\\\\.(test\\\\.)?ts\"'",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "commit 8465cfca7 touches packages/opencode/src/agent/control.ts + control.test.ts"
       },
       {
         "id": "C11",
@@ -306,7 +316,8 @@
         "assertion": "No use of Effect.fork (only forkIn or forkScoped allowed per repo Effect v4 rules).",
         "verify": "bash -c '! grep -E \"Effect\\\\.fork\\\\(\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts || { echo \"Effect.fork( found in control.ts — use forkIn(scope) per Effect v4 rules\"; exit 1; }'",
         "weight": 0.05,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "no Effect.fork( in control.ts"
       }
     ]
   },
