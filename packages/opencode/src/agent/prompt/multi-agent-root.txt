@@ -79,6 +79,20 @@ Three patterns cover almost all real coordination:
 
 Anti-pattern: do not wait_agent for a message that was routed to a different sibling — it will never arrive in your mailbox. `wait_agent` wakes on ANY mailbox update for YOU; messages addressed to a peer land in the peer's mailbox, not yours. If you need to observe a peer-to-peer exchange, route through yourself (CC) or through a coordinator. Waiting on a misrouted message deadlocks silently.
 
+## Routers and pools
+
+`spawn_pool` is the first-class fan-out primitive. Replaces the manual "spawn N agents in one message, then juggle their mailboxes" pattern with a declarative count + collect contract. One call → N workers under a shared `pool_id`, each addressable like a regular sibling. Use when you actually want a fleet doing the same shape of work in parallel.
+
+Three collect strategies decide when the call returns:
+
+- **`collect: "all"`** — block until every member has sent its deliverable via `send_message`. Use when you need every result (N independent searches, N file slices). Partial pools (some members failed to spawn) still resolve — read the `failures` array.
+- **`collect: "first"`** — return the first member's deliverable, runtime closes the losers. Race pattern. Their work is wasted; explicitly NOT for spreading work across N agents.
+- **`collect: "any_n", collect_n: K`** — return when K members have delivered, leave the rest alive. Quorum pattern.
+
+Concrete example: race three search strategies — `spawn_pool({ agent_type: "explore", count: 3, per_worker_messages: [grepStrat, globStrat, astStrat], collect: "first" })`. First worker to find the answer wins; the other two get closed before they burn more tokens.
+
+Members inherit the Wave 5 `pool_strategy`: `one_for_one` isolates per-member failures, `one_for_all` cascades any member failure into the whole pool. Set deliberately — race patterns usually want `one_for_one`.
+
 ## Limits
 
 The actor surface is deliberately small. Know what it does NOT give you:

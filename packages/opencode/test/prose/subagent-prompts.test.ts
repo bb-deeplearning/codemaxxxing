@@ -212,3 +212,26 @@ describe("Wave 4 — ABORT protocol prose", () => {
     })
   }
 })
+
+// Wave 6 — D13 spawn_pool prose. The root prompt owns the "Routers and
+// pools" subsection that introduces the fan-out primitive, its three
+// collect strategies, and how it relates to the Wave 5 pool_strategy.
+// Grep-asserts pin the prose so a future rewrite that drops the doctrine
+// fails this test. Integration invariants INV-D-18..20 exercise the
+// runtime side.
+describe("Wave 6 — Routers and pools prose (D13 spawn_pool)", () => {
+  test("multi-agent-root.txt contains '## Routers and pools' subsection header", async () => {
+    const text = await Bun.file(rootHintPath).text()
+    expect(text).toContain("## Routers and pools")
+  })
+
+  test("multi-agent-root.txt contains 'spawn_pool' reference", async () => {
+    const text = await Bun.file(rootHintPath).text()
+    expect(text).toContain("spawn_pool")
+  })
+
+  test("multi-agent-root.txt contains 'collect' strategies reference", async () => {
+    const text = await Bun.file(rootHintPath).text()
+    expect(text).toMatch(/collect/i)
+  })
+})

@@ -21,6 +21,7 @@ import { AgentFollowupTool } from "./agent-followup/agent-followup"
 import { AgentWaitTool, AgentWaitForReplyTool } from "./agent-wait/agent-wait"
 import { AgentListTool } from "./agent-list/agent-list"
 import { AgentCloseTool } from "./agent-close/agent-close"
+import { AgentPoolTool } from "./agent-pool/agent-pool"
 import { AgentControl } from "@/agent/control"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
@@ -136,6 +137,7 @@ export const layer: Layer.Layer<
     const agentwaitforreply = yield* AgentWaitForReplyTool
     const agentlist = yield* AgentListTool
     const agentclose = yield* AgentCloseTool
+    const agentpool = yield* AgentPoolTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -242,6 +244,7 @@ export const layer: Layer.Layer<
           agentwaitforreply: Tool.init(agentwaitforreply),
           agentlist: Tool.init(agentlist),
           agentclose: Tool.init(agentclose),
+          agentpool: Tool.init(agentpool),
         })
 
         return {
@@ -287,6 +290,7 @@ export const layer: Layer.Layer<
             tool.agentwaitforreply,
             tool.agentlist,
             tool.agentclose,
+            tool.agentpool,
             ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
             ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [tool.plan] : []),
           ],
@@ -416,7 +420,8 @@ export const layer: Layer.Layer<
                   tool.id === AgentWaitTool.id ||
                   tool.id === AgentWaitForReplyTool.id ||
                   tool.id === AgentListTool.id ||
-                  tool.id === AgentCloseTool.id
+                  tool.id === AgentCloseTool.id ||
+                  tool.id === AgentPoolTool.id
                 ? TaskTool.id
                 : null
           if (legacyId) {

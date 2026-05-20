@@ -81,7 +81,7 @@ describe("Permission.disabled", () => {
     expect(result.size).toBe(0)
   })
 
-  test("MULTI_AGENT_TOOLS exports task + 6 v2 multi-agent IDs in canonical order", () => {
+  test("MULTI_AGENT_TOOLS exports task + 7 v2 multi-agent IDs in canonical order", () => {
     expect(MULTI_AGENT_TOOLS).toEqual([
       "task",
       "spawn_agent",
@@ -90,10 +90,11 @@ describe("Permission.disabled", () => {
       "wait_agent",
       "list_agents",
       "close_agent",
+      "spawn_pool",
     ])
   })
 
-  test("groups MULTI_AGENT_TOOLS under task key — wildcard deny strips legacy task + all 6 v2 tools", () => {
+  test("groups MULTI_AGENT_TOOLS under task key — wildcard deny strips legacy task + all 7 v2 tools", () => {
     const result = Permission.disabled(
       [
         "task",
@@ -103,6 +104,7 @@ describe("Permission.disabled", () => {
         "wait_agent",
         "list_agents",
         "close_agent",
+        "spawn_pool",
         "read",
       ],
       [{ permission: "task", pattern: "*", action: "deny" }],
@@ -118,7 +120,7 @@ describe("Permission.disabled", () => {
     // `explore: deny` is precise, not `*: deny`. Tools stay present in the
     // model list; per-call permission flow handles per-pattern denial.
     const result = Permission.disabled(
-      ["task", "spawn_agent", "send_message", "followup_task", "wait_agent", "list_agents", "close_agent"],
+      ["task", "spawn_agent", "send_message", "followup_task", "wait_agent", "list_agents", "close_agent", "spawn_pool"],
       [{ permission: "task", pattern: "explore", action: "deny" }],
     )
     for (const id of MULTI_AGENT_TOOLS) {
