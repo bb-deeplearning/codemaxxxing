@@ -1,0 +1,99 @@
+{
+  "wave_id": 3,
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "InterAgentCommunication schema: add optional correlation_id field",
+      "files": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/mailbox.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/AGENTS.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_3/WAVE.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/INTEGRATION_INVARIANTS.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/PROMPT_SURFACES.md"
+      ],
+      "writes": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts"
+      ],
+      "depends_on": [],
+      "description": "Add optional `correlation_id: Schema.optional(Schema.String)` field to the InterAgentCommunication Schema.Class in packages/opencode/src/agent/inter-agent-communication.ts. The field MUST be optional (additive change, no schema migration). Place it AFTER `items` and BEFORE the closing `)`. Add a one-line comment above the field explaining it pairs ask-pattern requests with replies (D10 Wave 3 ask pattern). After the change: (a) `bun typecheck` from packages/opencode passes; (b) all existing tests still pass — confirm via `bun test src/agent/control.test.ts src/tool/agent-send/agent-send.test.ts src/tool/agent-followup/agent-followup.test.ts src/tool/agent-wait/agent-wait.test.ts` from packages/opencode. NO existing test should reference `correlation_id` (that ships in T2/T3). T1 is a pure schema extension. Do NOT modify control.ts or mailbox.ts — sendInterAgentCommunication already passes the whole InterAgentCommunication object through Mailbox.send and the SubscriptionRef notification, so the optional field travels through unchanged. The mailbox round-trip is verified at the integration level by T4. Commit message format: `wave 3 T1: add correlation_id to InterAgentCommunication schema (additive)`."
+    },
+    {
+      "id": "T2",
+      "title": "send_message + followup_task: add optional correlation_id parameter",
+      "files": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/schema.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/schema.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_3/WAVE.md"
+      ],
+      "writes": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/schema.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/schema.test.ts"
+      ],
+      "depends_on": ["T1"],
+      "description": "Add `correlation_id: Schema.optional(Schema.String).annotate({ description: ... })` to the Parameters Schema.Struct in BOTH `agent-send.ts` and `agent-followup.ts`. The description should explain it pairs request/reply via wait_for_reply. In the execute body of each tool, pass `params.correlation_id` to the InterAgentCommunication constructor (just add `correlation_id: params.correlation_id` to the `new InterAgentCommunication({ ... })` block — Schema's optional handling means undefined-when-absent works). Update the .txt prose files (agent-send.txt, agent-followup.txt) to add a short section describing the optional correlation_id parameter for ask-pattern use cases — point to wait_for_reply. Tests: in agent-send.test.ts and agent-followup.test.ts, add an `it.live` test that calls the tool with correlation_id supplied and drains the mailbox to verify the queued InterAgentCommunication carries the correlation_id. In schema.test.ts for both tools, update the `required` field assertion (correlation_id is OPTIONAL so required should still be ['target','message']) and add a test that accepts correlation_id. Verify: `bun typecheck`, `bun test src/tool/agent-send/ src/tool/agent-followup/` from packages/opencode — all pass. T1 must be merged first."
+    },
+    {
+      "id": "T3",
+      "title": "wait_for_reply variant + missing-timeout warning on wait_agent",
+      "files": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/schema.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/constants.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/mailbox.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_3/WAVE.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/INTEGRATION_INVARIANTS.md"
+      ],
+      "writes": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/schema.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/wait-for-reply.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts"
+      ],
+      "depends_on": ["T1", "T2"],
+      "description": "TWO deliverables in one task (same file): (A) new tool `wait_for_reply` defined in agent-wait.ts via a second `Tool.define(WaitForReplyID, ...)` block, exported as `AgentWaitForReplyTool`. ID const `WaitForReplyID = 'wait_for_reply' as const`. PermissionKey shared with wait_agent ('task'). Parameters: `Schema.Struct({ correlation_id: Schema.String.annotate({...}), timeout_ms: Schema.optional(Schema.Int).annotate({...}) })`. Behavior: same permission ask as wait_agent ('task' key, patterns: [`correlation:<id>`]). On entry, scan caller's mailbox via a NEW AgentControl method `findMailboxByCorrelationId(sessionID, correlation_id)` which inspects mailbox messages WITHOUT draining and returns the matching InterAgentCommunication or undefined (the mailbox internals need a `peek()` method too — add `peek: () => Effect.Effect<readonly InterAgentCommunication[]>` to `Mailbox.Interface` returning a snapshot of current messages without draining; implementation is `Effect.map(Ref.get(state), (s) => s.messages)`). If found, return immediately with the message body in output. Otherwise race SubscriptionRef.changes vs timeout — on change, re-scan; on timeout, return `timed_out: true`. Output format: `{ message: <body>, timed_out: false, correlation_id }` on match; `{ message: 'No reply received.', timed_out: true, correlation_id }` on timeout. (B) Modify the existing `wait_agent` tool to emit a structured warning when `params.timeout_ms` is undefined (the user did not specify) OR when `params.timeout_ms > MAX_WAIT_TIMEOUT_MS` (was silently clamped). The warning lands in result.metadata.warning as one of 'missing_timeout' or 'timeout_clamped', and result.output is augmented with a one-line warning prefix. Existing tests must continue passing — the warning is metadata-only (output structure can be slightly augmented but JSON parseability preserved). Tests: in agent-wait.test.ts, add (1) wait_for_reply happy-path test (pre-pending matching message returns immediately), (2) wait_for_reply timeout test (no matching message, returns timed_out), (3) wait_for_reply filter test (non-matching correlation_id arrives, wait does not wake), (4) wait_agent warning tests for missing and clamped timeout. Update schema.test.ts for wait_for_reply parameters. Update agent-wait.txt to add a 'Doctrine: timeout discipline' section explaining timeouts are mandatory. Create new wait-for-reply.txt for the new tool's description. Register `AgentWaitForReplyTool` in registry.ts: import it; yield* in initialization; add to tool init Effect.all; add to builtin list AFTER tool.agentwait; add to legacy-id bridge (TaskTool.id branch). Verify: `bun typecheck`, `bun test src/tool/agent-wait/`, full multi-agent-invariants suite (still 25 pass after this). T1 + T2 must land first."
+    },
+    {
+      "id": "T4",
+      "title": "Prose: mandatory-timeout doctrine + INV-D-09..11 integration invariants + prose grep tests",
+      "files": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/PROMPT_SURFACES.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/INTEGRATION_INVARIANTS.md",
+        "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/waves/wave_3/WAVE.md"
+      ],
+      "writes": [
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+        "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts"
+      ],
+      "depends_on": ["T1", "T2", "T3"],
+      "description": "FOUR deliverables: (A) Add a '## Wait timeouts' section to multi-agent-root.txt — declare every wait MUST specify a meaningful timeout; mention wait_for_reply for targeted ask-pattern; note that omitted/cap-exceeding timeouts surface a warning. (B) Mirror sentence in multi-agent-subagent.txt (one short line under '## Cross-agent messaging') pointing to the doctrine and naming wait_for_reply. (C) Append three new `it.instance` tests to multi-agent-invariants.test.ts (inside the existing 'INTEGRATION_INVARIANTS — multi-agent surfaces' describe block, AFTER the INV-D-06-regression block at line 1510): `INV-D-09-correlation-id-pairs-reply-to-request`, `INV-D-10-wait-for-reply-times-out-without-matching-correlation`, `INV-D-11-missing-timeout-on-wait-emits-warning`. Each test must follow the spec from INTEGRATION_INVARIANTS.md exactly. Use AgentWaitForReplyTool for INV-D-09/10; for INV-D-11 use AgentWaitTool. INV-D-11 has TWO sub-cases: missing timeout (no `timeout_ms` param) and cap-violating (>600_000ms). Both must produce `metadata.warning` set to a non-empty string. (D) Append prose grep tests to subagent-prompts.test.ts under a new describe block 'Wave 3 — mandatory-timeout doctrine + wait_for_reply' asserting: multi-agent-root.txt contains 'Wait timeouts', 'wait_for_reply'; multi-agent-subagent.txt contains 'wait_for_reply'. Verify: `bun typecheck`, full `bun test ./test/integration/multi-agent-invariants.test.ts` passes (>= 28 tests including 3 new), `bun test test/prose/subagent-prompts.test.ts` passes. T1+T2+T3 must land first."
+    }
+  ]
+}

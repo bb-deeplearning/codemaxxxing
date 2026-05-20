@@ -17,4 +17,9 @@ export class InterAgentCommunication extends Schema.Class<InterAgentCommunicatio
   trigger_turn: Schema.Boolean,
   sent_at: NonNegativeInt,
   items: Schema.optional(Schema.Array(Schema.Unknown)),
+  // D10 (actor-discipline-2026-05-20 Wave 3) — correlation_id pairs a
+  // request with its reply for the ask pattern. wait_for_reply (added in
+  // Wave 3 T3) filters mailbox messages on this field. Optional + nullable
+  // by absence: rows without correlation_id continue to validate.
+  correlation_id: Schema.optional(Schema.String),
 }) {}

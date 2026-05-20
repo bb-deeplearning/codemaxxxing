@@ -1,0 +1,440 @@
+[
+  {
+    "task_id": "T1",
+    "title": "InterAgentCommunication schema: add optional correlation_id field",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts"
+    ],
+    "depends_on": [],
+    "pre_agreed_by_orchestrator": true,
+    "signed": true,
+    "commit_sha": "",
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "inter-agent-communication.ts contains a `correlation_id: Schema.optional(Schema.String)` field declaration.",
+        "verify": "grep -E 'correlation_id:\\s*Schema\\.optional\\(Schema\\.String\\)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts",
+        "weight": 0.25,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "File contains a comment attributing the field to D10 (Wave 3 ask pattern) — substring 'D10' or 'correlation' present in a comment above the field.",
+        "verify": "grep -i -E '(D10|ask pattern|correlation_id pairs)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C3",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode after the schema change.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.2,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C4",
+        "category": "bc_preservation",
+        "assertion": "Pre-existing agent-send / agent-followup / agent-wait / control tests still pass — the additive optional field does not break callers that omit correlation_id.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-send/agent-send.test.ts src/tool/agent-followup/agent-followup.test.ts src/tool/agent-wait/agent-wait.test.ts 2>&1 | tee /tmp/wave3-t1-c4.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t1-c4.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t1-c4.log",
+        "weight": 0.3,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C5",
+        "category": "bc_preservation",
+        "assertion": "Existing multi-agent-invariants suite stays green (25/0).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave3-t1-c5.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t1-c5.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t1-c5.log",
+        "weight": 0.2,
+        "status": "pending",
+        "evidence": ""
+      }
+    ]
+  },
+  {
+    "task_id": "T2",
+    "title": "send_message + followup_task: add optional correlation_id parameter",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.txt",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.test.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/schema.test.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.txt",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.test.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/schema.test.ts"
+    ],
+    "depends_on": ["T1"],
+    "pre_agreed_by_orchestrator": true,
+    "signed": true,
+    "commit_sha": "",
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "agent-send.ts Parameters contains `correlation_id: Schema.optional(Schema.String)`.",
+        "verify": "grep -E 'correlation_id:\\s*Schema\\.optional\\(Schema\\.String\\)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "agent-followup.ts Parameters contains `correlation_id: Schema.optional(Schema.String)`.",
+        "verify": "grep -E 'correlation_id:\\s*Schema\\.optional\\(Schema\\.String\\)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "agent-send.ts execute body constructs InterAgentCommunication with the correlation_id passed through (substring `correlation_id: params.correlation_id` present).",
+        "verify": "grep -F 'correlation_id: params.correlation_id' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "agent-followup.ts execute body constructs InterAgentCommunication with the correlation_id passed through.",
+        "verify": "grep -F 'correlation_id: params.correlation_id' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C5",
+        "category": "correctness",
+        "assertion": "agent-send.txt and agent-followup.txt each mention `correlation_id` in their prose.",
+        "verify": "grep -F 'correlation_id' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.txt && grep -F 'correlation_id' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.txt",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C6",
+        "category": "correctness",
+        "assertion": "Existing agent-send tests still pass AND a new test verifying correlation_id pass-through has been added (the existing test names asserting permission key plus a new `correlation_id` substring assertion).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-send/agent-send.test.ts 2>&1 | tee /tmp/wave3-t2-c6.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t2-c6.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t2-c6.log && grep -F 'correlation_id' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.test.ts",
+        "weight": 0.15,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C7",
+        "category": "correctness",
+        "assertion": "Existing agent-followup tests still pass AND a new test verifying correlation_id pass-through has been added.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-followup/agent-followup.test.ts 2>&1 | tee /tmp/wave3-t2-c7.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t2-c7.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t2-c7.log && grep -F 'correlation_id' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.test.ts",
+        "weight": 0.15,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C8",
+        "category": "correctness",
+        "assertion": "schema.test.ts for both tools updated: `required` count assertion stays at 2 (correlation_id stays OPTIONAL); a new test accepts correlation_id when supplied.",
+        "verify": "grep -F 'correlation_id' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/schema.test.ts && grep -F 'correlation_id' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/schema.test.ts && cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-send/schema.test.ts src/tool/agent-followup/schema.test.ts 2>&1 | tee /tmp/wave3-t2-c8.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t2-c8.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t2-c8.log",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C9",
+        "category": "convention",
+        "assertion": "bun typecheck still passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.15,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C10",
+        "category": "bc_preservation",
+        "assertion": "Multi-agent invariants suite stays green.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave3-t2-c10.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t2-c10.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t2-c10.log",
+        "weight": 0.2,
+        "status": "pending",
+        "evidence": ""
+      }
+    ]
+  },
+  {
+    "task_id": "T3",
+    "title": "wait_for_reply variant + missing-timeout warning on wait_agent",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.txt",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.test.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/schema.test.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/wait-for-reply.txt",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/mailbox.ts"
+    ],
+    "depends_on": ["T1", "T2"],
+    "pre_agreed_by_orchestrator": true,
+    "signed": true,
+    "commit_sha": "",
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "agent-wait.ts defines a second tool via a new `Tool.define(WaitForReplyID, ...)` block, exported as `AgentWaitForReplyTool`. ID is the literal 'wait_for_reply'.",
+        "verify": "grep -E 'WaitForReplyID\\s*=\\s*\"wait_for_reply\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.ts && grep -E 'export const AgentWaitForReplyTool' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.ts",
+        "weight": 0.08,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "wait_for_reply Parameters declares `correlation_id` as required Schema.String AND optional `timeout_ms` (Schema.Struct with two fields, correlation_id REQUIRED).",
+        "verify": "awk '/WaitForReplyParameters\\s*=\\s*Schema\\.Struct/,/^})/' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.ts > /tmp/wave3-t3-c2.txt && grep -F 'correlation_id' /tmp/wave3-t3-c2.txt && grep -F 'timeout_ms' /tmp/wave3-t3-c2.txt && grep -E 'Schema\\.optional\\(Schema\\.Int\\)' /tmp/wave3-t3-c2.txt",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "Mailbox.Interface gains a `peek()` method returning the current messages snapshot without draining. Implementation present in mailbox.ts.",
+        "verify": "grep -E 'peek:\\s*\\(\\)\\s*=>' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/mailbox.ts && grep -E 'const peek\\s*=' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/mailbox.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "AgentControl gains a `findMailboxByCorrelationId(sessionID, correlation_id)` method exposed on the Interface and implemented in the layer body.",
+        "verify": "grep -E 'findMailboxByCorrelationId' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts | wc -l | awk '$1 >= 3 { exit 0 } { exit 1 }'",
+        "weight": 0.07,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C5",
+        "category": "correctness",
+        "assertion": "agent-wait.ts wait_agent execute body sets `metadata.warning` when timeout_ms is missing OR when the requested timeout exceeded MAX_WAIT_TIMEOUT_MS (would be clamped). Substring 'missing_timeout' AND substring 'timeout_clamped' (or equivalent literal warning tags) both present in the file.",
+        "verify": "grep -F 'missing_timeout' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.ts && grep -F 'timeout_clamped' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.ts",
+        "weight": 0.08,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C6",
+        "category": "correctness",
+        "assertion": "registry.ts imports and wires AgentWaitForReplyTool: import, yield*, Tool.init entry, builtin entry, legacy-id bridge entry.",
+        "verify": "grep -F 'AgentWaitForReplyTool' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts | wc -l | awk '$1 >= 4 { exit 0 } { exit 1 }'",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C7",
+        "category": "correctness",
+        "assertion": "New tool description file wait-for-reply.txt exists and is non-empty.",
+        "verify": "test -s /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/wait-for-reply.txt",
+        "weight": 0.03,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C8",
+        "category": "correctness",
+        "assertion": "agent-wait.test.ts contains tests for wait_for_reply happy path, timeout, filter (non-matching correlation does NOT wake) AND warning emission on missing/clamped timeout.",
+        "verify": "grep -F 'wait_for_reply' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.test.ts && grep -F 'missing_timeout' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.test.ts && grep -F 'timeout_clamped' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.test.ts",
+        "weight": 0.07,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C9",
+        "category": "correctness",
+        "assertion": "schema.test.ts has tests for wait_for_reply Parameters AND constants section unchanged.",
+        "verify": "grep -F 'wait_for_reply' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/schema.test.ts && grep -F 'WaitForReplyParameters' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/schema.test.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C10",
+        "category": "correctness",
+        "assertion": "agent-wait.txt updated to mention the mandatory-timeout doctrine — substring 'mandatory' or 'must' near 'timeout' appears.",
+        "verify": "grep -i -E '(mandatory|must) (have|specify|set) a (meaningful )?timeout|timeout is mandatory|every wait MUST' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-wait/agent-wait.txt",
+        "weight": 0.04,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C11",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.13,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C12",
+        "category": "correctness",
+        "assertion": "Full agent-wait test suite passes.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-wait/ 2>&1 | tee /tmp/wave3-t3-c12.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t3-c12.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t3-c12.log",
+        "weight": 0.15,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C13",
+        "category": "bc_preservation",
+        "assertion": "Multi-agent invariants suite stays green (>= 25 pass / 0 fail).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave3-t3-c13.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t3-c13.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t3-c13.log",
+        "weight": 0.15,
+        "status": "pending",
+        "evidence": ""
+      }
+    ]
+  },
+  {
+    "task_id": "T4",
+    "title": "Prose: mandatory-timeout doctrine + INV-D-09..11 integration invariants + prose grep tests",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts"
+    ],
+    "depends_on": ["T1", "T2", "T3"],
+    "pre_agreed_by_orchestrator": true,
+    "signed": true,
+    "commit_sha": "",
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "multi-agent-root.txt contains the '## Wait timeouts' section header.",
+        "verify": "grep -E '^## Wait timeouts' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "multi-agent-root.txt 'Wait timeouts' section mentions wait_for_reply AND the doctrine 'every wait MUST' (or 'mandatory' / 'meaningful timeout').",
+        "verify": "grep -F 'wait_for_reply' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt && grep -i -E 'every wait MUST|meaningful timeout|mandatory|warning' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "multi-agent-subagent.txt mentions wait_for_reply (mirror sentence).",
+        "verify": "grep -F 'wait_for_reply' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "multi-agent-invariants.test.ts contains the literal slug 'INV-D-09-correlation-id-pairs-reply-to-request' on an `it.instance(\"...\",` line.",
+        "verify": "grep -E 'it\\.instance\\(\"INV-D-09-correlation-id-pairs-reply-to-request\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C5",
+        "category": "correctness",
+        "assertion": "multi-agent-invariants.test.ts contains the literal slug 'INV-D-10-wait-for-reply-times-out-without-matching-correlation'.",
+        "verify": "grep -E 'it\\.instance\\(\"INV-D-10-wait-for-reply-times-out-without-matching-correlation\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C6",
+        "category": "correctness",
+        "assertion": "multi-agent-invariants.test.ts contains the literal slug 'INV-D-11-missing-timeout-on-wait-emits-warning'.",
+        "verify": "grep -E 'it\\.instance\\(\"INV-D-11-missing-timeout-on-wait-emits-warning\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C7",
+        "category": "integration",
+        "assertion": "INV-D-09 test passes when filtered by exact slug.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-09-correlation-id-pairs-reply-to-request' 2>&1 | tee /tmp/wave3-t4-c7.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t4-c7.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t4-c7.log",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C8",
+        "category": "integration",
+        "assertion": "INV-D-10 test passes when filtered by exact slug.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-10-wait-for-reply-times-out-without-matching-correlation' 2>&1 | tee /tmp/wave3-t4-c8.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t4-c8.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t4-c8.log",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C9",
+        "category": "integration",
+        "assertion": "INV-D-11 test passes when filtered by exact slug.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-11-missing-timeout-on-wait-emits-warning' 2>&1 | tee /tmp/wave3-t4-c9.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t4-c9.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t4-c9.log",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C10",
+        "category": "bc_preservation",
+        "assertion": "Full multi-agent-invariants.test.ts passes (>= 28 tests now: 25 existing + 3 new).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave3-t4-c10.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t4-c10.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t4-c10.log",
+        "weight": 0.15,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C11",
+        "category": "correctness",
+        "assertion": "subagent-prompts.test.ts contains a new describe block referencing 'Wave 3' and 'wait_for_reply'.",
+        "verify": "grep -F 'Wave 3' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -F 'wait_for_reply' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C12",
+        "category": "integration",
+        "assertion": "Full prose suite passes.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test test/prose/subagent-prompts.test.ts 2>&1 | tee /tmp/wave3-t4-c12.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t4-c12.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t4-c12.log",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C13",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      }
+    ]
+  }
+]
