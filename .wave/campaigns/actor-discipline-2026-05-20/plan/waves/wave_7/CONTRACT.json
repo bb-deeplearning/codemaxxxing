@@ -287,8 +287,8 @@
     ],
     "depends_on": ["T1"],
     "pre_agreed_by_orchestrator": true,
-    "signed": false,
-    "commit_sha": null,
+    "signed": true,
+    "commit_sha": "fb835c3a4",
     "criteria": [
       {
         "id": "C1",
@@ -296,8 +296,8 @@
         "assertion": "agent-send.ts handles MailboxFullError with a structured error shape: metadata.error === 'mailbox_full' AND metadata.retry_after_ms present (numeric).",
         "verify": "bash -c 'grep -qE \"error:\\s*\\\"mailbox_full\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.ts && grep -qE \"retry_after_ms\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.ts'",
         "weight": 0.08,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "Both greps matched: error: \"mailbox_full\" AND retry_after_ms present in agent-send.ts."
       },
       {
         "id": "C2",
@@ -305,8 +305,8 @@
         "assertion": "agent-followup.ts replaces Effect.orDie on sendInterAgentCommunication with Effect.result AND handles MailboxFullError with the same mailbox_full structured shape.",
         "verify": "bash -c '! grep -qF \"sendInterAgentCommunication(\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts || ! grep -qE \"\\.pipe\\(Effect\\.orDie\\)\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts; grep -qE \"Effect\\.result\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts && grep -qE \"error:\\s*\\\"mailbox_full\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts && grep -qE \"retry_after_ms\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts'",
         "weight": 0.08,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "Effect.orDie absent from .pipe; Effect.result present; mailbox_full + retry_after_ms present."
       },
       {
         "id": "C3",
@@ -314,8 +314,8 @@
         "assertion": "agent-send.test.ts adds a new it.live (or it.instance) test exercising the mailbox_full path end-to-end (real AgentControl + bounded mailbox; no mocks of the multi-agent surface).",
         "verify": "bash -c 'grep -qE \"mailbox_full\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.test.ts && grep -qE \"it\\\\.(live|instance)\\\\(.*\\\"mailbox_full|mailbox_full\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.test.ts || awk \"/it\\\\.(live|instance)/,/\\\\)\\\\),/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.test.ts | grep -qE \"mailbox_full\"'",
         "weight": 0.07,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "mailbox_full string present in agent-send.test.ts within an it.live/it.instance test block."
       },
       {
         "id": "C4",
@@ -323,8 +323,8 @@
         "assertion": "agent-followup.test.ts adds new tests exercising the mailbox_full path AND a defensive AgentNotFoundError -> send_failed path (the Effect.orDie removal exposes this branch which the tests should pin).",
         "verify": "bash -c 'grep -qE \"mailbox_full\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.test.ts'",
         "weight": 0.06,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "mailbox_full present in agent-followup.test.ts."
       },
       {
         "id": "C5",
@@ -332,8 +332,8 @@
         "assertion": "Both modified tool files preserve their existing error branches (the AgentNotFoundError -> send_failed shape on agent-send.ts is not regressed; root_target on agent-followup.ts is not regressed).",
         "verify": "bash -c 'grep -qE \"error:\\s*\\\"send_failed\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.ts && grep -qE \"error:\\s*\\\"root_target\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts'",
         "weight": 0.05,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "send_failed preserved in agent-send.ts AND root_target preserved in agent-followup.ts."
       },
       {
         "id": "C6",
@@ -341,8 +341,8 @@
         "assertion": "bun typecheck passes from packages/opencode.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "bun typecheck → tsgo --noEmit clean (exit 0)."
       },
       {
         "id": "C7",
@@ -350,8 +350,8 @@
         "assertion": "agent-send.test.ts AND agent-followup.test.ts pass (no failures).",
         "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-send/agent-send.test.ts src/tool/agent-followup/agent-followup.test.ts 2>&1 | tee /tmp/wave7-t3-c7.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave7-t3-c7.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave7-t3-c7.log'",
         "weight": 0.18,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "30 pass / 0 fail / 97 expect() calls across both test files."
       },
       {
         "id": "C8",
@@ -359,8 +359,8 @@
         "assertion": "Per-file 100% LINE coverage on agent-send.ts AND agent-followup.ts via single-file runs.",
         "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/tool/agent-send/agent-send.test.ts 2>&1 | tee /tmp/wave7-t3-c8a.log | grep -E \"src/tool/agent-send/agent-send\\\\.ts\" | head -1 | awk -F\"|\" \"{gsub(/^[ \\t]+|[ \\t]+\\$/, \\\"\\\", \\$3); if (\\$3 == \\\"100.00\\\") exit 0; else { print \\\"send lines = \\\" \\$3 \\\" (need 100.00)\\\"; exit 1 }}\" && bun test --coverage src/tool/agent-followup/agent-followup.test.ts 2>&1 | tee /tmp/wave7-t3-c8b.log | grep -E \"src/tool/agent-followup/agent-followup\\\\.ts\" | head -1 | awk -F\"|\" \"{gsub(/^[ \\t]+|[ \\t]+\\$/, \\\"\\\", \\$3); if (\\$3 == \\\"100.00\\\") exit 0; else { print \\\"followup lines = \\\" \\$3 \\\" (need 100.00)\\\"; exit 1 }}\"'",
         "weight": 0.18,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "agent-send.ts Lines=100.00 (single-file run); agent-followup.ts Lines=100.00 (single-file run). Both RC=0."
       },
       {
         "id": "C9",
@@ -368,8 +368,8 @@
         "assertion": "Generator commit exists matching 'wave 7 T3:' AND includes the agent-send + agent-followup diffs.",
         "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 7 T3\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat --format= \"$sha\" | grep -qE \"packages/opencode/src/tool/agent-(send|followup)/\"'",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "Commit fb835c3a4 'wave 7 T3: ...' touches exactly the 4 contracted writes (agent-send.ts, agent-send.test.ts, agent-followup.ts, agent-followup.test.ts). Recipe-shape adjustment: default `git show --stat` truncates paths at terminal width → grep miss; re-ran with `--stat=200` which preserves full paths → match confirmed (4 files / 273 insertions / 16 deletions, all under packages/opencode/src/tool/agent-(send|followup)/)."
       }
     ]
   },
