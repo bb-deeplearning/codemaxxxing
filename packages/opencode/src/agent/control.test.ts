@@ -2976,3 +2976,255 @@ describe("AgentControl D9 wasKnownPath", () => {
     ),
   )
 })
+
+describe("AgentControl D12 supervision strategies", () => {
+  // Reuse the D5/D11 writeAssistantMessage shape — duplicated locally so
+  // this describe block stays self-contained (the helper is closure-local
+  // to the D5/D11 describes and not exported).
+  const writeAssistantMessage = (
+    sessions: Session.Interface,
+    sessionID: SessionID,
+    text: string,
+    finish: string,
+  ) =>
+    Effect.gen(function* () {
+      const userMsg = {
+        id: MessageID.ascending(),
+        sessionID,
+        role: "user" as const,
+        time: { created: Date.now() },
+        agent: "build",
+        model: {
+          providerID: ProviderID.make("anthropic"),
+          modelID: ModelID.make("claude-3-5-sonnet"),
+        },
+      }
+      yield* sessions.updateMessage(userMsg)
+      const assistantMsg = {
+        id: MessageID.ascending(),
+        sessionID,
+        parentID: userMsg.id,
+        role: "assistant" as const,
+        mode: "build",
+        agent: "build",
+        path: { cwd: ".", root: "." },
+        time: { created: Date.now(), completed: Date.now() },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("claude-3-5-sonnet"),
+        providerID: ProviderID.make("anthropic"),
+        finish,
+      }
+      yield* sessions.updateMessage(assistantMsg)
+      yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: assistantMsg.id,
+        sessionID,
+        type: "text",
+        text,
+      })
+      return assistantMsg
+    })
+
+  it.live(
+    "defaults to escalate when on_failure is not provided (current behavior preserved)",
+    () =>
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const control = yield* AgentControl.Service
+          yield* control.registerRunLoop(() => Effect.die("boom"))
+          const root = yield* seedRoot()
+          const child = yield* control.spawnAgent({
+            parentID: root.id,
+            parentPath: ROOT,
+            task_name: "default_escalate",
+            initial_message: ".",
+          })
+          yield* Effect.sleep(100)
+
+          const drained = yield* control.drainMailbox(root.id)
+          const fromChild = drained.filter(
+            (m) => String(m.author) === String(child.metadata.agent_path),
+          )
+          expect(fromChild.length).toBe(1)
+          expect(fromChild[0]!.content).toContain("reached status: errored")
+          expect(fromChild[0]!.abort_reason).toBeUndefined()
+        }),
+      ),
+  )
+
+  it.live(
+    "on_failure=respawn: child re-spawns at the same task_name with a new session id after a crash",
+    () =>
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const control = yield* AgentControl.Service
+          let counter = 0
+          yield* control.registerRunLoop((sid) =>
+            Effect.gen(function* () {
+              counter += 1
+              if (counter === 1) return yield* Effect.die("first crash")
+              yield* writeAssistantMessage(sessions, sid, "respawned ok", "tool-calls")
+              return "done"
+            }),
+          )
+
+          const root = yield* seedRoot()
+          const child = yield* control.spawnAgent({
+            parentID: root.id,
+            parentPath: ROOT,
+            task_name: "respawner",
+            initial_message: ".",
+            on_failure: "respawn",
+          })
+          yield* Effect.sleep(150)
+
+          expect(counter).toBe(2)
+          const resolved = yield* control.resolveAgentReference(
+            ROOT,
+            "/root/respawner",
+            root.id,
+          )
+          expect(resolved).not.toBe(child.thread_id)
+
+          const drained = yield* control.drainMailbox(root.id)
+          const fromChild = drained.filter(
+            (m) => String(m.author) === String(child.metadata.agent_path),
+          )
+          const respawnNote = fromChild.find(
+            (m) => m.abort_reason?.reason === "transient_tool_error",
+          )
+          expect(respawnNote).toBeDefined()
+          expect(respawnNote?.abort_reason?.details).toMatch(/respawned after crash; attempt 1\/3/)
+        }),
+      ),
+  )
+
+  it.live(
+    "on_failure=respawn: max-3 respawns then escalates with respawn-cap-exceeded note",
+    () =>
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const control = yield* AgentControl.Service
+          let counter = 0
+          yield* control.registerRunLoop(() =>
+            Effect.gen(function* () {
+              counter += 1
+              return yield* Effect.die("always dies")
+            }),
+          )
+
+          const root = yield* seedRoot()
+          const child = yield* control.spawnAgent({
+            parentID: root.id,
+            parentPath: ROOT,
+            task_name: "cap_exceeded",
+            initial_message: ".",
+            on_failure: "respawn",
+          })
+          yield* Effect.sleep(200)
+
+          expect(counter).toBe(4)
+          const drained = yield* control.drainMailbox(root.id)
+          const fromChild = drained.filter(
+            (m) => String(m.author) === String(child.metadata.agent_path),
+          )
+          const capNote = fromChild.find((m) =>
+            m.abort_reason?.details?.match(/respawn cap exceeded/),
+          )
+          expect(capNote).toBeDefined()
+          expect(capNote?.abort_reason?.reason).toBe("transient_tool_error")
+        }),
+      ),
+  )
+
+  it.live("on_failure=ignore: errored child produces NO completion notification to parent", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+        yield* control.registerRunLoop(() => Effect.die("silent"))
+        const root = yield* seedRoot()
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "ignored",
+          initial_message: ".",
+          on_failure: "ignore",
+        })
+        yield* Effect.sleep(100)
+
+        const drained = yield* control.drainMailbox(root.id)
+        const fromChild = drained.filter(
+          (m) => String(m.author) === String(child.metadata.agent_path),
+        )
+        expect(fromChild.length).toBe(0)
+      }),
+    ),
+  )
+
+  it.live(
+    "on_failure=kill_pool: stored but no runtime effect this wave (Wave 6 wires)",
+    () =>
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const control = yield* AgentControl.Service
+          yield* control.registerRunLoop((sid) =>
+            Effect.gen(function* () {
+              yield* writeAssistantMessage(sessions, sid, "all good", "tool-calls")
+              return "done"
+            }),
+          )
+          const root = yield* seedRoot()
+          const child = yield* control.spawnAgent({
+            parentID: root.id,
+            parentPath: ROOT,
+            task_name: "killpool_stub",
+            initial_message: ".",
+            on_failure: "kill_pool",
+          })
+          yield* Effect.sleep(100)
+
+          const drained = yield* control.drainMailbox(root.id)
+          const fromChild = drained.filter(
+            (m) => String(m.author) === String(child.metadata.agent_path),
+          )
+          expect(fromChild.length).toBeGreaterThanOrEqual(1)
+          expect(fromChild[0]!.content).toContain("reached status: completed")
+        }),
+      ),
+  )
+
+  it.live("pool_strategy stored on the per-child slot (stub for Wave 6)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            yield* writeAssistantMessage(sessions, sid, "pool ok", "tool-calls")
+            return "done"
+          }),
+        )
+        const root = yield* seedRoot()
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "pool_member",
+          initial_message: ".",
+          pool_strategy: "one_for_all",
+        })
+        yield* Effect.sleep(100)
+
+        expect(typeof child.thread_id).toBe("string")
+        const drained = yield* control.drainMailbox(root.id)
+        const fromChild = drained.filter(
+          (m) => String(m.author) === String(child.metadata.agent_path),
+        )
+        expect(fromChild.length).toBeGreaterThanOrEqual(1)
+        expect(fromChild[0]!.content).toContain("reached status: completed")
+      }),
+    ),
+  )
+})
