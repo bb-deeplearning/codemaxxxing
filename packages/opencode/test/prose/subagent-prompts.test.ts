@@ -1,9 +1,10 @@
 // Wave 1 — prose grep harness for subagent prompt surfaces.
 //
-// Asserts the post-Wave-1 invariants from PROMPT_SURFACES.md without
-// shelling out: read each prompt .txt as a string and use
-// expect(...).toContain / .not.toContain. Plain bun:test (no Effect)
-// because this is pure text I/O.
+// Asserts the post-Wave-1 prose invariants without shelling out: read
+// each prompt .txt as a string and use expect(...).toContain /
+// .not.toContain. Plain bun:test (no Effect) because this is pure text
+// I/O. The canonical spec for these invariants lives in the campaign
+// plan's prompt-surfaces doc.
 //
 // Targets:
 // - general/anthropic.txt, general/gemini.txt, explore.txt: subagent
@@ -17,10 +18,10 @@
 //   coordination doctrine ("unicast") and D8 limits-of-actor-model
 //   doctrine ("no broadcast", "sibling introspection", "idle").
 //
-// Phrase wording is inlined here (not loaded from PROMPT_SURFACES.md)
+// Phrase wording is inlined here (not loaded from the plan spec)
 // so the test is durable across plan edits: only deliberate prompt
 // changes can break it, and any change to the canonical phrase list
-// requires updating BOTH this file and PROMPT_SURFACES.md.
+// requires updating BOTH this file and the spec.
 
 import { describe, expect, test } from "bun:test"
 
@@ -30,7 +31,7 @@ const explorePath = new URL("../../src/agent/prompt/explore.txt", import.meta.ur
 const subagentHintPath = new URL("../../src/agent/prompt/multi-agent-subagent.txt", import.meta.url).pathname
 const rootHintPath = new URL("../../src/agent/prompt/multi-agent-root.txt", import.meta.url).pathname
 
-// Forbidden phrases per PROMPT_SURFACES.md § "Forbidden phrases".
+// Forbidden phrases per the plan spec § "Forbidden phrases".
 // These imply text-is-deliverable framing that contradicts the
 // delivery contract; the contract is authoritative, base prompts
 // must defer.
@@ -40,7 +41,7 @@ const FORBIDDEN_PHRASES = [
   "the parent agent reads your output",
 ] as const
 
-// Required phrase per PROMPT_SURFACES.md § "Required phrases".
+// Required phrase per the plan spec § "Required phrases".
 // Every subagent base prompt acknowledges the contract's existence
 // so the model does not ignore the later capability-hint layer.
 const REQUIRED_PHRASE = "See the delivery contract in your multi-agent coordination guidance."
