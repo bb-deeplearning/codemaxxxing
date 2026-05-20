@@ -30,6 +30,7 @@ import { LiveAgent } from "./live-agent"
 import { InterAgentCommunication } from "./inter-agent-communication"
 import { Mailbox } from "./mailbox"
 import { MailboxFullError } from "./mailbox"
+import { Behaviors, BehaviorContract } from "./behaviors"
 import {
   AGENT_MAX_DEPTH,
   AGENT_MAX_THREADS,
@@ -344,6 +345,18 @@ export interface SpawnAgentInput {
   // (Wave 7 T4) to force backpressure scenarios without queueing 33
   // messages. Production callers leave undefined.
   readonly mailbox_capacity?: number
+  // D16 (actor-discipline-2026-05-20 Wave 8) — explicit override of the
+  // declared behavior contract version for this child. When omitted the
+  // runtime falls back to `Behaviors.resolveContract(agent_type)` which
+  // returns the registered default version for the agent_type (today
+  // `subagent_v1` for both `general` and `explore`). Pass `subagent_v2`
+  // when an orchestrator wants the forward-compat semantics under the
+  // same agent_type — both versions coexist in the registry per
+  // INV-D-25. Undefined agent_type AND undefined behavior_version → no
+  // contract is resolved → no validation fires at terminal-status time
+  // (which is the correct behavior for unregistered agent_types per
+  // WAVE.md gotcha 1).
+  readonly behavior_version?: "subagent_v1" | "subagent_v2"
 }
 
 export type SpawnError =
@@ -594,6 +607,18 @@ interface PerRootData {
   // finalizer below.
   readonly links: Map<SessionID, Set<SessionID>>
   readonly linkedDeathOf: Set<SessionID>
+  // D16 (actor-discipline-2026-05-20 Wave 8) — declared per-child
+  // BehaviorContract registry. Populated at `spawnAgent` time via
+  // `Behaviors.resolveContract(agent_type, behavior_version)`; absent
+  // entries (unregistered agent_type / no agent_type at all) skip
+  // validation entirely. The completion watcher reads this map at
+  // terminal-status time, calls `Behaviors.computeViolations(...)`,
+  // and attaches the machine-readable `behavior_violation` payload
+  // onto the parent's InterAgentCommunication when violations
+  // surface. Per-root scoped — same lifecycle as every other
+  // PerRootData map; cleared in the Session.Event.Deleted subscriber
+  // AND the instance-disposal finalizer below.
+  readonly behaviorOf: Map<SessionID, BehaviorContract>
 }
 
 interface InternalState {
@@ -708,6 +733,7 @@ export const layer = Layer.effect(
           slot.poolOf.clear()
           slot.links.clear()
           slot.linkedDeathOf.clear()
+          slot.behaviorOf.clear()
           perRoot.delete(deletedID)
           for (const [sid, rid] of sessionToRoot.entries()) {
             if (rid === deletedID) sessionToRoot.delete(sid)
@@ -741,6 +767,7 @@ export const layer = Layer.effect(
               data.poolOf.clear()
               data.links.clear()
               data.linkedDeathOf.clear()
+              data.behaviorOf.clear()
             }
             perRoot.clear()
             sessionToRoot.clear()
@@ -788,6 +815,7 @@ export const layer = Layer.effect(
           poolOf: new Map(),
           links: new Map(),
           linkedDeathOf: new Set(),
+          behaviorOf: new Map(),
         }
         data.perRoot.set(id, slot)
         data.sessionToRoot.set(id, id)
@@ -1001,6 +1029,13 @@ export const layer = Layer.effect(
             // the child resolve to the right slot.
             data.sessionToRoot.set(child.id, slot.rootID)
 
+            // Wave 8 (D16) — resolve declared behavior contract for this child.
+            // Undefined when agent_type is undefined / unknown — no contract means
+            // no runtime validation at terminal time. Stored per-child so spawn-time
+            // version selection (default vs explicit) is locked in.
+            const contract = Behaviors.resolveContract(input.agent_type, input.behavior_version)
+            if (contract) slot.behaviorOf.set(child.id, contract)
+
             yield* startAgentFiber(data, slot, child.id)
 
             // Sibling completion watcher. Mirrors codex
@@ -1196,6 +1231,28 @@ export const layer = Layer.effect(
                   // it wins over the body-parsed value so the spawner
                   // sees the cap-exceeded escalation cause.
                   const effectiveAbortReason = overrideAbortReason ?? abortParsed
+                  // Wave 8 (D16) — behavior contract validation at terminal status.
+                  // Reads childDelivered (D5 tracker) + effectiveAbortReason (D11/D12).
+                  // Surfaces a machine-readable behavior_violation payload on the
+                  // notification when violations exist. Additive to D5's prose warning;
+                  // both can fire on the same case. The validation is OBSERVER-only —
+                  // spawn already returned cleanly; the orchestrator decides whether
+                  // to pivot / retry / ignore based on the structured payload.
+                  const behaviorContract = slot.behaviorOf.get(child.id)
+                  const violations = Behaviors.computeViolations(behaviorContract, {
+                    delivered: childDelivered,
+                    abortReason: effectiveAbortReason,
+                  })
+                  const behavior_violation =
+                    behaviorContract && violations.length > 0
+                      ? {
+                          contract_version: behaviorContract.version,
+                          violations: violations.map((v) => ({
+                            kind: v.kind as string,
+                            detail: v.detail,
+                          })),
+                        }
+                      : undefined
                   // The watcher's send may race with parent deletion. If the
                   // parent root is gone, sendInterAgentCommunication fails
                   // with AgentNotFoundError — absorb it; nothing to wake.
@@ -1208,6 +1265,7 @@ export const layer = Layer.effect(
                       trigger_turn: false,
                       sent_at: Date.now(),
                       abort_reason: effectiveAbortReason,
+                      behavior_violation,
                     }),
                     child.id,
                     { system: true },

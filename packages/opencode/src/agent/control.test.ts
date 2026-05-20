@@ -4417,3 +4417,317 @@ describe("AgentControl D15 mailbox-full propagation", () => {
     ),
   )
 })
+
+// D16 (actor-discipline-2026-05-20 Wave 8) — behavior contract runtime
+// validation. spawnAgent resolves the declared BehaviorContract for the
+// child via `Behaviors.resolveContract(agent_type, behavior_version)`
+// and stores it on `slot.behaviorOf`; the completion watcher reads it
+// at terminal-status time, calls `Behaviors.computeViolations(...)`,
+// and attaches a machine-readable `behavior_violation` payload to the
+// parent's notification when violations exist. The validation runs
+// AFTER spawn returns LiveAgent (INV-D-26) so the orchestrator
+// observes the violation via mailbox, not via the spawn surface.
+describe("AgentControl D16 behavior contract validation", () => {
+  // Reuse the D5/D11/D12 writeAssistantMessage shape — duplicated locally so
+  // this describe block stays self-contained (the helper is closure-local
+  // to the D5/D11/D12 describes and not exported).
+  const writeAssistantMessage = (
+    sessions: Session.Interface,
+    sessionID: SessionID,
+    text: string,
+    finish: string,
+  ) =>
+    Effect.gen(function* () {
+      const userMsg = {
+        id: MessageID.ascending(),
+        sessionID,
+        role: "user" as const,
+        time: { created: Date.now() },
+        agent: "build",
+        model: {
+          providerID: ProviderID.make("anthropic"),
+          modelID: ModelID.make("claude-3-5-sonnet"),
+        },
+      }
+      yield* sessions.updateMessage(userMsg)
+      const assistantMsg = {
+        id: MessageID.ascending(),
+        sessionID,
+        parentID: userMsg.id,
+        role: "assistant" as const,
+        mode: "build",
+        agent: "build",
+        path: { cwd: ".", root: "." },
+        time: { created: Date.now(), completed: Date.now() },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("claude-3-5-sonnet"),
+        providerID: ProviderID.make("anthropic"),
+        finish,
+      }
+      yield* sessions.updateMessage(assistantMsg)
+      yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: assistantMsg.id,
+        sessionID,
+        type: "text",
+        text,
+      })
+      return assistantMsg
+    })
+
+  it.live("no contract attached when agent_type is undefined", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            yield* writeAssistantMessage(sessions, sid, "ok", "tool-calls")
+            return "done"
+          }),
+        )
+        const root = yield* seedRoot()
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "no_type",
+          initial_message: ".",
+        })
+        yield* Effect.sleep(80)
+
+        const drained = yield* control.drainMailbox(root.id)
+        const note = drained.find(
+          (m) => String(m.author) === String(child.metadata.agent_path),
+        )
+        expect(note).toBeDefined()
+        expect(note?.behavior_violation).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("no contract attached when agent_type is unknown", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            yield* writeAssistantMessage(sessions, sid, "ok", "tool-calls")
+            return "done"
+          }),
+        )
+        const root = yield* seedRoot()
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "unknown_type",
+          agent_type: "foo_bar",
+          initial_message: ".",
+        })
+        yield* Effect.sleep(80)
+
+        const drained = yield* control.drainMailbox(root.id)
+        const note = drained.find(
+          (m) => String(m.author) === String(child.metadata.agent_path),
+        )
+        expect(note).toBeDefined()
+        expect(note?.behavior_violation).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live(
+    "general subagent with send_message_required + no delivery → missing_delivery violation",
+    () =>
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const control = yield* AgentControl.Service
+          yield* control.registerRunLoop((sid) =>
+            Effect.gen(function* () {
+              yield* writeAssistantMessage(
+                sessions,
+                sid,
+                "Found the file at /abs/path/foo.ts:42 — exports a useful helper.",
+                "tool-calls",
+              )
+              return "done"
+            }),
+          )
+          const root = yield* seedRoot()
+          const child = yield* control.spawnAgent({
+            parentID: root.id,
+            parentPath: ROOT,
+            task_name: "g_missing",
+            agent_type: "general",
+            initial_message: ".",
+          })
+          yield* Effect.sleep(80)
+
+          const drained = yield* control.drainMailbox(root.id)
+          const note = drained.find(
+            (m) => String(m.author) === String(child.metadata.agent_path),
+          )
+          expect(note).toBeDefined()
+          expect(note?.behavior_violation?.contract_version).toBe("subagent_v1")
+          expect(note?.behavior_violation?.violations[0]?.kind).toBe("missing_delivery")
+        }),
+      ),
+  )
+
+  it.live(
+    "general subagent that delivers via sendInterAgentCommunication → no violation",
+    () =>
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const control = yield* AgentControl.Service
+          const root = yield* seedRoot()
+          yield* control.registerRunLoop((sid) =>
+            Effect.gen(function* () {
+              yield* control
+                .sendInterAgentCommunication(
+                  root.id,
+                  new InterAgentCommunication({
+                    author: path("/root/g_delivered"),
+                    recipient: ROOT,
+                    content: "delivered",
+                    trigger_turn: false,
+                    sent_at: 0,
+                  }),
+                  sid,
+                )
+                .pipe(Effect.orDie)
+              yield* writeAssistantMessage(sessions, sid, "Body text.", "tool-calls")
+              return "done"
+            }),
+          )
+          const child = yield* control.spawnAgent({
+            parentID: root.id,
+            parentPath: ROOT,
+            task_name: "g_delivered",
+            agent_type: "general",
+            initial_message: ".",
+          })
+          yield* Effect.sleep(80)
+
+          const drained = yield* control.drainMailbox(root.id)
+          const note = drained.find(
+            (m) =>
+              String(m.author) === String(child.metadata.agent_path) &&
+              m.content.includes("reached status:"),
+          )
+          expect(note).toBeDefined()
+          // Either undefined (no violations) or violations array empty.
+          const bv = note?.behavior_violation
+          expect(bv === undefined || bv.violations.length === 0).toBe(true)
+        }),
+      ),
+  )
+
+  it.live(
+    "explore subagent emitting ABORT(approach_failed) → undeclared_failure_mode violation",
+    () =>
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const control = yield* AgentControl.Service
+          yield* control.registerRunLoop((sid) =>
+            Effect.gen(function* () {
+              yield* writeAssistantMessage(
+                sessions,
+                sid,
+                "ABORT(approach_failed): tried 3x.",
+                "tool-calls",
+              )
+              return "done"
+            }),
+          )
+          const root = yield* seedRoot()
+          const child = yield* control.spawnAgent({
+            parentID: root.id,
+            parentPath: ROOT,
+            task_name: "e_undeclared",
+            agent_type: "explore",
+            initial_message: ".",
+          })
+          yield* Effect.sleep(80)
+
+          const drained = yield* control.drainMailbox(root.id)
+          const note = drained.find(
+            (m) => String(m.author) === String(child.metadata.agent_path),
+          )
+          expect(note).toBeDefined()
+          const kinds = note?.behavior_violation?.violations.map((v) => v.kind) ?? []
+          expect(kinds).toContain("undeclared_failure_mode")
+        }),
+      ),
+  )
+
+  it.live(
+    "behavior_version=subagent_v2 declared via behavior_version arg uses subagent_v2 contract — coexistence",
+    () =>
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const control = yield* AgentControl.Service
+          yield* control.registerRunLoop((sid) =>
+            Effect.gen(function* () {
+              yield* writeAssistantMessage(sessions, sid, "Body text.", "tool-calls")
+              return "done"
+            }),
+          )
+          const root = yield* seedRoot()
+          const child = yield* control.spawnAgent({
+            parentID: root.id,
+            parentPath: ROOT,
+            task_name: "g_v2",
+            agent_type: "general",
+            behavior_version: "subagent_v2",
+            initial_message: ".",
+          })
+          yield* Effect.sleep(80)
+
+          const drained = yield* control.drainMailbox(root.id)
+          const note = drained.find(
+            (m) => String(m.author) === String(child.metadata.agent_path),
+          )
+          expect(note).toBeDefined()
+          expect(note?.behavior_violation?.contract_version).toBe("subagent_v2")
+          expect(note?.behavior_violation?.violations[0]?.kind).toBe("missing_delivery")
+        }),
+      ),
+  )
+
+  it.live(
+    "spawn returns LiveAgent successfully even when subsequent runtime violates contract (INV-D-26 unit)",
+    () =>
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const control = yield* AgentControl.Service
+          yield* control.registerRunLoop((sid) =>
+            Effect.gen(function* () {
+              yield* writeAssistantMessage(sessions, sid, "no delivery", "tool-calls")
+              return "done"
+            }),
+          )
+          const root = yield* seedRoot()
+          const result = yield* Effect.result(
+            control.spawnAgent({
+              parentID: root.id,
+              parentPath: ROOT,
+              task_name: "inv26",
+              agent_type: "general",
+              initial_message: ".",
+            }),
+          )
+          expect(Result.isSuccess(result)).toBe(true)
+          if (Result.isSuccess(result)) {
+            expect(result.success.thread_id).toBeDefined()
+          }
+        }),
+      ),
+  )
+})
