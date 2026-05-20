@@ -139,8 +139,8 @@
     ],
     "depends_on": ["T1"],
     "pre_agreed_by_orchestrator": true,
-    "signed": false,
-    "commit_sha": null,
+    "signed": true,
+    "commit_sha": "f51b57c52",
     "criteria": [
       {
         "id": "C1",
@@ -148,7 +148,8 @@
         "assertion": "agent-spawn.ts Parameters Schema.Struct includes on_failure as Schema.optional(Schema.Literal(...)) with the 4 enum values.",
         "verify": "grep -F 'on_failure: Schema.optional(' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.ts && for v in respawn escalate ignore kill_pool; do grep -F \"\\\"$v\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.ts || { echo \"missing on_failure literal: $v\"; exit 1; }; done",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; `on_failure: Schema.optional(` matched at L60; all 4 literals (respawn, escalate, ignore, kill_pool) present as Schema.Literal(...) entries inside Schema.Union (generator used Union+Literal pattern per Effect v4 beta — Schema.Literal takes single arg only, same shape as src/agent/status.ts)."
       },
       {
         "id": "C2",
@@ -156,7 +157,8 @@
         "assertion": "agent-spawn.ts Parameters Schema.Struct includes pool_strategy as Schema.optional(Schema.Literal(...)) with the 3 enum values.",
         "verify": "grep -F 'pool_strategy: Schema.optional(' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.ts && for v in one_for_one one_for_all rest_for_one; do grep -F \"\\\"$v\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.ts || { echo \"missing pool_strategy literal: $v\"; exit 1; }; done",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; `pool_strategy: Schema.optional(` matched at L71; all 3 literals (one_for_one, one_for_all, rest_for_one) present as Schema.Literal(...) entries inside Schema.Union."
       },
       {
         "id": "C3",
@@ -164,7 +166,8 @@
         "assertion": "execute body passes on_failure + pool_strategy through to control.spawnAgent.",
         "verify": "grep -F 'on_failure: params.on_failure' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.ts && grep -F 'pool_strategy: params.pool_strategy' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.ts",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; matched `on_failure: params.on_failure,` at L208 and `pool_strategy: params.pool_strategy,` at L209 inside control.spawnAgent({...}) call."
       },
       {
         "id": "C4",
@@ -172,7 +175,8 @@
         "assertion": "agent-spawn.test.ts contains at least 6 new tests covering on_failure / pool_strategy enum values + passthrough.",
         "verify": "bash -c 'grep -cE \"it\\.live\\(.*(on_failure|pool_strategy)\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.test.ts | awk \"\\$1 >= 6 { exit 0 } { exit 1 }\"'",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; grep count = 9 (>= 6). Tests cover all 4 on_failure literals + 3 pool_strategy literals + combined passthrough + Schema-decode rejection."
       },
       {
         "id": "C5",
@@ -180,7 +184,8 @@
         "assertion": "bun typecheck passes from packages/opencode.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
         "weight": 0.15,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; tsgo --noEmit clean."
       },
       {
         "id": "C6",
@@ -188,7 +193,8 @@
         "assertion": "Full agent-spawn.test.ts passes (no failures).",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-spawn/agent-spawn.test.ts 2>&1 | tee /tmp/wave5-t2-c6.log && grep -E '[1-9][0-9]* pass' /tmp/wave5-t2-c6.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave5-t2-c6.log",
         "weight": 0.15,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; 30 pass / 0 fail / 63 expect() calls in 3.15s."
       },
       {
         "id": "C7",
@@ -196,7 +202,8 @@
         "assertion": "Per-file coverage on agent-spawn.ts is 100% lines via the single-file test path.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/tool/agent-spawn/agent-spawn.test.ts 2>&1 | tee /tmp/wave5-t2-c7.log && grep -E 'agent-spawn\\.ts.*100\\.00\\s*\\|\\s*[0-9-]' /tmp/wave5-t2-c7.log",
         "weight": 0.15,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; `src/tool/agent-spawn/agent-spawn.ts | 100.00 | 100.00 |` — lines column = 100.00, functions column = 100.00. Recipe regex matched literally (the `[0-9-]` matched the leading `1` of the functions column 100.00)."
       },
       {
         "id": "C8",
@@ -204,7 +211,8 @@
         "assertion": "Multi-agent invariants suite stays green (>= 31 pass, 0 fail — INV-D-15..17 still land in T3).",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave5-t2-c8.log && grep -E '[1-9][0-9]* pass' /tmp/wave5-t2-c8.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave5-t2-c8.log",
         "weight": 0.1,
-        "status": "pending"
+        "status": "passed",
+        "evidence": "exit 0; 31 pass / 0 fail / 140 expect() calls in 6.24s."
       }
     ]
   },
