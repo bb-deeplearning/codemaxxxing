@@ -282,3 +282,50 @@ describe("Wave 7 — bounded mailbox + link prose", () => {
     expect(text.toLowerCase()).toMatch(/bidirectional|paired death|linked/)
   })
 })
+
+// Wave 8 — D16 behavior contract prose. The subagent capability hint
+// multi-agent-subagent.txt gains a "## Your behavior contract" section
+// AFTER the "## ABORT" section. The section explains the per-agent_type
+// declared contract surface: delivery / termination / declared failure
+// modes / expected_outputs, the runtime `behavior_violation` surfaced on
+// the spawner's notification, and the per-agent_type variation
+// (general accepts all six ABORT reasons; explore accepts five). Grep
+// asserts pin the prose so a future rewrite that drops the doctrine
+// fails this test. INV-D-24..26 in the integration suite exercise the
+// runtime side.
+describe("multi-agent-subagent D16 behavior contract prose", () => {
+  test("multi-agent-subagent.txt contains '## Your behavior contract' section header", async () => {
+    const text = await Bun.file(subagentHintPath).text()
+    expect(text).toContain("## Your behavior contract")
+  })
+
+  test("multi-agent-subagent.txt contains literal 'behavior_violation' token", async () => {
+    const text = await Bun.file(subagentHintPath).text()
+    expect(text).toContain("behavior_violation")
+  })
+
+  test("multi-agent-subagent.txt mentions 'declared failure modes' (or 'declared_failure_modes')", async () => {
+    const text = await Bun.file(subagentHintPath).text()
+    expect(text).toMatch(/declared (failure modes|_failure_modes)/)
+  })
+
+  test("multi-agent-subagent.txt mentions 'general' agent_type in contract section", async () => {
+    const text = await Bun.file(subagentHintPath).text()
+    const section = text.slice(text.indexOf("## Your behavior contract"))
+    expect(section).toContain("general")
+  })
+
+  test("multi-agent-subagent.txt mentions 'explore' agent_type in contract section", async () => {
+    const text = await Bun.file(subagentHintPath).text()
+    const section = text.slice(text.indexOf("## Your behavior contract"))
+    expect(section).toContain("explore")
+  })
+
+  test("'## Your behavior contract' section appears AFTER '## ABORT' section", async () => {
+    const text = await Bun.file(subagentHintPath).text()
+    const abortIdx = text.indexOf("## ABORT")
+    const contractIdx = text.indexOf("## Your behavior contract")
+    expect(abortIdx).toBeGreaterThan(-1)
+    expect(contractIdx).toBeGreaterThan(abortIdx)
+  })
+})
