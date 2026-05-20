@@ -131,8 +131,8 @@
     ],
     "depends_on": ["T1"],
     "pre_agreed_by_orchestrator": true,
-    "signed": false,
-    "commit_sha": null,
+    "signed": true,
+    "commit_sha": "7e687de4f",
     "criteria": [
       {
         "id": "C1",
@@ -140,8 +140,8 @@
         "assertion": "agent-pool.ts exports ID = 'spawn_pool', PermissionKey = 'task', Parameters schema, AgentPoolTool, and self-reexports as AgentPool.",
         "verify": "bash -c 'for p in \"export const ID = \\\"spawn_pool\\\" as const\" \"export const PermissionKey = \\\"task\\\" as const\" \"export const Parameters\" \"export const AgentPoolTool\" \"export * as AgentPool from\"; do grep -qF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts || { echo \"missing: $p\"; exit 1; }; done'",
         "weight": 0.06,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "all 5 exports present (ID, PermissionKey, Parameters, AgentPoolTool, AgentPool self-reexport) (exit 0)"
       },
       {
         "id": "C2",
@@ -149,8 +149,8 @@
         "assertion": "Parameters Schema.Struct includes agent_type, count, message, collect, and optional per_worker_messages, collect_n, pool_strategy, on_failure, task_prefix, timeout_ms, fork_turns fields.",
         "verify": "bash -c 'for p in \"agent_type:\" \"count:\" \"message:\" \"collect:\" \"per_worker_messages\" \"collect_n\" \"pool_strategy\" \"on_failure\" \"task_prefix\" \"timeout_ms\"; do grep -qF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts || { echo \"missing param: $p\"; exit 1; }; done'",
         "weight": 0.05,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "all 10 required param keys present in Parameters Struct (exit 0)"
       },
       {
         "id": "C3",
@@ -158,8 +158,8 @@
         "assertion": "Execute body calls control.createPool + control.collectPool AND control.closePoolMembers (for collect=\"first\" path) AND uses ctx.ask with PermissionKey.",
         "verify": "bash -c 'for p in \"control.createPool\" \"control.collectPool\" \"control.closePoolMembers\" \"permission: PermissionKey\"; do grep -qF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts || { echo \"missing call: $p\"; exit 1; }; done'",
         "weight": 0.07,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "createPool/collectPool/closePoolMembers all called; ctx.ask uses permission: PermissionKey (exit 0)"
       },
       {
         "id": "C4",
@@ -167,8 +167,8 @@
         "assertion": "Execute body validates count > 0, agent_type against agents.list(), per_worker_messages.length === count when present, collect='any_n' → collect_n provided.",
         "verify": "bash -c 'grep -qF \"agents.list\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts && grep -qE \"count\\\\b.*<=\\\\s*0|count\\\\b.*<\\\\s*1\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts && grep -qF \"per_worker_messages\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts && grep -qF \"collect_n\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts'",
         "weight": 0.07,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "count<=0, agents.list filter, per_worker_messages length-check, collect_n_required all present (exit 0)"
       },
       {
         "id": "C5",
@@ -176,8 +176,8 @@
         "assertion": "agent-pool.txt exists, is non-empty, and contains the required sections: Mental model, Parameters/Collect semantics, Partial pools, Permission, Cost, plus a 'spawn_pool' reference.",
         "verify": "bash -c 'test -s /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.txt && for p in \"Mental model\" \"Collect\" \"Partial pools\" \"Permission\" \"Cost\" \"spawn_pool\"; do grep -qiF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.txt || { echo \"missing section/term: $p\"; exit 1; }; done'",
         "weight": 0.06,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "agent-pool.txt non-empty (109 lines); all 6 required terms present (exit 0)"
       },
       {
         "id": "C6",
@@ -185,8 +185,8 @@
         "assertion": "agent-pool.test.ts has at least 6 tests covering parameters validation, permission key, collect='all', collect='first' closing remaining, agent_type validation.",
         "verify": "bash -c 'count=$(grep -cE \"^\\s*(test|it\\\\.(live|instance|effect))\\\\(\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.test.ts); [ \"$count\" -ge 6 ] || { echo \"test count=$count\"; exit 1; }'",
         "weight": 0.08,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "test count=21 (>=6)"
       },
       {
         "id": "C7",
@@ -194,8 +194,8 @@
         "assertion": "bun typecheck passes from packages/opencode.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
         "weight": 0.12,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "bun typecheck exit 0 (tsgo --noEmit clean)"
       },
       {
         "id": "C8",
@@ -203,8 +203,8 @@
         "assertion": "agent-pool.test.ts passes (no failures).",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-pool/agent-pool.test.ts 2>&1 | tee /tmp/wave6-t2-c8.log && grep -E '[1-9][0-9]* pass' /tmp/wave6-t2-c8.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave6-t2-c8.log",
         "weight": 0.14,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "21 pass / 0 fail / 45 expect() calls in 3.46s"
       },
       {
         "id": "C9",
@@ -212,8 +212,8 @@
         "assertion": "Per-file 100% line coverage on agent-pool.ts via single-file run.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/tool/agent-pool/agent-pool.test.ts 2>&1 | tee /tmp/wave6-t2-c9.log | grep -E 'agent-pool\\.ts' | head -1 | grep -qE 'agent-pool\\.ts\\s+\\|\\s+100\\.00\\s*\\|'",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "agent-pool.ts funcs=100.00% lines=100.00% via single-file coverage run"
       },
       {
         "id": "C10",
@@ -221,8 +221,8 @@
         "assertion": "Tool.define inner-Effect.gen pattern — execute returns an inner Effect.gen body (per GOTCHA tool-define-execute-r-must-be-never-capture-services-in-closure); no Service yields happen in execute's inner body (services captured in outer closure).",
         "verify": "bash -c 'awk \"/Tool.define\\\\(/,/^\\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts | grep -qE \"const control = yield\\\\* AgentControl\" && awk \"/execute:/,/^      \\\\}\\\\)/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts | wc -l | awk \"{exit (\\$1>0)?0:1}\"'",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "Tool.define outer captures const control = yield* AgentControl.Service; execute returns inner Effect.gen body (exit 0)"
       },
       {
         "id": "C11",
@@ -230,8 +230,8 @@
         "assertion": "agent-pool.ts uses AgentToolContext.currentAgentPath to resolve the caller's path (matches the existing agent-spawn / agent-close / agent-list pattern).",
         "verify": "grep -F 'AgentToolContext.currentAgentPath' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts",
         "weight": 0.05,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "AgentToolContext.currentAgentPath(control, ctx.sessionID) called in execute body (matches agent-spawn pattern)"
       },
       {
         "id": "C12",
@@ -239,8 +239,8 @@
         "assertion": "agent-pool.test.ts uses Tool.init pattern to materialize the tool def (matches existing pattern in test files).",
         "verify": "grep -qE 'Tool\\.init\\(|yield\\* AgentPoolTool' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.test.ts",
         "weight": 0.05,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "test file uses `yield* AgentPoolTool` + `info.init()` pattern (initTool helper L63-66)"
       }
     ]
   },
