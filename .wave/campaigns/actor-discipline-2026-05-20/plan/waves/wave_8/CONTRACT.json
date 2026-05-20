@@ -1,0 +1,469 @@
+[
+  {
+    "task_id": "T1",
+    "title": "NEW behaviors.ts + inter-agent-communication.ts behavior_violation extension",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/behaviors.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/behaviors.test.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.test.ts"
+    ],
+    "depends_on": [],
+    "pre_agreed_by_orchestrator": true,
+    "signed": true,
+    "commit_sha": "6a38dbd12",
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "behaviors.ts exports the D16 schema surface: ABORT_REASONS readonly tuple of 6 reasons, BehaviorVersion + DeliveryRequirement + TerminationRequirement + ViolationKind unions, BehaviorContract + BehaviorViolation Schema.Class classes.",
+        "verify": "bash -c 'for p in \"export const ABORT_REASONS\" \"export const BehaviorVersion\" \"export const DeliveryRequirement\" \"export const TerminationRequirement\" \"export const ViolationKind\" \"class BehaviorContract extends Schema.Class\" \"class BehaviorViolation extends Schema.Class\"; do grep -qF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/behaviors.ts || { echo \"missing: $p\"; exit 1; }; done'",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "all 7 schema-surface greps present in behaviors.ts"
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "behaviors.ts exports concrete default contracts (generalSubagentV1 / generalSubagentV2 / exploreSubagentV1) AND the DEFAULT_CONTRACTS registry keyed by 'general' + 'explore'.",
+        "verify": "bash -c 'for p in \"export const generalSubagentV1\" \"export const generalSubagentV2\" \"export const exploreSubagentV1\" \"export const DEFAULT_CONTRACTS\"; do grep -qF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/behaviors.ts || { echo \"missing: $p\"; exit 1; }; done && grep -qE \"general:\\s*\\{\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/behaviors.ts && grep -qE \"explore:\\s*\\{\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/behaviors.ts'",
+        "weight": 0.05,
+        "status": "passed",
+        "evidence": "DEFAULT_CONTRACTS general/explore keys present + all 3 contract exports"
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "behaviors.ts exports resolveContract(agent_type, version?) AND computeViolations(contract, observed) functions; both reachable via the `Behaviors.` namespace self-reexport at bottom of file.",
+        "verify": "bash -c 'grep -qE \"export const resolveContract\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/behaviors.ts && grep -qE \"export const computeViolations\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/behaviors.ts && grep -qE \"export \\* as Behaviors from\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/behaviors.ts'",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "resolveContract + computeViolations + Behaviors self-reexport all present"
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "exploreSubagentV1 declared_failure_modes excludes 'approach_failed' AND has exactly 5 reasons; generalSubagentV1 has all 6 ABORT_REASONS.",
+        "verify": "bash -c 'awk \"/exploreSubagentV1/,/^\\\\}/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/behaviors.ts | grep -v \"approach_failed\" >/dev/null && ! awk \"/exploreSubagentV1/,/^\\\\}/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/behaviors.ts | grep -q \"approach_failed\"'",
+        "weight": 0.05,
+        "status": "passed",
+        "evidence": "exploreSubagentV1 block does not contain 'approach_failed'"
+      },
+      {
+        "id": "C5",
+        "category": "correctness",
+        "assertion": "computeViolations logic surfaces: when delivery==='send_message_required' AND observed.delivered=false → missing_delivery; when observed.abortReason.reason not in declared_failure_modes → undeclared_failure_mode; exempt contract → empty array.",
+        "verify": "bash -c 'awk \"/computeViolations/,/^\\\\}/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/behaviors.ts | grep -qE \"missing_delivery\" && awk \"/computeViolations/,/^\\\\}/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/behaviors.ts | grep -qE \"undeclared_failure_mode\" && grep -qE \"exempt\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/behaviors.ts'",
+        "weight": 0.05,
+        "status": "passed",
+        "evidence": "missing_delivery + undeclared_failure_mode + exempt all present in computeViolations"
+      },
+      {
+        "id": "C6",
+        "category": "correctness",
+        "assertion": "inter-agent-communication.ts adds optional behavior_violation struct field (contract_version: string + violations: array of { kind, detail }).",
+        "verify": "bash -c 'grep -qE \"behavior_violation:\\s*Schema\\.optional\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts && grep -qE \"contract_version\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts && grep -qE \"violations:\\s*Schema\\.Array\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts'",
+        "weight": 0.05,
+        "status": "passed",
+        "evidence": "behavior_violation Schema.optional struct with contract_version + violations Schema.Array present"
+      },
+      {
+        "id": "C7",
+        "category": "test_coverage",
+        "assertion": "behaviors.test.ts contains >= 18 tests (test or it.live blocks) across schema / DEFAULT_CONTRACTS / resolveContract / computeViolations / ABORT_REASONS describe blocks.",
+        "verify": "bash -c 'c=$(grep -cE \"\\\\b(test|it\\\\.live|it\\\\.instance)\\\\(\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/behaviors.test.ts); [ \"$c\" -ge 18 ] || { echo \"behaviors.test.ts test count=$c (need >=18)\"; exit 1; }'",
+        "weight": 0.07,
+        "status": "passed",
+        "evidence": "test count=27 (>=18)"
+      },
+      {
+        "id": "C8",
+        "category": "test_coverage",
+        "assertion": "inter-agent-communication.test.ts gains >=3 new tests covering behavior_violation construction + decode + JSON roundtrip (D16 Wave 8 references in the assertion strings).",
+        "verify": "bash -c 'c=$(grep -cE \"behavior_violation\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.test.ts); [ \"$c\" -ge 5 ] || { echo \"behavior_violation references in inter-agent-communication.test.ts: $c (need >=5)\"; exit 1; }'",
+        "weight": 0.05,
+        "status": "passed",
+        "evidence": "behavior_violation reference count=16 (>=5)"
+      },
+      {
+        "id": "C9",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.1,
+        "status": "passed",
+        "evidence": "tsgo --noEmit exit 0"
+      },
+      {
+        "id": "C10",
+        "category": "correctness",
+        "assertion": "behaviors.test.ts AND inter-agent-communication.test.ts pass (no failures).",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/agent/behaviors.test.ts src/agent/inter-agent-communication.test.ts 2>&1 | tee /tmp/wave8-t1-c10.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave8-t1-c10.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave8-t1-c10.log'",
+        "weight": 0.12,
+        "status": "passed",
+        "evidence": "43 pass / 0 fail across 2 files"
+      },
+      {
+        "id": "C11",
+        "category": "convention",
+        "assertion": "Per-file 100% LINE coverage on behaviors.ts via single-file run. Function coverage may stay at the pre-existing Schema.TaggedErrorClass-style baseline per GOTCHA schema-class-function-coverage (BehaviorContract + BehaviorViolation Schema.Class instances).",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/agent/behaviors.test.ts 2>&1 | tee /tmp/wave8-t1-c11.log | grep -E \"src/agent/behaviors\\\\.ts\" | head -1 | awk -F\"|\" \"{gsub(/^[ \\t]+|[ \\t]+\\$/, \\\"\\\", \\$3); if (\\$3 == \\\"100.00\\\") exit 0; else { print \\\"line coverage = \\\" \\$3 \\\" (need 100.00)\\\"; exit 1 }}\"'",
+        "weight": 0.1,
+        "status": "passed",
+        "evidence": "behaviors.ts LINES=100.00"
+      },
+      {
+        "id": "C12",
+        "category": "convention",
+        "assertion": "Per-file 100% LINE coverage on inter-agent-communication.ts via single-file run.",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/agent/inter-agent-communication.test.ts 2>&1 | tee /tmp/wave8-t1-c12.log | grep -E \"src/agent/inter-agent-communication\\\\.ts\" | head -1 | awk -F\"|\" \"{gsub(/^[ \\t]+|[ \\t]+\\$/, \\\"\\\", \\$3); if (\\$3 == \\\"100.00\\\") exit 0; else { print \\\"line coverage = \\\" \\$3 \\\" (need 100.00)\\\"; exit 1 }}\"'",
+        "weight": 0.07,
+        "status": "passed",
+        "evidence": "inter-agent-communication.ts LINES=100.00"
+      },
+      {
+        "id": "C13",
+        "category": "convention",
+        "assertion": "Generator commit exists on the codemaxxxing branch matching 'wave 8 T1' AND includes ONLY the 4 contracted writes (no spillover).",
+        "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 8 T1\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat=200 --format= \"$sha\" | grep -qE \"packages/opencode/src/agent/behaviors\\\\.(test\\\\.)?ts\" && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat=200 --format= \"$sha\" | grep -qE \"packages/opencode/src/agent/inter-agent-communication\\\\.(test\\\\.)?ts\"'",
+        "weight": 0.07,
+        "status": "passed",
+        "evidence": "commit 6a38dbd12 touches the 4 contracted files"
+      }
+    ]
+  },
+  {
+    "task_id": "T2",
+    "title": "agent.ts attaches behavior contracts to native agent_type records + exports behaviorContractFor helper",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/agent.ts"
+    ],
+    "depends_on": ["T1"],
+    "pre_agreed_by_orchestrator": true,
+    "signed": false,
+    "commit_sha": null,
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "agent.ts imports Behaviors from ./behaviors AND attaches behaviors registry to both general AND explore via options field (e.g. `options: { behaviors: Behaviors.DEFAULT_CONTRACTS['general'] }`).",
+        "verify": "bash -c 'grep -qE \"import \\{ Behaviors \\} from \\\"\\./behaviors\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/agent.ts && grep -qE \"Behaviors\\.DEFAULT_CONTRACTS\\[\\\"general\\\"\\]\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/agent.ts && grep -qE \"Behaviors\\.DEFAULT_CONTRACTS\\[\\\"explore\\\"\\]\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/agent.ts'",
+        "weight": 0.15,
+        "status": "pending"
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "agent.ts exports behaviorContractFor helper function that proxies to Behaviors.resolveContract.",
+        "verify": "bash -c 'grep -qE \"export const behaviorContractFor\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/agent.ts && grep -qE \"Behaviors\\.resolveContract\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/agent.ts'",
+        "weight": 0.15,
+        "status": "pending"
+      },
+      {
+        "id": "C3",
+        "category": "convention",
+        "assertion": "Only general AND explore native subagent records get behaviors attached. build / plan / compaction / title / summary records do NOT get behaviors attached (no agent_type-based contract for primary / hidden agents per WAVE.md item 2).",
+        "verify": "bash -c 'c=$(grep -cE \"Behaviors\\.DEFAULT_CONTRACTS\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/agent.ts); [ \"$c\" -eq 2 ] || { echo \"Behaviors.DEFAULT_CONTRACTS usage count=$c (need exactly 2 — one for general, one for explore)\"; exit 1; }'",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C4",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.2,
+        "status": "pending"
+      },
+      {
+        "id": "C5",
+        "category": "correctness",
+        "assertion": "Existing integration tests that load Agent.defaultLayer still pass (registry.test.ts as a fast smoke).",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/registry.test.ts 2>&1 | tee /tmp/wave8-t2-c5.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave8-t2-c5.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave8-t2-c5.log'",
+        "weight": 0.15,
+        "status": "pending"
+      },
+      {
+        "id": "C6",
+        "category": "correctness",
+        "assertion": "agent-pool.test.ts AND agent-spawn.test.ts still pass (they pass agent_type='explore' to spawnAgent — additive behavior_violation field must NOT regress existing assertions).",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-pool/agent-pool.test.ts src/tool/agent-spawn/agent-spawn.test.ts 2>&1 | tee /tmp/wave8-t2-c6.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave8-t2-c6.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave8-t2-c6.log'",
+        "weight": 0.15,
+        "status": "pending"
+      },
+      {
+        "id": "C7",
+        "category": "convention",
+        "assertion": "Generator commit exists matching 'wave 8 T2' AND touches ONLY agent.ts.",
+        "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 8 T2\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat=200 --format= \"$sha\" | grep -qE \"packages/opencode/src/agent/agent\\\\.ts\"'",
+        "weight": 0.1,
+        "status": "pending"
+      }
+    ]
+  },
+  {
+    "task_id": "T3",
+    "title": "control.ts D16 runtime validation + control.test.ts D16 describe block",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.test.ts"
+    ],
+    "depends_on": ["T1"],
+    "pre_agreed_by_orchestrator": true,
+    "signed": false,
+    "commit_sha": null,
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "control.ts imports Behaviors namespace AND BehaviorContract type from ./behaviors.",
+        "verify": "bash -c 'grep -qE \"import \\{ Behaviors, BehaviorContract \\} from \\\"\\./behaviors\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts || grep -qE \"import \\{ BehaviorContract\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts'",
+        "weight": 0.05,
+        "status": "pending"
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "SpawnAgentInput extended with optional behavior_version: 'subagent_v1' | 'subagent_v2' field.",
+        "verify": "bash -c 'grep -qE \"behavior_version\\?:\\s*(\\\"subagent_v1\\\"\\s*\\|\\s*\\\"subagent_v2\\\"|\\\"subagent_v2\\\"\\s*\\|\\s*\\\"subagent_v1\\\")\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts'",
+        "weight": 0.05,
+        "status": "pending"
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "PerRootData declares behaviorOf: Map<SessionID, BehaviorContract> AND initializes via `new Map` in ensureRootSlot AND clears via `.behaviorOf.clear()` >=2 times (one in Session.Event.Deleted subscriber, one in disposal finalizer).",
+        "verify": "bash -c 'grep -qE \"behaviorOf:\\s*Map<SessionID,\\s*BehaviorContract>\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -qE \"behaviorOf:\\s*new Map\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && c=$(grep -cE \"\\.behaviorOf\\.clear\\(\\)\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts); [ \"$c\" -ge 2 ] || { echo \"behaviorOf.clear() count=$c (need >=2)\"; exit 1; }'",
+        "weight": 0.07,
+        "status": "pending"
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "spawnAgent stores the resolved contract on the per-child slot.behaviorOf via Behaviors.resolveContract lookup.",
+        "verify": "bash -c 'grep -qE \"Behaviors\\.resolveContract\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -qE \"slot\\.behaviorOf\\.set\\(child\\.id\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts'",
+        "weight": 0.06,
+        "status": "pending"
+      },
+      {
+        "id": "C5",
+        "category": "correctness",
+        "assertion": "completion-watcher computes behavior_violation via Behaviors.computeViolations using childDelivered + effectiveAbortReason AND attaches it (when violations non-empty) as the behavior_violation field on the parent notification InterAgentCommunication.",
+        "verify": "bash -c 'grep -qE \"Behaviors\\.computeViolations\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -qE \"behavior_violation\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -qE \"contract_version\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts'",
+        "weight": 0.08,
+        "status": "pending"
+      },
+      {
+        "id": "C6",
+        "category": "test_coverage",
+        "assertion": "control.test.ts adds D16 describe block with >= 6 it.live (or it.instance) tests referencing 'D16' or 'behavior contract' or 'behavior_violation'.",
+        "verify": "bash -c 'c=$(awk \"/describe\\\\(.*(D16|behavior contract|behavior_violation|behaviors)/,/^\\\\}\\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.test.ts | grep -cE \"it\\\\.(live|instance)\\\\(\"); [ \"$c\" -ge 6 ] || { echo \"D16 control.test.ts test count=$c (need >=6)\"; exit 1; }'",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C7",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C8",
+        "category": "correctness",
+        "assertion": "Full control.test.ts passes (no regressions to existing 100+ tests).",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/agent/control.test.ts 2>&1 | tee /tmp/wave8-t3-c8.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave8-t3-c8.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave8-t3-c8.log'",
+        "weight": 0.14,
+        "status": "pending"
+      },
+      {
+        "id": "C9",
+        "category": "convention",
+        "assertion": "Per-file 100% LINE coverage on control.ts via single-file run. Function coverage may stay at the pre-existing Schema.TaggedErrorClass baseline per GOTCHA schema-class-function-coverage; LINES MUST be 100.00.",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/agent/control.test.ts 2>&1 | tee /tmp/wave8-t3-c9.log | grep -E \"src/agent/control\\\\.ts\" | head -1 | awk -F\"|\" \"{gsub(/^[ \\t]+|[ \\t]+\\$/, \\\"\\\", \\$3); if (\\$3 == \\\"100.00\\\") exit 0; else { print \\\"line coverage = \\\" \\$3 \\\" (need 100.00)\\\"; exit 1 }}\"'",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C10",
+        "category": "convention",
+        "assertion": "Generator commit exists matching 'wave 8 T3' AND includes ONLY control.ts + control.test.ts.",
+        "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 8 T3\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat=200 --format= \"$sha\" | grep -qE \"packages/opencode/src/agent/control\\\\.(test\\\\.)?ts\"'",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C11",
+        "category": "convention",
+        "assertion": "No use of Effect.fork (only forkIn or forkScoped allowed per repo Effect v4 rules).",
+        "verify": "bash -c '! grep -E \"Effect\\\\.fork\\\\(\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts || { echo \"Effect.fork( found in control.ts — use forkIn(scope) per Effect v4 rules\"; exit 1; }'",
+        "weight": 0.05,
+        "status": "pending"
+      }
+    ]
+  },
+  {
+    "task_id": "T4",
+    "title": "Prose: multi-agent-subagent.txt 'Your behavior contract' section + prose/subagent-prompts.test.ts assertions",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts"
+    ],
+    "depends_on": ["T1"],
+    "pre_agreed_by_orchestrator": true,
+    "signed": false,
+    "commit_sha": null,
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "prose_quality",
+        "assertion": "multi-agent-subagent.txt contains a `## Your behavior contract` section AFTER the existing `## ABORT` section AND the section contains the substrings 'behavior_violation' AND 'declared failure modes' (or 'declared_failure_modes').",
+        "verify": "bash -c 'grep -qE \"^## Your behavior contract\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -qE \"behavior_violation\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -qiE \"declared (failure modes|_failure_modes)\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt'",
+        "weight": 0.15,
+        "status": "pending"
+      },
+      {
+        "id": "C2",
+        "category": "prose_quality",
+        "assertion": "The Your behavior contract section appears AFTER the ABORT section (file order — D16 prose lands at end of file per WAVE.md item 5).",
+        "verify": "bash -c 'abort_line=$(grep -n \"^## ABORT\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt | head -1 | cut -d: -f1); contract_line=$(grep -n \"^## Your behavior contract\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt | head -1 | cut -d: -f1); [ -n \"$abort_line\" ] && [ -n \"$contract_line\" ] && [ \"$contract_line\" -gt \"$abort_line\" ] || { echo \"ordering: abort=$abort_line contract=$contract_line\"; exit 1; }'",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C3",
+        "category": "prose_quality",
+        "assertion": "multi-agent-subagent.txt section mentions both 'general' and 'explore' agent_type variations (per WAVE.md item 2 — explore excludes approach_failed).",
+        "verify": "bash -c 'awk \"/^## Your behavior contract/,0\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt | grep -qE \"general\" && awk \"/^## Your behavior contract/,0\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt | grep -qE \"explore\"'",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C4",
+        "category": "test_coverage",
+        "assertion": "prose/subagent-prompts.test.ts extends with assertions checking the new section + required phrases in multi-agent-subagent.txt.",
+        "verify": "bash -c 'grep -qE \"Your behavior contract\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -qE \"behavior_violation\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts'",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C5",
+        "category": "convention",
+        "assertion": "NO other prompt file in packages/opencode/src/agent/prompt/ is modified (D16 prose lives in multi-agent-subagent.txt ONLY per PROMPT_SURFACES ownership map).",
+        "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 8 T4\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && ! git -C /Users/rohan/Documents/Personal/codemaxxxing show --name-only --format= \"$sha\" | grep -E \"packages/opencode/src/agent/prompt/\" | grep -v \"multi-agent-subagent.txt\" || { echo \"unexpected prompt file modified — D16 prose lives only in multi-agent-subagent.txt\"; exit 1; }'",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C6",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C7",
+        "category": "correctness",
+        "assertion": "Full prose/subagent-prompts.test.ts passes (no regression to existing 27+ tests + new D16 assertions).",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/prose/subagent-prompts.test.ts 2>&1 | tee /tmp/wave8-t4-c7.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave8-t4-c7.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave8-t4-c7.log'",
+        "weight": 0.15,
+        "status": "pending"
+      },
+      {
+        "id": "C8",
+        "category": "convention",
+        "assertion": "Generator commit exists matching 'wave 8 T4' AND includes ONLY the 2 contracted writes.",
+        "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 8 T4\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat=200 --format= \"$sha\" | grep -qE \"packages/opencode/src/agent/prompt/multi-agent-subagent\\\\.txt\" && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat=200 --format= \"$sha\" | grep -qE \"packages/opencode/test/prose/subagent-prompts\\\\.test\\\\.ts\"'",
+        "weight": 0.1,
+        "status": "pending"
+      }
+    ]
+  },
+  {
+    "task_id": "T5",
+    "title": "INV-D-24..26 integration invariants — validate D16 end-to-end",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts"
+    ],
+    "depends_on": ["T1", "T2", "T3"],
+    "pre_agreed_by_orchestrator": true,
+    "signed": false,
+    "commit_sha": null,
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "multi-agent-invariants.test.ts contains it.instance blocks named INV-D-24 / INV-D-25 / INV-D-26 inside the existing INTEGRATION_INVARIANTS describe block.",
+        "verify": "bash -c 'grep -qE \"INV-D-24-agent-type-behavior-contract-validated-at-spawn\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts && grep -qE \"INV-D-25-behavior-contract-version-bump-coexists-with-prior-version\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts && grep -qE \"INV-D-26-behavior-contract-violation-fails-orchestrated-wave-not-spawn\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts'",
+        "weight": 0.12,
+        "status": "pending"
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "INV-D-24 test exercises agent_type='general' + child that DOES NOT call send_message → parent notification's behavior_violation.contract_version='subagent_v1' AND violations[0].kind='missing_delivery'.",
+        "verify": "bash -c 'sed -n \"/INV-D-24-agent-type-behavior-contract-validated-at-spawn/,/it\\\\.instance/p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"agent_type.*general\" && sed -n \"/INV-D-24-agent-type-behavior-contract-validated-at-spawn/,/it\\\\.instance/p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"missing_delivery|behavior_violation\"'",
+        "weight": 0.08,
+        "status": "pending"
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "INV-D-25 test spawns TWO children — one with behavior_version='subagent_v1', one with behavior_version='subagent_v2' — under the same agent_type='general' AND asserts contract_version on each notification matches the spawn-time-selected version (no cross-contamination).",
+        "verify": "bash -c 'sed -n \"/INV-D-25-behavior-contract-version-bump-coexists/,/it\\\\.instance/p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"behavior_version.*subagent_v1\" && sed -n \"/INV-D-25-behavior-contract-version-bump-coexists/,/it\\\\.instance/p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"behavior_version.*subagent_v2\"'",
+        "weight": 0.08,
+        "status": "pending"
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "INV-D-26 test asserts spawnAgent returns success (LiveAgent) even when subsequent runtime violates contract — validation observed AFTER spawn via mailbox notification, not at spawn time. Uses Result wrapper to demonstrate spawn does not fail.",
+        "verify": "bash -c 'sed -n \"/INV-D-26-behavior-contract-violation-fails-orchestrated-wave-not-spawn/,/^  it\\\\.instance/p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"Result\\.isSuccess|expect.*thread_id|toBeDefined\"'",
+        "weight": 0.08,
+        "status": "pending"
+      },
+      {
+        "id": "C5",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C6",
+        "category": "correctness",
+        "assertion": "The 3 new INV-D-24..26 tests pass when filtered via -t 'INV-D-2'.",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t \"INV-D-2\" 2>&1 | tee /tmp/wave8-t5-c6.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave8-t5-c6.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave8-t5-c6.log'",
+        "weight": 0.15,
+        "status": "pending"
+      },
+      {
+        "id": "C7",
+        "category": "correctness",
+        "assertion": "Full multi-agent-invariants.test.ts passes (no regressions; new total = 40 + 3 = 43).",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave8-t5-c7.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave8-t5-c7.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave8-t5-c7.log'",
+        "weight": 0.15,
+        "status": "pending"
+      },
+      {
+        "id": "C8",
+        "category": "convention",
+        "assertion": "Generator commit exists matching 'wave 8 T5' AND touches ONLY multi-agent-invariants.test.ts.",
+        "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 8 T5\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat=200 --format= \"$sha\" | grep -qE \"test/integration/multi-agent-invariants\\\\.test\\\\.ts\"'",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C9",
+        "category": "correctness",
+        "assertion": "agent-pool / agent-spawn / agent-followup / agent-send / agent-link existing tool tests all continue to pass (regression check — additive behavior_violation field must not break existing assertions).",
+        "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-pool/agent-pool.test.ts src/tool/agent-spawn/agent-spawn.test.ts src/tool/agent-followup/agent-followup.test.ts src/tool/agent-send/agent-send.test.ts src/tool/agent-link/agent-link.test.ts 2>&1 | tee /tmp/wave8-t5-c9.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave8-t5-c9.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave8-t5-c9.log'",
+        "weight": 0.14,
+        "status": "pending"
+      }
+    ]
+  }
+]
