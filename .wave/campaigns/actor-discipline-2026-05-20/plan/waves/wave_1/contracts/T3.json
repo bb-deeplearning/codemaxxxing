@@ -1,6 +1,7 @@
 {
   "task_id": "T3",
   "signed": true,
+  "commit_sha": "7f4546ebc",
   "criteria": [
     {
       "id": "C1",
@@ -8,7 +9,8 @@
       "assertion": "general/anthropic.txt does NOT contain forbidden phrase 'your text response IS the deliverable'.",
       "verify": "! grep -q -F 'your text response IS the deliverable' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt",
       "weight": 0.06,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "exit=0 \u2014 phrase absent"
     },
     {
       "id": "C2",
@@ -16,7 +18,8 @@
       "assertion": "general/anthropic.txt does NOT contain forbidden phrase 'your response goes to the parent agent'.",
       "verify": "! grep -q -F 'your response goes to the parent agent' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt",
       "weight": 0.06,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "exit=0 \u2014 phrase absent; line 48 rewritten to 'See the delivery contract in your multi-agent coordination guidance. ...'"
     },
     {
       "id": "C3",
@@ -24,7 +27,8 @@
       "assertion": "general/anthropic.txt does NOT contain forbidden phrase 'the parent agent reads your output'.",
       "verify": "! grep -q -F 'the parent agent reads your output' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt",
       "weight": 0.06,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "exit=0 \u2014 phrase absent; line 1 'The parent agent \u2014 not the user \u2014 reads your output' removed"
     },
     {
       "id": "C4",
@@ -32,7 +36,8 @@
       "assertion": "general/anthropic.txt CONTAINS required phrase 'See the delivery contract in your multi-agent coordination guidance.' verbatim.",
       "verify": "grep -q -F 'See the delivery contract in your multi-agent coordination guidance.' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt",
       "weight": 0.08,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "exit=0 \u2014 phrase present in Response format section heading line"
     },
     {
       "id": "C5",
@@ -40,7 +45,8 @@
       "assertion": "general/anthropic.txt line 1 uses neutral framing containing 'report results back per the delivery contract'.",
       "verify": "head -n 1 /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt | grep -q -F 'report results back per the delivery contract'",
       "weight": 0.06,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "exit=0 \u2014 line 1 contains target substring"
     },
     {
       "id": "C6",
@@ -48,7 +54,8 @@
       "assertion": "general/anthropic.txt preserves '# Caveman output rules' section header.",
       "verify": "grep -q -F '# Caveman output rules' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt",
       "weight": 0.04,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "exit=0 \u2014 Caveman section preserved verbatim (lines 57-106 unchanged per diff)"
     },
     {
       "id": "C7",
@@ -56,7 +63,8 @@
       "assertion": "general/anthropic.txt preserves '# Code references' section header.",
       "verify": "grep -q -E '^# Code references' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt",
       "weight": 0.03,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "exit=0 \u2014 Code references section preserved (lowercase r)"
     },
     {
       "id": "C7b",
@@ -64,7 +72,8 @@
       "assertion": "general/gemini.txt preserves '# Code References' section header (uppercase R per baseline).",
       "verify": "grep -q -E '^# Code References' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt",
       "weight": 0.03,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "exit=0 \u2014 Code References section preserved (uppercase R)"
     },
     {
       "id": "C8",
@@ -72,7 +81,8 @@
       "assertion": "general/gemini.txt does NOT contain forbidden phrase 'your text response IS the deliverable'.",
       "verify": "! grep -q -F 'your text response IS the deliverable' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt",
       "weight": 0.06,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "exit=0 \u2014 phrase absent"
     },
     {
       "id": "C9",
@@ -80,7 +90,8 @@
       "assertion": "general/gemini.txt does NOT contain forbidden phrase 'your response goes to the parent agent'.",
       "verify": "! grep -q -F 'your response goes to the parent agent' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt",
       "weight": 0.06,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "exit=0 \u2014 phrase absent; line 110 rewritten"
     },
     {
       "id": "C10",
@@ -88,7 +99,8 @@
       "assertion": "general/gemini.txt does NOT contain forbidden phrase 'the parent agent reads your output'.",
       "verify": "! grep -q -F 'the parent agent reads your output' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt",
       "weight": 0.06,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "exit=0 \u2014 phrase absent; line 1 'The parent agent \u2014 not the user \u2014 reads your output' removed"
     },
     {
       "id": "C11",
@@ -96,7 +108,8 @@
       "assertion": "general/gemini.txt CONTAINS required phrase 'See the delivery contract in your multi-agent coordination guidance.' verbatim (IDENTICAL wording to anthropic.txt).",
       "verify": "grep -q -F 'See the delivery contract in your multi-agent coordination guidance.' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt",
       "weight": 0.08,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "exit=0 \u2014 phrase present in Response Format section heading line"
     },
     {
       "id": "C12",
@@ -104,7 +117,8 @@
       "assertion": "general/gemini.txt line 1 contains 'report results back per the delivery contract'.",
       "verify": "head -n 1 /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt | grep -q -F 'report results back per the delivery contract'",
       "weight": 0.06,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "exit=0 \u2014 line 1 contains target substring"
     },
     {
       "id": "C13",
@@ -112,7 +126,8 @@
       "assertion": "Both files have IDENTICAL line-1 neutral-framing sentence (parity: single regex matches both).",
       "verify": "diff <(head -n 1 /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt | grep -o 'You receive tasks from a parent agent, execute them, and report results back per the delivery contract (see multi-agent coordination guidance in your capability hints).') <(head -n 1 /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt | grep -o 'You receive tasks from a parent agent, execute them, and report results back per the delivery contract (see multi-agent coordination guidance in your capability hints).')",
       "weight": 0.04,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "diff exit=0 \u2014 both files contain identical sentence"
     },
     {
       "id": "C14a",
@@ -120,7 +135,8 @@
       "assertion": "anthropic.txt Response format section preserves 'No emojis.', 'file_path:line_number', and 'relevant code snippets'.",
       "verify": "f=/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt; grep -q -F 'No emojis.' $f && grep -q -F 'file_path:line_number' $f && grep -q -F 'relevant code snippets' $f",
       "weight": 0.02,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "exit=0 \u2014 all three substrings present"
     },
     {
       "id": "C14b",
@@ -128,7 +144,8 @@
       "assertion": "gemini.txt Response Format section preserves 'No emojis.', 'file_path:line_number', and 'relevant code snippets'.",
       "verify": "f=/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt; grep -q -F 'No emojis.' $f && grep -q -F 'file_path:line_number' $f && grep -q -F 'relevant code snippets' $f",
       "weight": 0.02,
-      "status": "pending"
+      "status": "passed",
+      "evidence": "exit=0 \u2014 all three substrings present (verified individually: 'No emojis.' line 117, 'file_path:line_number' line 113, 'relevant code snippets' line 114)"
     }
   ]
 }
