@@ -1,0 +1,89 @@
+{
+  "task_id": "T6",
+  "title": "Add INV-D-06 + INV-D-08 to test/integration/multi-agent-invariants.test.ts",
+  "writes": [
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts"
+  ],
+  "status": "in_progress",
+  "criteria": [
+    {
+      "id": "C2",
+      "category": "correctness",
+      "assertion": "INV-D-06 it.instance block exists with EXACT slug 'INV-D-06-send-message-is-unicast-not-broadcast'.",
+      "verify": "grep -q -F 'it.instance(\"INV-D-06-send-message-is-unicast-not-broadcast\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+      "weight": 0.05,
+      "status": "pending"
+    },
+    {
+      "id": "C3",
+      "category": "correctness",
+      "assertion": "INV-D-08 it.instance block exists with EXACT slug 'INV-D-08-coordinator-fan-out-delivers-single-consolidated-message'.",
+      "verify": "grep -q -F 'it.instance(\"INV-D-08-coordinator-fan-out-delivers-single-consolidated-message\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+      "weight": 0.05,
+      "status": "pending"
+    },
+    {
+      "id": "C4",
+      "category": "correctness",
+      "assertion": "INV-D-06 body spawns 'alice' and 'bob' AND asserts bob's mailbox empty (toHaveLength(0)) AND alice's mailbox contains payload 'for alice only' via toBe/toContain/=== content check.",
+      "verify": "awk '/it\\.instance\\(\"INV-D-06-send-message-is-unicast-not-broadcast\"/,/^  \\),$/' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts > /tmp/t6-d06.txt && test -s /tmp/t6-d06.txt && grep -q -F '\"alice\"' /tmp/t6-d06.txt && grep -q -F '\"bob\"' /tmp/t6-d06.txt && grep -q -E 'toHaveLength\\(0\\)|toEqual\\(\\[\\]\\)' /tmp/t6-d06.txt && grep -E -q '(toBe|toContain|toEqual)\\([^)]*for alice only|content[^=]*=[^=].*for alice only|content.*toBe.*for alice only' /tmp/t6-d06.txt",
+      "weight": 0.1,
+      "status": "pending"
+    },
+    {
+      "id": "C5",
+      "category": "correctness",
+      "assertion": "INV-D-08 body: root's drained mailbox has toHaveLength(1); the one message's author resolves to /root/coordinator; the body contains BOTH grandchildren's payload tokens 'finding-a' AND 'finding-b'.",
+      "verify": "awk '/it\\.instance\\(\"INV-D-08-coordinator-fan-out-delivers-single-consolidated-message\"/,/^  \\),$/' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts > /tmp/t6-d08.txt && test -s /tmp/t6-d08.txt && grep -q -E 'toHaveLength\\(1\\)' /tmp/t6-d08.txt && grep -q -E '/root/coordinator|\"coordinator\"' /tmp/t6-d08.txt && grep -q -F 'finding-a' /tmp/t6-d08.txt && grep -q -F 'finding-b' /tmp/t6-d08.txt",
+      "weight": 0.1,
+      "status": "pending"
+    },
+    {
+      "id": "C6",
+      "category": "convention",
+      "assertion": "No new top-level imports added by this commit; no use of Effect.fork or Effect.forkDaemon (Effect v4 disallows; use forkScoped/forkIn).",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing && git diff HEAD^ HEAD -- packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -E '^\\+import ' | wc -l | xargs -I{} test {} -eq 0 && ! (cd /Users/rohan/Documents/Personal/codemaxxxing && git diff HEAD^ HEAD -- packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -E '^\\+.*Effect\\.(fork|forkDaemon)\\b' | grep -v -E 'forkScoped|forkIn' | grep -q .)",
+      "weight": 0.05,
+      "status": "pending"
+    },
+    {
+      "id": "C7",
+      "category": "integration",
+      "assertion": "INV-D-06 runs green: at least 1 pass, 0 fail. Filter actually matches a test.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-06-send-message-is-unicast-not-broadcast' 2>&1 | tee /tmp/t6-c7.log && grep -E '[1-9][0-9]* pass' /tmp/t6-c7.log && ! grep -E '[1-9][0-9]* fail' /tmp/t6-c7.log",
+      "weight": 0.15,
+      "status": "pending"
+    },
+    {
+      "id": "C8",
+      "category": "integration",
+      "assertion": "INV-D-08 runs green: at least 1 pass, 0 fail. Filter actually matches a test.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-08-coordinator-fan-out-delivers-single-consolidated-message' 2>&1 | tee /tmp/t6-c8.log && grep -E '[1-9][0-9]* pass' /tmp/t6-c8.log && ! grep -E '[1-9][0-9]* fail' /tmp/t6-c8.log",
+      "weight": 0.15,
+      "status": "pending"
+    },
+    {
+      "id": "C9",
+      "category": "bc_preservation",
+      "assertion": "Full multi-agent-invariants.test.ts runs green: >= 1 pass, 0 fail (regression).",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/t6-c9.log && grep -E '[1-9][0-9]* pass' /tmp/t6-c9.log && ! grep -E '[1-9][0-9]* fail' /tmp/t6-c9.log",
+      "weight": 0.25,
+      "status": "pending"
+    },
+    {
+      "id": "C10",
+      "category": "convention",
+      "assertion": "`bun typecheck` from packages/opencode passes cleanly.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+      "weight": 0.1,
+      "status": "pending"
+    }
+  ],
+  "weight_sum": 1.0,
+  "notes": [
+    "Grandchildren payloads: 'finding-a' and 'finding-b' (locked at build time).",
+    "INV-D-08 closes grandchildren with callerID=coordinator (strict ancestor) to suppress completion notifications, ensuring coordinator drains only the two explicit findings.",
+    "INV-D-08 closes coordinator with callerID=root.id (strict ancestor) to suppress its completion notification, ensuring root sees exactly ONE consolidated message.",
+    "C9 known flake: pty-cleanup-on-parent-abort is timing-sensitive (PTY child registration race); passes on retry. Re-grade C9 if first run flakes."
+  ]
+}

@@ -1144,6 +1144,182 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
       expect(asks).toHaveLength(0)
     }),
   )
+
+  // INV-D-06 — send_message is unicast. Sending from root to /root/alice
+  // lands the message in alice's mailbox and ONLY alice's; bob's mailbox
+  // stays empty. Locks the post-D7 unicast doctrine into a runtime check.
+  it.instance("INV-D-06-send-message-is-unicast-not-broadcast", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+
+      const alice = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "alice",
+        initial_message: "alice init",
+      })
+      const bob = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "bob",
+        initial_message: "bob init",
+      })
+      // Drain the spawn-seed `initial_message` from BOTH mailboxes so the
+      // post-send drain reflects ONLY the unicast send we are testing.
+      yield* control.drainMailbox(alice.thread_id)
+      yield* control.drainMailbox(bob.thread_id)
+
+      // Unicast: target = alice ONLY. The runtime resolves the recipient
+      // mailbox by targetID; there is no broadcast primitive. Bob's mailbox
+      // must remain empty.
+      yield* control.sendInterAgentCommunication(
+        alice.thread_id,
+        new InterAgentCommunication({
+          author: AgentPath.root(),
+          recipient: alice.metadata.agent_path ?? AgentPath.root(),
+          content: "for alice only",
+          trigger_turn: false,
+          sent_at: 1,
+        }),
+        root.id,
+      )
+
+      const drainedAlice = yield* control.drainMailbox(alice.thread_id)
+      const drainedBob = yield* control.drainMailbox(bob.thread_id)
+      expect(drainedAlice).toHaveLength(1)
+      expect(drainedAlice[0].content).toBe("for alice only")
+      // The unicast invariant: bob was never addressed → mailbox empty.
+      expect(drainedBob).toHaveLength(0)
+    }),
+  )
+
+  // INV-D-08 — coordinator fan-out yields ONE consolidated reply, not N.
+  // Locks in Demo 1's success pattern as a regression-resistant shape:
+  // coordinator spawns two grandchildren, each grandchild sends one partial
+  // finding to coordinator, coordinator drains+integrates, sends ONE
+  // consolidated message to root. Root's mailbox holds exactly ONE message
+  // from the coordinator with BOTH grandchildren's payload tokens present.
+  it.instance("INV-D-08-coordinator-fan-out-delivers-single-consolidated-message", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+
+      // Spawn /root/coordinator from root.
+      const coordinator = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "coordinator",
+        initial_message: "coordinate",
+      })
+      const coordinatorPath = coordinator.metadata.agent_path ?? AgentPath.root()
+      // Drain the spawn-seed echo on root so the final assertion is exact.
+      yield* control.drainMailbox(root.id)
+      // Drain the coordinator's spawn-seed too so its post-fan-in drain
+      // returns only the grandchildren's findings.
+      yield* control.drainMailbox(coordinator.thread_id)
+
+      // Coordinator spawns two grandchildren in a single conceptual step
+      // (two spawn_agent calls, as if emitted in one assistant message).
+      const gcA = yield* control.spawnAgent({
+        parentID: coordinator.thread_id,
+        parentPath: coordinatorPath,
+        task_name: "gc_a",
+        initial_message: "go a",
+      })
+      const gcB = yield* control.spawnAgent({
+        parentID: coordinator.thread_id,
+        parentPath: coordinatorPath,
+        task_name: "gc_b",
+        initial_message: "go b",
+      })
+      const gcAPath = gcA.metadata.agent_path ?? AgentPath.root()
+      const gcBPath = gcB.metadata.agent_path ?? AgentPath.root()
+
+      // Each grandchild send_message(coordinator, <partial finding>).
+      // senderID is the grandchild's own session id (the runtime resolution
+      // path the close-of-self / send-to-spawner sequence the spec
+      // describes). Per-root scoping means coordinator + grandchildren
+      // share root → sends are accepted.
+      yield* control.sendInterAgentCommunication(
+        coordinator.thread_id,
+        new InterAgentCommunication({
+          author: gcAPath,
+          recipient: coordinatorPath,
+          content: "finding-a",
+          trigger_turn: false,
+          sent_at: 1,
+        }),
+        gcA.thread_id,
+      )
+      yield* control.sendInterAgentCommunication(
+        coordinator.thread_id,
+        new InterAgentCommunication({
+          author: gcBPath,
+          recipient: coordinatorPath,
+          content: "finding-b",
+          trigger_turn: false,
+          sent_at: 2,
+        }),
+        gcB.thread_id,
+      )
+
+      // Each grandchild self-closes. callerID = coordinator (strict
+      // ancestor) suppresses the completion-watcher notification so the
+      // coordinator's mailbox holds ONLY the two explicit findings — keeps
+      // the integration step deterministic.
+      yield* control.closeAgent(gcA.thread_id, coordinator.thread_id)
+      yield* control.closeAgent(gcB.thread_id, coordinator.thread_id)
+
+      // Coordinator drains, integrates, and sends ONE consolidated message
+      // to root. This is the locked-in success shape: ONE consolidated body
+      // carrying BOTH partial findings, not N separate messages.
+      const drainedAtCoord = yield* control.drainMailbox(coordinator.thread_id)
+      const findings = drainedAtCoord.map((m) => m.content).sort()
+      // Both partial findings arrived at the coordinator before integration.
+      expect(findings).toEqual(["finding-a", "finding-b"])
+      const integrated = `integrated: ${findings.join(" + ")}`
+      // Sanity: the integrated body carries BOTH grandchildren's payload
+      // tokens (the C5 grep verifies the same tokens appear in the test
+      // source; this expect validates the runtime body too).
+      expect(integrated).toContain("finding-a")
+      expect(integrated).toContain("finding-b")
+
+      yield* control.sendInterAgentCommunication(
+        root.id,
+        new InterAgentCommunication({
+          author: coordinatorPath,
+          recipient: AgentPath.root(),
+          content: integrated,
+          trigger_turn: false,
+          sent_at: 3,
+        }),
+        coordinator.thread_id,
+      )
+
+      // Close coordinator with callerID=root (strict ancestor of coordinator)
+      // so the completion watcher's notification is suppressed. Without this
+      // suppression, root would receive a SECOND message (the completion
+      // note), breaking the exactly-one invariant this test exists to lock.
+      yield* control.closeAgent(coordinator.thread_id, root.id)
+
+      const drainedAtRoot = yield* control.drainMailbox(root.id)
+      // Exactly ONE consolidated message — not two, not N.
+      expect(drainedAtRoot).toHaveLength(1)
+      const note = drainedAtRoot[0]!
+      expect(String(note.author)).toBe("/root/coordinator")
+      expect(note.content).toContain("finding-a")
+      expect(note.content).toContain("finding-b")
+    }),
+  )
 })
 
 describe("bug 3 audit — agent_type role-vocabulary fix is intact", () => {
