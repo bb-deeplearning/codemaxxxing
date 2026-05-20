@@ -12,6 +12,7 @@ import { ToolRegistry } from "@/tool/registry"
 import type { Permission } from "@/permission"
 import * as Tool from "../tool"
 import { AgentFollowupTool, PermissionKey } from "./agent-followup"
+import { InterAgentCommunication } from "@/agent/inter-agent-communication"
 import { disposeAllInstances, provideTmpdirInstance } from "../../../test/fixture/fixture"
 import { testEffect } from "../../../test/lib/effect"
 
@@ -366,6 +367,118 @@ describe("tool.followup_task", () => {
         const drained = yield* control.drainMailbox(child.thread_id)
         expect(drained).toHaveLength(1)
         expect(drained[0]?.correlation_id).toBe("req-456")
+      }),
+    ),
+  )
+
+  // Wave 7 (D15) — bounded-mailbox tests. followup_task routes through the
+  // user-send path (NOT the system path) so a full target mailbox surfaces
+  // mailbox_full just like send_message. The wording differs to remind the
+  // model that followup_task does NOT bypass backpressure.
+  it.live("mailbox_full case returns the new structured tag (no mocks)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const root = yield* sessions.create({ title: "root" })
+        yield* control.registerSessionRoot(root.id)
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "bounded_followup",
+          initial_message: "init",
+          mailbox_capacity: 2,
+        })
+        yield* control.drainMailbox(child.thread_id)
+        const childPath = child.metadata.agent_path ?? AgentPath.root()
+        for (let i = 0; i < 2; i++) {
+          yield* control.sendInterAgentCommunication(
+            child.thread_id,
+            new InterAgentCommunication({
+              author: AgentPath.root(),
+              recipient: childPath,
+              content: `pre${i}`,
+              trigger_turn: false,
+              sent_at: i,
+            }),
+            root.id,
+          )
+        }
+
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+        const result = yield* def.execute(
+          { target: "bounded_followup", message: "overflow" },
+          ctx,
+        )
+
+        expect(result.metadata.error).toBe("mailbox_full")
+        expect(result.metadata.retry_after_ms).toBe(250)
+        expect(result.metadata.target).toBe("bounded_followup")
+        expect(result.metadata.target_session_id).toBe(child.thread_id)
+        expect(result.output.toLowerCase()).toContain("mailbox full")
+        // Wording reminder — followup_task does NOT bypass backpressure.
+        expect(result.output).toContain("does NOT bypass backpressure")
+        // Overflow did NOT land.
+        const drained = yield* control.drainMailbox(child.thread_id)
+        expect(drained).toHaveLength(2)
+      }),
+    ),
+  )
+
+  it.live("root_target rejection is preserved (regression-resistant)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const root = yield* sessions.create({ title: "root" })
+        yield* control.registerSessionRoot(root.id)
+        yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "any",
+          initial_message: "init",
+        })
+
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+        const result = yield* def.execute(
+          { target: "/root", message: "go" },
+          ctx,
+        )
+        expect(result.metadata.error).toBe("root_target")
+      }),
+    ),
+  )
+
+  it.live("happy path still returns queued=true after Effect.orDie → Effect.result migration", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const root = yield* sessions.create({ title: "root" })
+        yield* control.registerSessionRoot(root.id)
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "regression_worker",
+          initial_message: "init",
+          mailbox_capacity: 4,
+        })
+        yield* control.drainMailbox(child.thread_id)
+
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+        const result = yield* def.execute(
+          { target: "regression_worker", message: "go" },
+          ctx,
+        )
+        expect(result.metadata.queued).toBe(true)
+        expect(result.metadata.trigger_turn).toBe(true)
+        expect(result.metadata.error).toBeUndefined()
       }),
     ),
   )

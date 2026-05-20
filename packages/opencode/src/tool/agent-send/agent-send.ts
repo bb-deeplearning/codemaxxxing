@@ -124,14 +124,29 @@ export const AgentSendTool = Tool.define(
                 control.sendInterAgentCommunication(targetSessionID, comm, ctx.sessionID),
               )
               if (Result.isFailure(sendResult)) {
+                // Wave 7 (D15) — bounded mailbox surfaces a structured
+                // mailbox_full retry hint instead of the generic send_failed
+                // shape. The model can read retry_after_ms and either
+                // re-queue or switch to followup_task (which wakes the
+                // recipient to drain). 250ms is a starting hint per
+                // WAVE.md gotcha 4 — tune from Wave 9 observability.
+                // The non-MailboxFullError branch surfaces AgentNotFoundError
+                // as `error: "send_failed"` (preserved from the pre-D15
+                // shape so existing model-facing parsers don't regress).
+                const isFull = sendResult.failure._tag === "MailboxFullError"
+                const retry_after_ms = 250
+                const baseMeta = {
+                  target: params.target,
+                  target_session_id: targetSessionID,
+                }
                 return {
                   title: `send_message ${params.target}`,
-                  metadata: {
-                    target: params.target,
-                    target_session_id: targetSessionID,
-                    error: "send_failed",
-                  },
-                  output: sendResult.failure.message,
+                  metadata: isFull
+                    ? { ...baseMeta, error: "mailbox_full", retry_after_ms }
+                    : { ...baseMeta, error: "send_failed" },
+                  output: isFull
+                    ? `Mailbox full for ${params.target}; retry after ~${retry_after_ms}ms or use followup_task to wake recipient to drain`
+                    : sendResult.failure.message,
                 }
               }
 

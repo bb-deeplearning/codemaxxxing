@@ -13,6 +13,7 @@ import type { Permission } from "@/permission"
 import * as Tool from "../tool"
 import { disposeAllInstances, provideTmpdirInstance } from "../../../test/fixture/fixture"
 import { testEffect } from "../../../test/lib/effect"
+import { InterAgentCommunication } from "@/agent/inter-agent-communication"
 import { AgentSendTool, PermissionKey } from "./agent-send"
 
 afterEach(async () => {
@@ -448,6 +449,107 @@ describe("tool.send_message", () => {
         const drained = yield* control.drainMailbox(child.thread_id)
         expect(drained).toHaveLength(1)
         expect(drained[0]?.correlation_id).toBe("req-123")
+      }),
+    ),
+  )
+
+  // Wave 7 (D15) — bounded-mailbox tests. End-to-end: spawn a child with
+  // a small mailbox_capacity, fill it via direct sendInterAgentCommunication
+  // calls, then drive the tool's execute to force the 33rd (== capacity+1)
+  // send through agent-send. The tool MUST surface the structured
+  // mailbox_full output shape — NOT throw.
+  it.live("mailbox_full case returns structured error tag + retry_after_ms (no mocks)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "bounded_send",
+          initial_message: "init",
+          mailbox_capacity: 2,
+        })
+        // Drain seed; then fill to capacity.
+        yield* control.drainMailbox(child.thread_id)
+        const childPath = child.metadata.agent_path ?? AgentPath.root()
+        for (let i = 0; i < 2; i++) {
+          yield* control.sendInterAgentCommunication(
+            child.thread_id,
+            new InterAgentCommunication({
+              author: AgentPath.root(),
+              recipient: childPath,
+              content: `pre${i}`,
+              trigger_turn: false,
+              sent_at: i,
+            }),
+            root.id,
+          )
+        }
+
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+        const result = yield* def.execute(
+          { target: "bounded_send", message: "overflow" },
+          ctx,
+        )
+
+        expect(result.metadata.error).toBe("mailbox_full")
+        expect(result.metadata.retry_after_ms).toBe(250)
+        expect(result.metadata.target).toBe("bounded_send")
+        expect(result.metadata.target_session_id).toBe(child.thread_id)
+        expect(result.output.toLowerCase()).toContain("mailbox full")
+        expect(result.output).toContain("followup_task")
+        // Capacity unchanged — overflow did NOT land in queue.
+        const drained = yield* control.drainMailbox(child.thread_id)
+        expect(drained).toHaveLength(2)
+      }),
+    ),
+  )
+
+  it.live("mailbox_full does NOT regress the queued=true success branch (sanity)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "regression_target",
+          initial_message: "init",
+          mailbox_capacity: 4,
+        })
+        yield* control.drainMailbox(child.thread_id)
+
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+        const result = yield* def.execute(
+          { target: "regression_target", message: "ok" },
+          ctx,
+        )
+        expect(result.metadata.queued).toBe(true)
+        expect(result.metadata.error).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("target_not_found case still returns the resolve-side error (regression-resistant)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+        // The previous unknown-target test asserted output text; this one
+        // pins the metadata.error tag so an accidental switch to the
+        // mailbox_full / send_failed shapes downstream is caught.
+        const result = yield* def.execute(
+          { target: "phantom", message: "hi" },
+          ctx,
+        )
+        expect(result.metadata.error).toBe("target_not_found")
       }),
     ),
   )

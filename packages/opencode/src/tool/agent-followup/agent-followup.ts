@@ -110,13 +110,14 @@ export const AgentFollowupTool = Tool.define(
 
               // 5. Build and send. trigger_turn is true by definition — that's
               //    the entire point of followup_task vs send_message.
-              //    sendInterAgentCommunication can only fail with
-              //    AgentNotFoundError (missing mailbox). At this point we've
-              //    just resolved the path against the live registry; the
-              //    mailbox cannot disappear between those two synchronous
-              //    steps, so the typed error is unreachable. We fold it into
-              //    a defect via Effect.orDie rather than carrying a dead
-              //    branch — the underlying invariant is in AgentControl.
+              //    Wave 7 (D15) — sendInterAgentCommunication can now fail
+              //    with MailboxFullError (bounded mailbox) in addition to
+              //    AgentNotFoundError. Both branches surface as model-
+              //    recoverable structured errors. AgentNotFoundError is
+              //    defensive — we resolved the path against the live
+              //    registry one step ago, so reaching it implies a race
+              //    with mailbox teardown (e.g. root deletion) — we surface
+              //    `send_failed` for symmetry with agent-send.
               const comm = new InterAgentCommunication({
                 author: currentPath,
                 recipient: targetPath ?? AgentPath.root(),
@@ -126,9 +127,35 @@ export const AgentFollowupTool = Tool.define(
                 correlation_id: params.correlation_id,
               })
 
-              yield* control
-                .sendInterAgentCommunication(targetSessionID, comm, ctx.sessionID)
-                .pipe(Effect.orDie)
+              const sendResult = yield* Effect.result(
+                control.sendInterAgentCommunication(targetSessionID, comm, ctx.sessionID),
+              )
+              if (Result.isFailure(sendResult)) {
+                // Bounded-mailbox backpressure — followup_task does NOT
+                // bypass the cap (it routes through the user-send path
+                // like send_message). The retry hint is the same 250ms
+                // starting value per WAVE.md gotcha 4; wording is
+                // adjusted to clarify followup_task isn't a way around
+                // backpressure. The non-MailboxFullError branch surfaces
+                // AgentNotFoundError as `error: "send_failed"` — defensive
+                // surface exposed by the Effect.orDie → Effect.result
+                // migration (mirrors agent-send for consistency).
+                const isFull = sendResult.failure._tag === "MailboxFullError"
+                const retry_after_ms = 250
+                const baseMeta = {
+                  target: params.target,
+                  target_session_id: targetSessionID,
+                }
+                return {
+                  title: `followup_task ${params.target}`,
+                  metadata: isFull
+                    ? { ...baseMeta, error: "mailbox_full", retry_after_ms }
+                    : { ...baseMeta, error: "send_failed" },
+                  output: isFull
+                    ? `Mailbox full for ${params.target}; retry after ~${retry_after_ms}ms (followup_task does NOT bypass backpressure)`
+                    : sendResult.failure.message,
+                }
+              }
 
               return {
                 title: `followup_task ${params.target}`,
