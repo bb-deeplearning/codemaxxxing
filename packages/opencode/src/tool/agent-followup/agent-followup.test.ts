@@ -339,4 +339,34 @@ describe("tool.followup_task", () => {
       }),
     ),
   )
+
+  it.live("correlation_id flows through to the queued InterAgentCommunication when supplied", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const root = yield* sessions.create({ title: "root" })
+        yield* control.registerSessionRoot(root.id)
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "corr_target",
+          initial_message: "init",
+        })
+        yield* control.drainMailbox(child.thread_id)
+
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+        yield* def.execute(
+          { target: "corr_target", message: "do it", correlation_id: "req-456" },
+          ctx,
+        )
+
+        const drained = yield* control.drainMailbox(child.thread_id)
+        expect(drained).toHaveLength(1)
+        expect(drained[0]?.correlation_id).toBe("req-456")
+      }),
+    ),
+  )
 })

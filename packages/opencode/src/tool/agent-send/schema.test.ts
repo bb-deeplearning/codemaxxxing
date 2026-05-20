@@ -51,6 +51,21 @@ describe("send_message parameters", () => {
   test("rejects non-string message", () => {
     expect(accepts(Parameters, { target: "worker", message: 42 })).toBe(false)
   })
+
+  test("accepts an optional correlation_id when supplied", () => {
+    expect(parse(Parameters, { target: "worker", message: "hi", correlation_id: "req-1" })).toEqual({
+      target: "worker",
+      message: "hi",
+      correlation_id: "req-1",
+    })
+  })
+
+  test("correlation_id is OPTIONAL (omitting still parses)", () => {
+    expect(parse(Parameters, { target: "worker", message: "hi" })).toEqual({
+      target: "worker",
+      message: "hi",
+    })
+  })
 })
 
 describe("send_message description teaches the operational decisions", () => {

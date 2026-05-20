@@ -34,3 +34,7 @@ work done, spawn an agent or do it yourself.
 Target resolution matches every other multi-agent tool: a bare task name
 ("worker_b") resolves relative to your current path; a canonical path
 ("/root/explorers/worker_b") is absolute. Either works.
+
+## correlation_id (optional)
+
+Set when you want the recipient's `wait_for_reply` call to wake ONLY on your matching reply. The receiver passes the same correlation_id to `wait_for_reply` to target the request. Omit for plain FYI sends.

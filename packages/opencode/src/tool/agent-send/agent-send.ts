@@ -39,6 +39,10 @@ export const Parameters = Schema.Struct({
     description:
       "Plain text body. Must contain at least one non-whitespace character. The recipient sees this as a message from you (no need to identify yourself in the body) at the start of their next turn.",
   }),
+  correlation_id: Schema.optional(Schema.String).annotate({
+    description:
+      "Optional correlation id pairing this message with a future reply. When set, the recipient's `wait_for_reply` can target this id to wake only on the matching response. Omit for plain unicast.",
+  }),
 })
 
 export type Parameters = Schema.Schema.Type<typeof Parameters>
@@ -113,6 +117,7 @@ export const AgentSendTool = Tool.define(
                 content: params.message,
                 trigger_turn: false,
                 sent_at: Date.now(),
+                correlation_id: params.correlation_id,
               })
 
               const sendResult = yield* Effect.result(

@@ -423,6 +423,34 @@ describe("tool.send_message", () => {
       }),
     ),
   )
+
+  it.live("correlation_id flows through to the queued InterAgentCommunication when supplied", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "corr_target",
+          initial_message: "init",
+        })
+        yield* control.drainMailbox(child.thread_id)
+
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+        yield* def.execute(
+          { target: "corr_target", message: "hello", correlation_id: "req-123" },
+          ctx,
+        )
+
+        const drained = yield* control.drainMailbox(child.thread_id)
+        expect(drained).toHaveLength(1)
+        expect(drained[0]?.correlation_id).toBe("req-123")
+      }),
+    ),
+  )
 })
 
 // Sanity guard — referencing Result in import section keeps lint happy if the

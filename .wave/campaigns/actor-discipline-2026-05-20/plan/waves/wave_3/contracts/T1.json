@@ -1,0 +1,58 @@
+{
+  "task_id": "T1",
+  "title": "InterAgentCommunication schema: add optional correlation_id field",
+  "writes": [
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts"
+  ],
+  "depends_on": [],
+  "pre_agreed_by_orchestrator": true,
+  "signed": true,
+  "commit_sha": "0facbc871fb72d495e46e5fbac0a6336499224ae",
+  "criteria": [
+    {
+      "id": "C1",
+      "category": "correctness",
+      "assertion": "inter-agent-communication.ts contains a `correlation_id: Schema.optional(Schema.String)` field declaration.",
+      "verify": "grep -E 'correlation_id:\\s*Schema\\.optional\\(Schema\\.String\\)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts",
+      "weight": 0.25,
+      "status": "passed",
+      "evidence": "exit 0; match: `  correlation_id: Schema.optional(Schema.String),`"
+    },
+    {
+      "id": "C2",
+      "category": "correctness",
+      "assertion": "File contains a comment attributing the field to D10 (Wave 3 ask pattern) — substring 'D10' or 'correlation' present in a comment above the field.",
+      "verify": "grep -i -E '(D10|ask pattern|correlation_id pairs)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "exit 0; matches D10 + 'ask pattern' + 'correlation_id pairs' in comment block above field."
+    },
+    {
+      "id": "C3",
+      "category": "convention",
+      "assertion": "bun typecheck passes from packages/opencode after the schema change.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+      "weight": 0.2,
+      "status": "passed",
+      "evidence": "exit 0; tsgo --noEmit clean."
+    },
+    {
+      "id": "C4",
+      "category": "bc_preservation",
+      "assertion": "Pre-existing agent-send / agent-followup / agent-wait / control tests still pass — the additive optional field does not break callers that omit correlation_id.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-send/agent-send.test.ts src/tool/agent-followup/agent-followup.test.ts src/tool/agent-wait/agent-wait.test.ts 2>&1 | tee /tmp/wave3-t1-c4.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t1-c4.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t1-c4.log",
+      "weight": 0.3,
+      "status": "passed",
+      "evidence": "exit 0; 34 pass / 0 fail across 3 files, 109 expect() calls."
+    },
+    {
+      "id": "C5",
+      "category": "bc_preservation",
+      "assertion": "Existing multi-agent-invariants suite stays green (25/0).",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave3-t1-c5.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t1-c5.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t1-c5.log",
+      "weight": 0.2,
+      "status": "passed",
+      "evidence": "exit 0; 25 pass / 0 fail, 105 expect() calls."
+    }
+  ]
+}

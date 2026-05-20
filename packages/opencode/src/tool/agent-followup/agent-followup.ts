@@ -29,6 +29,10 @@ export const Parameters = Schema.Struct({
     description:
       "The follow-up assignment for the recipient. They will receive this as the user input for their next turn and act on it. Be concrete: state what you want done and what you expect back. Empty / whitespace-only messages are rejected.",
   }),
+  correlation_id: Schema.optional(Schema.String).annotate({
+    description:
+      "Optional correlation id pairing this followup with a future reply. When set, the recipient's `wait_for_reply` can target this id to wake only on the matching response. Omit for plain assignments.",
+  }),
 })
 
 export type Parameters = Schema.Schema.Type<typeof Parameters>
@@ -119,6 +123,7 @@ export const AgentFollowupTool = Tool.define(
                 content: params.message,
                 trigger_turn: true,
                 sent_at: Date.now(),
+                correlation_id: params.correlation_id,
               })
 
               yield* control

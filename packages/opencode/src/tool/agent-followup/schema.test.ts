@@ -52,6 +52,21 @@ describe("followup_task parameters", () => {
   test("rejects non-string message", () => {
     expect(accepts(Parameters, { target: "worker", message: 42 })).toBe(false)
   })
+
+  test("accepts an optional correlation_id when supplied", () => {
+    expect(parse(Parameters, { target: "worker", message: "do next", correlation_id: "req-1" })).toEqual({
+      target: "worker",
+      message: "do next",
+      correlation_id: "req-1",
+    })
+  })
+
+  test("correlation_id is OPTIONAL (omitting still parses)", () => {
+    expect(parse(Parameters, { target: "worker", message: "do next" })).toEqual({
+      target: "worker",
+      message: "do next",
+    })
+  })
 })
 
 describe("followup_task description teaches the operational decisions", () => {
