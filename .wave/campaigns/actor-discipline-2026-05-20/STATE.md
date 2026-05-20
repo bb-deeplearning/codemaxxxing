@@ -27,7 +27,7 @@ last_updated: 2026-05-20
 
 | Wave | Status   | Session | Commit | Notes |
 |------|----------|---------|--------|-------|
-| 0 | complete | ses_1bb7ad697ffepCG10H5HGsjNxr | TBD | Bootstrap: D5 extractor narrowing + safety net, D2 canonical-path injection, D3 self-close target optional, D9 already_terminated/path_invalid split. D6 root-hold deferred per WAVE.md §6 explicit allowance. INV-D-01..05, INV-D-07 green. Per-file 100% line coverage on control.ts/agent-close.ts/system.ts. |
+| 0 | complete | ses_1bb7ad697ffepCG10H5HGsjNxr | bfe5e1db3 | Bootstrap: D5 extractor narrowing + safety net, D2 canonical-path injection, D3 self-close target optional, D9 already_terminated/path_invalid split. D6 root-hold deferred per WAVE.md §6 explicit allowance. INV-D-01..05, INV-D-07 green. Per-file 100% line coverage on control.ts/agent-close.ts/system.ts. |
 | 1 | pending  | — | — | Prose: rewrite multi-agent-subagent.txt "Final answer" → "Delivery contract" (D1); add sibling-coordination + limits sections in multi-agent-root.txt (D7, D8); defer-edits in general/anthropic.txt, general/gemini.txt, explore.txt (D4); 4.7 literalism adaptation (D4). First orchestrated wave. |
 | 2 | pending  | — | — | Validation: drive INV-D-01..08 to green. Reproduce ses_1c2e8d84affe... extractor failure and ses_1d84f236bffe... sibling deadlock end-to-end as regression tests. |
 | 3 | pending  | — | — | Ask pattern (Phase 2A): correlation_id on send_message/followup_task; wait_for_reply variant on wait_agent; mandatory-timeout doctrine in prose. INV-D-09..11. |

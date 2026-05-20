@@ -3,7 +3,7 @@
 ## Attempt 2 — complete
 
 **Session:** ses_1bb7ad697ffepCG10H5HGsjNxr
-**Commit:** TBD (recorded in STATE.md after commit)
+**Commit:** bfe5e1db3
 **Date:** 2026-05-20
 **Decision on entry:** reset — prior commit `c5cd25a9b` was a crash that only landed a stray investigation doc (`MULTI_AGENT_DELIVERY_FINDINGS.md`) at repo root, no code changes. Reset path: `git revert --no-commit` aborted because of STATE conflict (loop already overwrote STATE), so dropped the revert and `git rm MULTI_AGENT_DELIVERY_FINDINGS.md` directly. STATE.md left as-is (loop-managed; current values reflect retry posture).
 **Orchestration:** solo (Wave 0 is `executor-solo` per WAVE.md header)
