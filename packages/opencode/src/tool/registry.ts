@@ -18,7 +18,7 @@ import { ProcessSessions } from "./process/sessions"
 import { AgentSpawnTool } from "./agent-spawn/agent-spawn"
 import { AgentSendTool } from "./agent-send/agent-send"
 import { AgentFollowupTool } from "./agent-followup/agent-followup"
-import { AgentWaitTool } from "./agent-wait/agent-wait"
+import { AgentWaitTool, AgentWaitForReplyTool } from "./agent-wait/agent-wait"
 import { AgentListTool } from "./agent-list/agent-list"
 import { AgentCloseTool } from "./agent-close/agent-close"
 import { AgentControl } from "@/agent/control"
@@ -133,6 +133,7 @@ export const layer: Layer.Layer<
     const agentsend = yield* AgentSendTool
     const agentfollowup = yield* AgentFollowupTool
     const agentwait = yield* AgentWaitTool
+    const agentwaitforreply = yield* AgentWaitForReplyTool
     const agentlist = yield* AgentListTool
     const agentclose = yield* AgentCloseTool
     const agent = yield* Agent.Service
@@ -238,6 +239,7 @@ export const layer: Layer.Layer<
           agentsend: Tool.init(agentsend),
           agentfollowup: Tool.init(agentfollowup),
           agentwait: Tool.init(agentwait),
+          agentwaitforreply: Tool.init(agentwaitforreply),
           agentlist: Tool.init(agentlist),
           agentclose: Tool.init(agentclose),
         })
@@ -282,6 +284,7 @@ export const layer: Layer.Layer<
             tool.agentsend,
             tool.agentfollowup,
             tool.agentwait,
+            tool.agentwaitforreply,
             tool.agentlist,
             tool.agentclose,
             ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
@@ -411,6 +414,7 @@ export const layer: Layer.Layer<
                   tool.id === AgentSendTool.id ||
                   tool.id === AgentFollowupTool.id ||
                   tool.id === AgentWaitTool.id ||
+                  tool.id === AgentWaitForReplyTool.id ||
                   tool.id === AgentListTool.id ||
                   tool.id === AgentCloseTool.id
                 ? TaskTool.id

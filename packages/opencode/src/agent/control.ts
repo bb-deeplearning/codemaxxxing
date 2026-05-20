@@ -336,6 +336,16 @@ export interface Interface {
   readonly hasPendingMailboxItems: (id: SessionID) => Effect.Effect<boolean>
   readonly hasPendingTriggerTurn: (id: SessionID) => Effect.Effect<boolean>
   readonly drainMailbox: (id: SessionID) => Effect.Effect<readonly InterAgentCommunication[]>
+  // D10 (actor-discipline-2026-05-20 Wave 3) — peek into the caller's
+  // mailbox for the first message carrying the given correlation_id.
+  // Does NOT drain — the message stays in the mailbox so the normal
+  // turn-boundary drain delivers it to the model. Used by wait_for_reply
+  // to filter on correlation_id without consuming the mailbox. Per-root
+  // scoped via the caller's sessionID.
+  readonly findMailboxByCorrelationId: (
+    id: SessionID,
+    correlation_id: string,
+  ) => Effect.Effect<InterAgentCommunication | undefined>
   readonly cancelChildrenOf: (parentID: SessionID) => Effect.Effect<void>
   // D9 (actor-discipline-2026-05-20) — has the path ever been registered
   // under the caller's root? Used by the close_agent tool to split the
@@ -1354,6 +1364,18 @@ export const layer = Layer.effect(
       return yield* mailbox.drain()
     })
 
+    const findMailboxByCorrelationId = Effect.fn("AgentControl.findMailboxByCorrelationId")(
+      function* (id: SessionID, correlation_id: string) {
+        const data = yield* InstanceState.get(state)
+        const slot = slotFor(data, id)
+        if (!slot) return undefined
+        const mailbox = slot.mailboxes.get(id)
+        if (!mailbox) return undefined
+        const snapshot = yield* mailbox.peek()
+        return snapshot.find((m) => m.correlation_id === correlation_id)
+      },
+    )
+
     const cancelChildrenOf = Effect.fn("AgentControl.cancelChildrenOf")(function* (
       parentID: SessionID,
     ) {
@@ -1459,6 +1481,7 @@ export const layer = Layer.effect(
       hasPendingMailboxItems,
       hasPendingTriggerTurn,
       drainMailbox,
+      findMailboxByCorrelationId,
       cancelChildrenOf,
       wasKnownPath,
       emitWaitStarted,

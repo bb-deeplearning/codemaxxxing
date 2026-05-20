@@ -15,7 +15,7 @@ import type { Permission } from "@/permission"
 import * as Tool from "../tool"
 import { disposeAllInstances, provideTmpdirInstance } from "../../../test/fixture/fixture"
 import { testEffect } from "../../../test/lib/effect"
-import { AgentWaitTool, PermissionKey } from "./agent-wait"
+import { AgentWaitTool, AgentWaitForReplyTool, PermissionKey } from "./agent-wait"
 import { DEFAULT_WAIT_TIMEOUT_MS, MAX_WAIT_TIMEOUT_MS, MIN_WAIT_TIMEOUT_MS } from "./constants"
 
 afterEach(async () => {
@@ -73,6 +73,11 @@ function makeCtx(sessionID: SessionID): { record: CtxRecord; ctx: Tool.Context }
 
 const initTool = Effect.fn("AgentWaitToolTest.init")(function* () {
   const info = yield* AgentWaitTool
+  return yield* info.init()
+})
+
+const initReplyTool = Effect.fn("AgentWaitForReplyToolTest.init")(function* () {
+  const info = yield* AgentWaitForReplyTool
   return yield* info.init()
 })
 
@@ -440,6 +445,286 @@ describe("tool.wait_agent — bus event emission", () => {
         } finally {
           off()
         }
+      }),
+    ),
+  )
+})
+
+describe("tool.wait_agent — mandatory-timeout doctrine (D10)", () => {
+  it.live("omitted timeout_ms produces metadata.warning === 'missing_timeout'", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "warn_missing",
+          initial_message: "seed",
+        })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(child.thread_id)
+        // Pre-pending mailbox returns immediately so we can read metadata
+        // without waiting on the 30s default.
+        const result = yield* def.execute({}, ctx)
+        expect(result.metadata.warning).toBe("missing_timeout")
+        expect(result.metadata.timeout_ms).toBe(DEFAULT_WAIT_TIMEOUT_MS)
+        const payload = JSON.parse(result.output)
+        expect(payload.warning).toBe("missing_timeout")
+      }),
+    ),
+  )
+
+  it.live("timeout_ms above MAX produces metadata.warning === 'timeout_clamped'", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "warn_clamped",
+          initial_message: "seed",
+        })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(child.thread_id)
+        const result = yield* def.execute({ timeout_ms: MAX_WAIT_TIMEOUT_MS + 1 }, ctx)
+        expect(result.metadata.warning).toBe("timeout_clamped")
+        expect(result.metadata.timeout_ms).toBe(MAX_WAIT_TIMEOUT_MS)
+        const payload = JSON.parse(result.output)
+        expect(payload.warning).toBe("timeout_clamped")
+      }),
+    ),
+  )
+
+  it.live("in-range timeout_ms produces NO warning", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "warn_none",
+          initial_message: "seed",
+        })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(child.thread_id)
+        const result = yield* def.execute({ timeout_ms: 5_000 }, ctx)
+        expect(result.metadata.warning).toBeUndefined()
+        const payload = JSON.parse(result.output)
+        expect(payload.warning).toBeUndefined()
+      }),
+    ),
+  )
+})
+
+describe("tool.wait_for_reply", () => {
+  it.live("pre-pending matching message returns immediately with matched=true", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "reply_pp",
+          initial_message: "init",
+        })
+        // Drain seed first so only the correlated message is in the mailbox.
+        yield* control.drainMailbox(child.thread_id)
+
+        const childPath = yield* AgentPath.from("/root/reply_pp")
+        yield* control.sendInterAgentCommunication(
+          child.thread_id,
+          new InterAgentCommunication({
+            author: AgentPath.root(),
+            recipient: childPath,
+            content: "reply body",
+            trigger_turn: false,
+            sent_at: Date.now(),
+            correlation_id: "req-1",
+          }),
+          root.id,
+        )
+
+        const def = yield* initReplyTool()
+        const { ctx } = makeCtx(child.thread_id)
+        const start = Date.now()
+        const result = yield* def.execute(
+          { correlation_id: "req-1", timeout_ms: 5_000 },
+          ctx,
+        )
+        const elapsed = Date.now() - start
+        expect(elapsed).toBeLessThan(500)
+        expect(result.metadata.matched).toBe(true)
+        expect(result.metadata.timed_out).toBe(false)
+        const payload = JSON.parse(result.output)
+        expect(payload.message).toBe("reply body")
+        expect(payload.timed_out).toBe(false)
+        expect(payload.correlation_id).toBe("req-1")
+      }),
+    ),
+  )
+
+  it.live("no matching message → timed_out=true after the timeout", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "reply_to",
+          initial_message: "init",
+        })
+        yield* control.drainMailbox(child.thread_id)
+
+        const def = yield* initReplyTool()
+        const { ctx } = makeCtx(child.thread_id)
+        const start = Date.now()
+        const result = yield* def.execute(
+          { correlation_id: "req-missing", timeout_ms: 1_000 },
+          ctx,
+        )
+        const elapsed = Date.now() - start
+        expect(elapsed).toBeGreaterThan(900)
+        expect(elapsed).toBeLessThan(2_500)
+        expect(result.metadata.timed_out).toBe(true)
+        expect(result.metadata.matched).toBe(false)
+        const payload = JSON.parse(result.output)
+        expect(payload.timed_out).toBe(true)
+        expect(payload.message).toBe("No reply received before timeout.")
+      }),
+    ),
+  )
+
+  it.live("non-matching message does NOT wake; matching message arriving later does", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "reply_filt",
+          initial_message: "init",
+        })
+        yield* control.drainMailbox(child.thread_id)
+
+        const childPath = yield* AgentPath.from("/root/reply_filt")
+
+        // Schedule a non-matching message 100ms in, then the matching one
+        // 400ms in. Wait_for_reply should ignore the first and resolve on
+        // the second.
+        yield* Effect.forkScoped(
+          Effect.gen(function* () {
+            yield* Effect.sleep("100 millis")
+            yield* control.sendInterAgentCommunication(
+              child.thread_id,
+              new InterAgentCommunication({
+                author: AgentPath.root(),
+                recipient: childPath,
+                content: "unrelated",
+                trigger_turn: false,
+                sent_at: Date.now(),
+                correlation_id: "other-id",
+              }),
+              root.id,
+            )
+            yield* Effect.sleep("300 millis")
+            yield* control.sendInterAgentCommunication(
+              child.thread_id,
+              new InterAgentCommunication({
+                author: AgentPath.root(),
+                recipient: childPath,
+                content: "the real reply",
+                trigger_turn: false,
+                sent_at: Date.now(),
+                correlation_id: "req-target",
+              }),
+              root.id,
+            )
+          }),
+        )
+
+        const def = yield* initReplyTool()
+        const { ctx } = makeCtx(child.thread_id)
+        const start = Date.now()
+        const result = yield* def.execute(
+          { correlation_id: "req-target", timeout_ms: 5_000 },
+          ctx,
+        )
+        const elapsed = Date.now() - start
+        // Should fire shortly after the 400ms matching send.
+        expect(elapsed).toBeGreaterThan(350)
+        expect(elapsed).toBeLessThan(2_500)
+        expect(result.metadata.matched).toBe(true)
+        expect(result.metadata.timed_out).toBe(false)
+        const payload = JSON.parse(result.output)
+        expect(payload.message).toBe("the real reply")
+      }),
+    ),
+  )
+
+  it.live("send without correlation_id does NOT match wait_for_reply → timed_out", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: AgentPath.root(),
+          task_name: "reply_nocorr",
+          initial_message: "init",
+        })
+        yield* control.drainMailbox(child.thread_id)
+
+        const childPath = yield* AgentPath.from("/root/reply_nocorr")
+        yield* control.sendInterAgentCommunication(
+          child.thread_id,
+          new InterAgentCommunication({
+            author: AgentPath.root(),
+            recipient: childPath,
+            content: "no correlation here",
+            trigger_turn: false,
+            sent_at: Date.now(),
+          }),
+          root.id,
+        )
+
+        const def = yield* initReplyTool()
+        const { ctx } = makeCtx(child.thread_id)
+        const result = yield* def.execute(
+          { correlation_id: "req-1", timeout_ms: 1_000 },
+          ctx,
+        )
+        expect(result.metadata.timed_out).toBe(true)
+        expect(result.metadata.matched).toBe(false)
+      }),
+    ),
+  )
+
+  it.live("timeout_ms = 0 returns model-recoverable error", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const root = yield* seedRoot()
+        const def = yield* initReplyTool()
+        const { ctx, record } = makeCtx(root.id)
+        const result = yield* def.execute(
+          { correlation_id: "req-1", timeout_ms: 0 },
+          ctx,
+        )
+        expect(result.output.toLowerCase()).toContain("greater than zero")
+        expect(record.asks.length).toBe(0)
       }),
     ),
   )

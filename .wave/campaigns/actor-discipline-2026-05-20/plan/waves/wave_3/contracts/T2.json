@@ -1,0 +1,110 @@
+{
+  "task_id": "T2",
+  "title": "send_message + followup_task: add optional correlation_id parameter",
+  "writes": [
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.ts",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.txt",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.test.ts",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/schema.test.ts",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.txt",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.test.ts",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/schema.test.ts"
+  ],
+  "depends_on": ["T1"],
+  "pre_agreed_by_orchestrator": true,
+  "signed": true,
+  "commit_sha": "fe856de8d6463c6a69255f47609d78d4f70d85f1",
+  "criteria": [
+    {
+      "id": "C1",
+      "category": "correctness",
+      "assertion": "agent-send.ts Parameters contains `correlation_id: Schema.optional(Schema.String)`.",
+      "verify": "grep -E 'correlation_id:\\s*Schema\\.optional\\(Schema\\.String\\)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.ts",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "exit 0; match: `  correlation_id: Schema.optional(Schema.String).annotate({`"
+    },
+    {
+      "id": "C2",
+      "category": "correctness",
+      "assertion": "agent-followup.ts Parameters contains `correlation_id: Schema.optional(Schema.String)`.",
+      "verify": "grep -E 'correlation_id:\\s*Schema\\.optional\\(Schema\\.String\\)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "exit 0; match: `  correlation_id: Schema.optional(Schema.String).annotate({`"
+    },
+    {
+      "id": "C3",
+      "category": "correctness",
+      "assertion": "agent-send.ts execute body constructs InterAgentCommunication with the correlation_id passed through (substring `correlation_id: params.correlation_id` present).",
+      "verify": "grep -F 'correlation_id: params.correlation_id' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.ts",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "exit 0; match: `                correlation_id: params.correlation_id,`"
+    },
+    {
+      "id": "C4",
+      "category": "correctness",
+      "assertion": "agent-followup.ts execute body constructs InterAgentCommunication with the correlation_id passed through.",
+      "verify": "grep -F 'correlation_id: params.correlation_id' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.ts",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "exit 0; match: `                correlation_id: params.correlation_id,`"
+    },
+    {
+      "id": "C5",
+      "category": "correctness",
+      "assertion": "agent-send.txt and agent-followup.txt each mention `correlation_id` in their prose.",
+      "verify": "grep -F 'correlation_id' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.txt && grep -F 'correlation_id' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.txt",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "exit 0; both txt files contain '## correlation_id (optional)' section with wait_for_reply pairing prose."
+    },
+    {
+      "id": "C6",
+      "category": "correctness",
+      "assertion": "Existing agent-send tests still pass AND a new test verifying correlation_id pass-through has been added (the existing test names asserting permission key plus a new `correlation_id` substring assertion).",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-send/agent-send.test.ts 2>&1 | tee /tmp/wave3-t2-c6.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t2-c6.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t2-c6.log && grep -F 'correlation_id' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/agent-send.test.ts",
+      "weight": 0.15,
+      "status": "passed",
+      "evidence": "exit 0; 14 pass / 0 fail, 35 expect() calls; correlation_id present (3 hits) in agent-send.test.ts."
+    },
+    {
+      "id": "C7",
+      "category": "correctness",
+      "assertion": "Existing agent-followup tests still pass AND a new test verifying correlation_id pass-through has been added.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-followup/agent-followup.test.ts 2>&1 | tee /tmp/wave3-t2-c7.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t2-c7.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t2-c7.log && grep -F 'correlation_id' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/agent-followup.test.ts",
+      "weight": 0.15,
+      "status": "passed",
+      "evidence": "exit 0; 10 pass / 0 fail, 41 expect() calls; correlation_id present (3 hits) in agent-followup.test.ts."
+    },
+    {
+      "id": "C8",
+      "category": "correctness",
+      "assertion": "schema.test.ts for both tools updated: `required` count assertion stays at 2 (correlation_id stays OPTIONAL); a new test accepts correlation_id when supplied.",
+      "verify": "grep -F 'correlation_id' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-send/schema.test.ts && grep -F 'correlation_id' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-followup/schema.test.ts && cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-send/schema.test.ts src/tool/agent-followup/schema.test.ts 2>&1 | tee /tmp/wave3-t2-c8.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t2-c8.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t2-c8.log",
+      "weight": 0.1,
+      "status": "passed",
+      "evidence": "exit 0; correlation_id present (4 hits each) in both schema.test.ts files; 32 pass / 0 fail across 2 files, 42 expect() calls."
+    },
+    {
+      "id": "C9",
+      "category": "convention",
+      "assertion": "bun typecheck still passes from packages/opencode.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+      "weight": 0.15,
+      "status": "passed",
+      "evidence": "exit 0; tsgo --noEmit clean."
+    },
+    {
+      "id": "C10",
+      "category": "bc_preservation",
+      "assertion": "Multi-agent invariants suite stays green.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave3-t2-c10.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t2-c10.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t2-c10.log",
+      "weight": 0.2,
+      "status": "passed",
+      "evidence": "exit 0; 25 pass / 0 fail, 105 expect() calls."
+    }
+  ]
+}

@@ -27,6 +27,8 @@ export interface Interface {
   readonly hasPending: () => Effect.Effect<boolean>
   /** True when at least one queued message has trigger_turn set. */
   readonly hasPendingTriggerTurn: () => Effect.Effect<boolean>
+  /** Snapshot of current messages without draining. */
+  readonly peek: () => Effect.Effect<readonly InterAgentCommunication[]>
 }
 
 interface State {
@@ -67,7 +69,10 @@ export const make = (): Effect.Effect<Interface> =>
     const hasPendingTriggerTurn = (): Effect.Effect<boolean> =>
       Effect.map(Ref.get(state), (s) => s.messages.some((m) => m.trigger_turn))
 
-    return { send, subscribe, drain, hasPending, hasPendingTriggerTurn }
+    const peek = (): Effect.Effect<readonly InterAgentCommunication[]> =>
+      Effect.map(Ref.get(state), (s) => s.messages)
+
+    return { send, subscribe, drain, hasPending, hasPendingTriggerTurn, peek }
   })
 
 export * as Mailbox from "./mailbox"

@@ -1,0 +1,28 @@
+Block your tool call until a mailbox message carrying the matching `correlation_id` arrives, or until the timeout elapses. Targeted variant of `wait_agent` for the ask pattern.
+
+The return value is a JSON object with the matched message body and metadata when a reply lands; or `{ timed_out: true, message: "No reply received before timeout." }` when the timer fires first.
+
+## When to use
+
+- You sent a `send_message` or `followup_task` with `correlation_id: "<id>"` and want to block until the recipient sends a reply carrying the same `correlation_id`.
+- You want a TARGETED wait that ignores unrelated mailbox traffic (peer FYIs, completion notifications from other children).
+
+## When NOT to use
+
+- You only want to be notified of any inbound activity — use `wait_agent` for the broad case.
+- You forgot to set `correlation_id` on the upstream send — `wait_for_reply` will time out because no message will ever match. Set the id on BOTH sides.
+- You need to drain multiple replies — `wait_for_reply` reads the FIRST matching message, leaves it in the mailbox (the next turn's drain delivers it to the model). Repeated calls return the same message until the mailbox is drained at turn boundary.
+
+## Behavior
+
+- If the mailbox already contains a message with the matching `correlation_id`, returns immediately with that message.
+- Otherwise races a mailbox-seq watch against the timeout. On each new mailbox message, re-scans for the matching `correlation_id`; non-matching messages do NOT wake the call.
+- The matched message stays in the mailbox — the turn-boundary drain delivers it to the model as the next user-message prefix.
+
+## Timeout
+
+Mandatory. Default `timeout_ms` is 30000 (30s). Clamped to [1000, 600000]. A non-positive value is rejected with a model-recoverable error. Pick a timeout meaningful to your protocol — long enough for the reply, short enough to surface deadlocks.
+
+## Cost
+
+Same as `wait_agent` — blocks productive work. Spawn an ask pattern only when you genuinely need the reply before your next decision; otherwise issue the request and pick up the reply at the next turn's mailbox drain.

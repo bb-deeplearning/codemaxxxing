@@ -51,3 +51,9 @@ retry with a sane number.
 `wait_agent` blocks productive work — no model calls, no exec, no progress.
 Use sparingly. Prefer to do non-overlapping local work first, then wait
 once when nothing else is left.
+
+## Doctrine: timeout discipline
+
+Every wait MUST specify a meaningful timeout. Omitting `timeout_ms` triggers a `missing_timeout` warning in the result metadata (the call still completes — informational only). Supplying a value above the cap silently clamps but emits `timeout_clamped` so you can see it happened. Pick a timeout long enough for your peer to respond but short enough to surface a deadlock as a timeout rather than a silent stall.
+
+For request/reply pairing, use `wait_for_reply(correlation_id, timeout_ms)` instead of the broad wait — it wakes only on the matching reply and ignores unrelated mailbox traffic.

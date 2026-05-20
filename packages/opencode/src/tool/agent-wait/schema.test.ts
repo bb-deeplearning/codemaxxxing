@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Result, Schema } from "effect"
 import { toJsonSchema } from "../../util/effect-zod"
 
-import { AgentWaitTool, ID, Parameters, PermissionKey } from "./agent-wait"
+import { AgentWaitTool, AgentWaitForReplyTool, ID, Parameters, PermissionKey, WaitForReplyID, WaitForReplyParameters } from "./agent-wait"
 import {
   DEFAULT_WAIT_TIMEOUT_MS,
   MAX_WAIT_TIMEOUT_MS,
@@ -115,5 +115,50 @@ describe("wait_agent constants", () => {
     test("above MAX caps at MAX_WAIT_TIMEOUT_MS", () => {
       expect(clampWaitTimeout(700_000)).toBe(600_000)
     })
+  })
+})
+
+describe("wait_for_reply parameters", () => {
+  test("declares correlation_id as the only required field (timeout_ms optional)", () => {
+    const json = toJsonSchema(WaitForReplyParameters) as { required?: string[] }
+    expect(json.required).toEqual(["correlation_id"])
+  })
+
+  test("correlation_id has a non-empty description annotation", () => {
+    const json = toJsonSchema(WaitForReplyParameters) as {
+      properties: Record<string, { description?: string }>
+    }
+    expect(typeof json.properties["correlation_id"]?.description).toBe("string")
+    expect(json.properties["correlation_id"]?.description?.length ?? 0).toBeGreaterThan(0)
+  })
+
+  test("accepts { correlation_id: 'req-1' }", () => {
+    const decoded = parse(WaitForReplyParameters, { correlation_id: "req-1" })
+    expect(decoded.correlation_id).toBe("req-1")
+  })
+
+  test("accepts { correlation_id: 'req-1', timeout_ms: 5000 }", () => {
+    const decoded = parse(WaitForReplyParameters, { correlation_id: "req-1", timeout_ms: 5000 })
+    expect(decoded.correlation_id).toBe("req-1")
+    expect(decoded.timeout_ms).toBe(5000)
+  })
+
+  test("rejects missing correlation_id", () => {
+    expect(accepts(WaitForReplyParameters, {})).toBe(false)
+    expect(accepts(WaitForReplyParameters, { timeout_ms: 5000 })).toBe(false)
+  })
+
+  test("rejects non-string correlation_id", () => {
+    expect(accepts(WaitForReplyParameters, { correlation_id: 42 })).toBe(false)
+  })
+})
+
+describe("wait_for_reply tool ID constants", () => {
+  test("WaitForReplyID is the literal 'wait_for_reply'", () => {
+    expect(WaitForReplyID).toBe("wait_for_reply")
+  })
+
+  test("AgentWaitForReplyTool exposes the same id under .id", () => {
+    expect(AgentWaitForReplyTool.id).toBe("wait_for_reply")
   })
 })
