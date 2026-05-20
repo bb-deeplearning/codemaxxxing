@@ -1,0 +1,394 @@
+[
+  {
+    "task_id": "T1",
+    "title": "InterAgentCommunication: add optional abort_reason struct field",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.test.ts"
+    ],
+    "depends_on": [],
+    "pre_agreed_by_orchestrator": true,
+    "signed": true,
+    "commit_sha": "",
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "inter-agent-communication.ts contains `abort_reason: Schema.optional(Schema.Struct({ reason: Schema.String, details: Schema.String }))`.",
+        "verify": "grep -E 'abort_reason:\\s*Schema\\.optional\\(Schema\\.Struct\\(' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts && grep -E 'reason:\\s*Schema\\.String' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts && grep -E 'details:\\s*Schema\\.String' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts",
+        "weight": 0.2,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "File contains a comment block referencing D11 / Wave 4 / ABORT protocol attribution.",
+        "verify": "grep -iE '(D11|Wave 4|ABORT protocol|abort.*last assistant)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "inter-agent-communication.test.ts contains at least one new test that constructs/decodes a message with abort_reason supplied.",
+        "verify": "grep -F 'abort_reason' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.test.ts | wc -l | awk '$1 >= 3 { exit 0 } { exit 1 }'",
+        "weight": 0.15,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C4",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.2,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C5",
+        "category": "bc_preservation",
+        "assertion": "Existing inter-agent-communication.test.ts continues to pass + new tests pass.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/agent/inter-agent-communication.test.ts 2>&1 | tee /tmp/wave4-t1-c5.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t1-c5.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t1-c5.log",
+        "weight": 0.2,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C6",
+        "category": "bc_preservation",
+        "assertion": "Multi-agent invariants suite stays green (>= 28 pass / 0 fail).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave4-t1-c6.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t1-c6.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t1-c6.log",
+        "weight": 0.2,
+        "status": "pending",
+        "evidence": ""
+      }
+    ]
+  },
+  {
+    "task_id": "T2",
+    "title": "control.ts: completion-watcher parses ABORT set-phrase + populates structured abort_reason",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.test.ts"
+    ],
+    "depends_on": ["T1"],
+    "pre_agreed_by_orchestrator": true,
+    "signed": true,
+    "commit_sha": "",
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "control.ts defines a top-level helper named parseAbortReason (or equivalent) that returns { reason, details } | undefined.",
+        "verify": "grep -E '(const|function)\\s+parseAbortReason' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+        "weight": 0.08,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "control.ts contains the literal regex pattern matching `ABORT(<reason>):` line-anchored (using `^ABORT` and `\\(` somewhere in the source).",
+        "verify": "grep -E '\\^ABORT\\\\\\(' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "control.ts completion-watcher InterAgentCommunication construction includes `abort_reason:` (parsed payload passed to the notification).",
+        "verify": "grep -F 'abort_reason:' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "control.test.ts contains a new describe block referencing 'ABORT' / 'D11' AND at least 4 tests asserting ABORT recognition shapes.",
+        "verify": "grep -E 'describe\\(.*(ABORT|D11)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.test.ts && grep -F 'abort_reason' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.test.ts | wc -l | awk '$1 >= 4 { exit 0 } { exit 1 }'",
+        "weight": 0.15,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C5",
+        "category": "discipline",
+        "assertion": "GOTCHAS.md gains an entry mentioning `agentcontrol-d11-abort-line-parser` or similar slug (per AGENT_INSTRUCTIONS Hard Rules: append discovered gotchas).",
+        "verify": "grep -iE 'agentcontrol-d11-abort|abort-line-parser|abort.*last.*line' /Users/rohan/Documents/Personal/codemaxxxing/GOTCHAS.md",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C6",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.12,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C7",
+        "category": "correctness",
+        "assertion": "Full control.test.ts passes.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/agent/control.test.ts 2>&1 | tee /tmp/wave4-t2-c7.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t2-c7.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t2-c7.log",
+        "weight": 0.2,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C8",
+        "category": "bc_preservation",
+        "assertion": "Per-file coverage on control.ts via control.test.ts is 100% lines (allowing pre-existing TaggedErrorClass function-coverage gap).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/agent/control.test.ts 2>&1 | tee /tmp/wave4-t2-c8.log && grep -E 'control\\.ts.*100\\.00' /tmp/wave4-t2-c8.log",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C9",
+        "category": "bc_preservation",
+        "assertion": "Multi-agent invariants suite stays green.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave4-t2-c9.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t2-c9.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t2-c9.log",
+        "weight": 0.15,
+        "status": "pending",
+        "evidence": ""
+      }
+    ]
+  },
+  {
+    "task_id": "T3",
+    "title": "Prose: ABORT section in multi-agent-subagent.txt + brief refs in 3 base prompts + ORCHESTRATOR_PROTOCOL.md note",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt",
+      "/Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/ORCHESTRATOR_PROTOCOL.md"
+    ],
+    "depends_on": [],
+    "pre_agreed_by_orchestrator": true,
+    "signed": true,
+    "commit_sha": "",
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "multi-agent-subagent.txt contains the `## ABORT` section header.",
+        "verify": "grep -E '^## ABORT' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "multi-agent-subagent.txt enumerates ALL six official reasons: spec_wrong, transient_tool_error, out_of_scope, context_full, approach_failed, user_question.",
+        "verify": "for r in spec_wrong transient_tool_error out_of_scope context_full approach_failed user_question; do grep -q \"$r\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt || { echo \"missing: $r\"; exit 1; }; done",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "multi-agent-subagent.txt ABORT section states the format literally `ABORT(<reason>):` AND says the LAST line constraint.",
+        "verify": "grep -F 'ABORT(<reason>):' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -iE 'last line|last assistant' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "weight": 0.08,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "Each of the 3 base prompts (anthropic, gemini, explore) contains a brief ABORT reference (substring `ABORT(`).",
+        "verify": "grep -F 'ABORT(' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt && grep -F 'ABORT(' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt && grep -F 'ABORT(' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C5",
+        "category": "convention",
+        "assertion": "All 3 base prompts STILL contain the REQUIRED_PHRASE from Wave 1 (delivery contract pointer).",
+        "verify": "for f in general/anthropic.txt general/gemini.txt explore.txt; do grep -F 'See the delivery contract in your multi-agent coordination guidance.' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/$f || { echo \"missing in $f\"; exit 1; }; done",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C6",
+        "category": "convention",
+        "assertion": "All 3 base prompts do NOT contain ANY of the Wave 1 FORBIDDEN_PHRASES.",
+        "verify": "for f in general/anthropic.txt general/gemini.txt explore.txt; do for p in 'your text response IS the deliverable' 'your response goes to the parent agent' 'the parent agent reads your output'; do ! grep -F \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/$f || { echo \"$f leaked: $p\"; exit 1; }; done; done",
+        "weight": 0.07,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C7",
+        "category": "correctness",
+        "assertion": "ORCHESTRATOR_PROTOCOL.md contains a new note referencing 'Wave 4' AND 'parsed by the runtime' near the ABORT REASONS section.",
+        "verify": "grep -iE 'as of Wave 4|wave 4.*parse|parsed by the runtime' /Users/rohan/Documents/Personal/codemaxxxing/.wave/campaigns/actor-discipline-2026-05-20/plan/ORCHESTRATOR_PROTOCOL.md",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C8",
+        "category": "bc_preservation",
+        "assertion": "Existing prose suite stays green (27 tests).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test test/prose/subagent-prompts.test.ts 2>&1 | tee /tmp/wave4-t3-c8.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t3-c8.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t3-c8.log",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C9",
+        "category": "bc_preservation",
+        "assertion": "Multi-agent invariants suite stays green.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave4-t3-c9.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t3-c9.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t3-c9.log",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C10",
+        "category": "convention",
+        "assertion": "INV-D-05 still passes (canonical-path block intact in capability hints).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-05-subagent-prompt-contains-canonical-path' 2>&1 | tee /tmp/wave4-t3-c10.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t3-c10.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t3-c10.log",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C11",
+        "category": "convention",
+        "assertion": "Caveman output rules / response-format sections preserved verbatim in all 3 base prompts (no deletion of those headers).",
+        "verify": "grep -c '# Caveman output rules' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/anthropic.txt | awk '$1 >= 1 { exit 0 } { exit 1 }' && grep -c '# Response Format' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/general/gemini.txt | awk '$1 >= 1 { exit 0 } { exit 1 }' && grep -c '# Response Format' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/explore.txt | awk '$1 >= 1 { exit 0 } { exit 1 }'",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C12",
+        "category": "convention",
+        "assertion": "Caveman output rules / response-format sections preserved verbatim in multi-agent-subagent.txt (Delivery contract still present).",
+        "verify": "grep -F '## Delivery contract' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      }
+    ]
+  },
+  {
+    "task_id": "T4",
+    "title": "Tests: INV-D-12..14 integration invariants + Wave 4 prose grep tests",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts"
+    ],
+    "depends_on": ["T1", "T2", "T3"],
+    "pre_agreed_by_orchestrator": true,
+    "signed": true,
+    "commit_sha": "",
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "multi-agent-invariants.test.ts contains the literal slug INV-D-12-abort-reason-delivered-as-structured-payload on an it.instance line.",
+        "verify": "grep -E 'it\\.instance\\(\"INV-D-12-abort-reason-delivered-as-structured-payload\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "multi-agent-invariants.test.ts contains the literal slug INV-D-13-orchestrator-pivots-on-abort-approach-failed on an it.instance line.",
+        "verify": "grep -E 'it\\.instance\\(\"INV-D-13-orchestrator-pivots-on-abort-approach-failed\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "multi-agent-invariants.test.ts contains the literal slug INV-D-14-set-phrase-ladder-extended-to-all-subagent-types on an it.instance line.",
+        "verify": "grep -E 'it\\.instance\\(\"INV-D-14-set-phrase-ladder-extended-to-all-subagent-types\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C4",
+        "category": "integration",
+        "assertion": "INV-D-12 passes when filtered by exact slug.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-12-abort-reason-delivered-as-structured-payload' 2>&1 | tee /tmp/wave4-t4-c4.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t4-c4.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t4-c4.log",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C5",
+        "category": "integration",
+        "assertion": "INV-D-13 passes when filtered by exact slug.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-13-orchestrator-pivots-on-abort-approach-failed' 2>&1 | tee /tmp/wave4-t4-c5.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t4-c5.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t4-c5.log",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C6",
+        "category": "integration",
+        "assertion": "INV-D-14 passes when filtered by exact slug.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-14-set-phrase-ladder-extended-to-all-subagent-types' 2>&1 | tee /tmp/wave4-t4-c6.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t4-c6.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t4-c6.log",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C7",
+        "category": "bc_preservation",
+        "assertion": "Full multi-agent-invariants.test.ts passes (>= 31 tests: 28 existing + 3 new).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave4-t4-c7.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t4-c7.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t4-c7.log",
+        "weight": 0.15,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C8",
+        "category": "correctness",
+        "assertion": "subagent-prompts.test.ts contains a new describe block referencing 'Wave 4' AND covers all six reasons + ABORT format + three base prompt references.",
+        "verify": "grep -F 'Wave 4' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && for r in spec_wrong transient_tool_error out_of_scope context_full approach_failed user_question; do grep -F \"$r\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts || { echo \"missing: $r\"; exit 1; }; done",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C9",
+        "category": "integration",
+        "assertion": "Full prose suite passes (>= 30 tests: 27 existing + new Wave 4 block).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test test/prose/subagent-prompts.test.ts 2>&1 | tee /tmp/wave4-t4-c9.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t4-c9.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t4-c9.log",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      },
+      {
+        "id": "C10",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": ""
+      }
+    ]
+  }
+]

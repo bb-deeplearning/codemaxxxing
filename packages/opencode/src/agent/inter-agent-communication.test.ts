@@ -46,6 +46,19 @@ describe("InterAgentCommunication construction", () => {
     })
     expect(msg.items).toEqual([{ kind: "image", url: "https://example/x.png" }])
   })
+
+  test("optional abort_reason struct is preserved when supplied (D11 Wave 4)", () => {
+    const msg = new InterAgentCommunication({
+      author: worker,
+      recipient: root,
+      content: "ABORT(spec_wrong): bad spec.",
+      trigger_turn: true,
+      sent_at: 9,
+      abort_reason: { reason: "spec_wrong", details: "bad spec." },
+    })
+    expect(msg.abort_reason?.reason).toBe("spec_wrong")
+    expect(msg.abort_reason?.details).toBe("bad spec.")
+  })
 })
 
 describe("InterAgentCommunication schema validation", () => {
@@ -104,6 +117,19 @@ describe("InterAgentCommunication schema validation", () => {
     })
     expect(Result.isFailure(result)).toBe(true)
   })
+
+  test("decodes a payload carrying abort_reason (D11 Wave 4)", () => {
+    const decoded = Schema.decodeUnknownSync(InterAgentCommunication)({
+      author: "/root/worker",
+      recipient: "/root",
+      content: "ABORT(approach_failed): tried 3x.",
+      trigger_turn: true,
+      sent_at: 5,
+      abort_reason: { reason: "approach_failed", details: "tried 3x." },
+    })
+    expect(decoded.abort_reason?.reason).toBe("approach_failed")
+    expect(decoded.abort_reason?.details).toBe("tried 3x.")
+  })
 })
 
 describe("InterAgentCommunication JSON roundtrip", () => {
@@ -138,5 +164,21 @@ describe("InterAgentCommunication JSON roundtrip", () => {
     const json = JSON.parse(JSON.stringify(encoded))
     const decoded = Schema.decodeUnknownSync(InterAgentCommunication)(json)
     expect(decoded.items).toEqual([{ kind: "text", value: "extra" }])
+  })
+
+  test("preserves abort_reason through a JSON roundtrip (D11 Wave 4)", () => {
+    const original = new InterAgentCommunication({
+      author: worker,
+      recipient: root,
+      content: "ABORT(context_full): hit cap.",
+      trigger_turn: true,
+      sent_at: 11,
+      abort_reason: { reason: "context_full", details: "hit cap." },
+    })
+    const encoded = Schema.encodeUnknownSync(InterAgentCommunication)(original)
+    const json = JSON.parse(JSON.stringify(encoded))
+    const decoded = Schema.decodeUnknownSync(InterAgentCommunication)(json)
+    expect(decoded.abort_reason?.reason).toBe("context_full")
+    expect(decoded.abort_reason?.details).toBe("hit cap.")
   })
 })
