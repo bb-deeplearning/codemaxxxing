@@ -300,6 +300,22 @@ export interface ListedAgent {
   readonly last_task_message?: string
 }
 
+// D12 (actor-discipline-2026-05-20 Wave 5) — supervision-strategy enums.
+// `OnFailureStrategy` declares how the runtime reacts when a spawned
+// child reaches a terminal non-completed status (errored / crashed):
+//   - "escalate" (default) → forward the existing completion notification
+//     to the spawner's mailbox. Today's implicit behavior.
+//   - "respawn" → the runtime re-spawns the same task_name with a fresh
+//     session id, capped at 3 attempts; on cap a final notification is
+//     forwarded carrying a `respawn cap exceeded` note.
+//   - "ignore" → swallow the failure silently (no completion notification).
+//   - "kill_pool" → stub only this wave; Wave 6 wires pool semantics.
+// `PoolStrategy` is stored on the per-child slot; Wave 6 wires when
+// `spawn_pool` lands. Defaults are designed to match today's semantics
+// so existing callers see NO behavior change.
+export type OnFailureStrategy = "respawn" | "escalate" | "ignore" | "kill_pool"
+export type PoolStrategy = "one_for_one" | "one_for_all" | "rest_for_one"
+
 export interface SpawnAgentOptions {
   readonly fork_turns?: "none" | "all" | number
 }
@@ -312,6 +328,14 @@ export interface SpawnAgentInput {
   readonly initial_message: string
   readonly options?: SpawnAgentOptions
   readonly max_threads?: number
+  // D12 (actor-discipline-2026-05-20 Wave 5) — defaults preserve current
+  // behavior. `on_failure` defaults to "escalate" (today's implicit
+  // semantics: a terminal errored child surfaces a completion
+  // notification to the spawner). `pool_strategy` defaults to
+  // "one_for_one"; stub-only this release — Wave 6 wires the pool
+  // surface. See SpawnAgentInput's D12 type aliases above.
+  readonly on_failure?: OnFailureStrategy
+  readonly pool_strategy?: PoolStrategy
 }
 
 export type SpawnError =
@@ -430,6 +454,23 @@ interface PerRootData {
   // root slot — re-creating a path between two waves is rare and the
   // distinction we care about is the model-facing one (was this a typo?).
   readonly knownPaths: Set<string>
+  // D12 (actor-discipline-2026-05-20 Wave 5) — supervision-strategy
+  // storage. Populated by spawnAgent after the child session is created;
+  // read by the completion watcher at terminal-status time. Cleared with
+  // the rest of the slot on per-root teardown / instance disposal.
+  //   - `onFailureOf` — declared on_failure policy keyed by child SessionID.
+  //   - `poolStrategyOf` — declared pool_strategy keyed by child SessionID
+  //     (stub-only; Wave 6 wires).
+  //   - `respawnCountByPath` — per-task_name respawn-attempt counter keyed
+  //     by the child's canonical path-as-string. Cap is 3 (after which the
+  //     watcher escalates with a `respawn cap exceeded` note).
+  //   - `respawnInputByPath` — cached SpawnAgentInput keyed by path string
+  //     so the watcher can re-invoke `spawnAgent` with the original
+  //     parameters when on_failure=respawn fires.
+  readonly onFailureOf: Map<SessionID, OnFailureStrategy>
+  readonly poolStrategyOf: Map<SessionID, PoolStrategy>
+  readonly respawnCountByPath: Map<string, number>
+  readonly respawnInputByPath: Map<string, SpawnAgentInput>
 }
 
 interface InternalState {
@@ -536,6 +577,10 @@ export const layer = Layer.effect(
           slot.spawnerOf.clear()
           slot.outgoingToSpawner.clear()
           slot.knownPaths.clear()
+          slot.onFailureOf.clear()
+          slot.poolStrategyOf.clear()
+          slot.respawnCountByPath.clear()
+          slot.respawnInputByPath.clear()
           perRoot.delete(deletedID)
           for (const [sid, rid] of sessionToRoot.entries()) {
             if (rid === deletedID) sessionToRoot.delete(sid)
@@ -561,6 +606,10 @@ export const layer = Layer.effect(
               data.spawnerOf.clear()
               data.outgoingToSpawner.clear()
               data.knownPaths.clear()
+              data.onFailureOf.clear()
+              data.poolStrategyOf.clear()
+              data.respawnCountByPath.clear()
+              data.respawnInputByPath.clear()
             }
             perRoot.clear()
             sessionToRoot.clear()
@@ -600,6 +649,10 @@ export const layer = Layer.effect(
           spawnerOf: new Map(),
           outgoingToSpawner: new Set(),
           knownPaths: new Set([String(AgentPath.root())]),
+          onFailureOf: new Map(),
+          poolStrategyOf: new Map(),
+          respawnCountByPath: new Map(),
+          respawnInputByPath: new Map(),
         }
         data.perRoot.set(id, slot)
         data.sessionToRoot.set(id, id)
@@ -665,7 +718,9 @@ export const layer = Layer.effect(
       return fiber
     })
 
-    const spawnAgent = Effect.fn("AgentControl.spawnAgent")(function* (input: SpawnAgentInput) {
+    const spawnAgent: (input: SpawnAgentInput) => Effect.Effect<LiveAgent, SpawnError> = Effect.fn(
+      "AgentControl.spawnAgent",
+    )(function* (input: SpawnAgentInput) {
       const data = yield* InstanceState.get(state)
       const callID = newCallID()
       // 1. Compute child path. Failure here is AgentPathInvalidError from
@@ -783,6 +838,21 @@ export const layer = Layer.effect(
             // watcher reads outgoingToSpawner at terminal-status time to
             // decide whether to prepend the safety-net warning.
             slot.spawnerOf.set(child.id, input.parentPath)
+            // D12 (actor-discipline-2026-05-20 Wave 5) — store the
+            // declared supervision policies on the per-child slot. The
+            // completion watcher reads `onFailureOf` at terminal-status
+            // time to decide between escalate / respawn / ignore. The
+            // `respawnInputByPath` cache lets the watcher re-invoke
+            // spawnAgent with the original parameters when a respawn
+            // fires. `respawnCountByPath` is initialised once per
+            // task_name and bumped on each respawn (cap = 3 attempts).
+            // `poolStrategyOf` is stored only here — Wave 6 wires.
+            slot.onFailureOf.set(child.id, input.on_failure ?? "escalate")
+            slot.poolStrategyOf.set(child.id, input.pool_strategy ?? "one_for_one")
+            slot.respawnInputByPath.set(String(childPath), input)
+            if (!slot.respawnCountByPath.has(String(childPath))) {
+              slot.respawnCountByPath.set(String(childPath), 0)
+            }
             // D9 (actor-discipline-2026-05-20) — record this path so the
             // close_agent tool can distinguish "already terminated" (the path
             // was once registered under this root, then released) from
@@ -841,6 +911,77 @@ export const layer = Layer.effect(
                   const isShutdown = next === "shutdown"
                   if (isShutdown && slot.skipCompletionNotification.has(child.id)) {
                     return yield* Effect.interrupt
+                  }
+                  // D12 (actor-discipline-2026-05-20 Wave 5) — supervision
+                  // policy dispatch. Inspect the child's declared
+                  // `on_failure` policy when status is errored (non-
+                  // shutdown, non-completed). Three branches that exit
+                  // before the standard notification fires:
+                  //   - respawn (count < 3) → send a transient_tool_error
+                  //     notification with `attempt N/3`, increment the
+                  //     per-path counter, release this child's slot state,
+                  //     and re-invoke spawnAgent with the cached input.
+                  //   - ignore → swallow the failure silently.
+                  // A fourth branch sets `overrideAbortReason` to enrich
+                  // the standard notification's abort_reason when the
+                  // respawn cap is exceeded (escalate fall-through).
+                  // `escalate` (default) and `kill_pool` (stub) fall
+                  // through to the pre-D12 notification path unchanged.
+                  const isErrored = !isShutdown && typeof next === "object" && "errored" in next
+                  const childPolicy = slot.onFailureOf.get(child.id) ?? "escalate"
+                  let overrideAbortReason: { reason: string; details: string } | undefined
+                  if (isErrored && childPolicy === "ignore") {
+                    return yield* Effect.interrupt
+                  }
+                  if (isErrored && childPolicy === "respawn") {
+                    const pathKey = String(childPath)
+                    const priorCount = slot.respawnCountByPath.get(pathKey) ?? 0
+                    if (priorCount < 3) {
+                      const attempt = priorCount + 1
+                      const respawnNote = `Agent ${String(childPath)} reached status: errored`
+                      yield* sendInterAgentCommunication(
+                        input.parentID,
+                        new InterAgentCommunication({
+                          author: childPath,
+                          recipient: input.parentPath,
+                          content: respawnNote,
+                          trigger_turn: false,
+                          sent_at: Date.now(),
+                          abort_reason: {
+                            reason: "transient_tool_error",
+                            details: `respawned after crash; attempt ${attempt}/3`,
+                          },
+                        }),
+                        child.id,
+                      ).pipe(Effect.catch(() => Effect.void))
+                      slot.respawnCountByPath.set(pathKey, attempt)
+                      const cachedInput = slot.respawnInputByPath.get(pathKey) ?? input
+                      // Release this crashed child's per-slot state before
+                      // re-spawning. The registry path index MUST be freed
+                      // so `reservation.reserveAgentPath(childPath)` in
+                      // the new spawn doesn't trip PathAlreadyExistsError.
+                      // We KEEP respawnCountByPath + respawnInputByPath
+                      // so subsequent crashes accumulate against the cap.
+                      slot.mailboxes.delete(child.id)
+                      slot.statuses.delete(child.id)
+                      slot.fibers.delete(child.id)
+                      slot.onFailureOf.delete(child.id)
+                      slot.poolStrategyOf.delete(child.id)
+                      slot.outgoingToSpawner.delete(child.id)
+                      slot.spawnerOf.delete(child.id)
+                      slot.skipCompletionNotification.delete(child.id)
+                      yield* slot.registry.releaseSpawnedThread(child.id)
+                      data.sessionToRoot.delete(child.id)
+                      yield* spawnAgent(cachedInput).pipe(Effect.catch(() => Effect.void))
+                      return yield* Effect.interrupt
+                    }
+                    // Cap exceeded: fall through to standard notification
+                    // but enrich abort_reason so the spawner sees the
+                    // escalation cause.
+                    overrideAbortReason = {
+                      reason: "transient_tool_error",
+                      details: "respawn cap exceeded after 3 attempts",
+                    }
                   }
                   const label = isShutdown
                     ? "shutdown"
@@ -914,6 +1055,11 @@ export const layer = Layer.effect(
                   // payload. Independent of safety-net warning logic;
                   // both passes inspect the same `body` separately.
                   const abortParsed = parseAbortReason(body)
+                  // D12 (actor-discipline-2026-05-20 Wave 5) — when the
+                  // respawn cap branch above set `overrideAbortReason`,
+                  // it wins over the body-parsed value so the spawner
+                  // sees the cap-exceeded escalation cause.
+                  const effectiveAbortReason = overrideAbortReason ?? abortParsed
                   // The watcher's send may race with parent deletion. If the
                   // parent root is gone, sendInterAgentCommunication fails
                   // with AgentNotFoundError — absorb it; nothing to wake.
@@ -925,7 +1071,7 @@ export const layer = Layer.effect(
                       content,
                       trigger_turn: false,
                       sent_at: Date.now(),
-                      abort_reason: abortParsed,
+                      abort_reason: effectiveAbortReason,
                     }),
                     child.id,
                   ).pipe(Effect.catch(() => Effect.void))
