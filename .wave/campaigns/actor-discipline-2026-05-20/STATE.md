@@ -8,8 +8,8 @@ plan_source: inline (conversation thread; ADR-009 phases 1-3 + Anthropic AI Engi
 executor_agent: caveman
 executor_model: ""
 executor_variant: ""
-current_wave: 5
-wave_status: running
+current_wave: 6
+wave_status: pending
 failure_kind: ""
 retry_count: 0
 verify_count: 1
@@ -18,7 +18,7 @@ loop_state: armed
 active_session_id: ses_1baf41a10ffeZ422LtQm8VsmkF
 active_session_kind: executor
 total_waves: 10
-session_count: 5
+session_count: 6
 created: 2026-05-20
 last_updated: 2026-05-20
 ```
@@ -32,7 +32,7 @@ last_updated: 2026-05-20
 | 2 | complete | ses_1bb496396ffeVoJ9Zbezn1sXkA | 4fda52548 | Validation: INV-D-01..08 + 2 regressions all green. T1 ABORT(spec_wrong) → orchestrator landed D5b two-pass extractor hardening inline (control.ts:820-859) + GOTCHAS entry. Reproduces ses_1c2e8d84affe + ses_1d84f236bffe Demo 2 end-to-end. 3 tasks orchestrated via planner + per-task gen+eval pairs. 29/29 contract criteria passed. Full multi-agent-invariants.test.ts: 25/0. Prose suite: 21/0. |
 | 3 | complete | ses_1bb308ef6ffeA3UiI4m70jbr9i | 39ffe0e2f | Ask pattern (Phase 2A): correlation_id on send_message/followup_task + InterAgentCommunication schema; wait_for_reply variant on wait_agent (same file, second Tool.define); mandatory-timeout doctrine in multi-agent-root.txt + subagent mirror. INV-D-09..11 added (28/0 invariants total). 4 tasks orchestrated via planner + per-task gen+eval pairs. 1 T3 C6 orchestrator-adjudication (registry-wiring literal-grep too strict for established convention). 41/41 contract criteria passed. Inline coverage hardening: mailbox.peek + control.findMailboxByCorrelationId + wait_for_reply orphan tests. Per-file 100% line coverage on all modified files except pre-existing send_failed branch in agent-send.ts (not introduced by this wave). Prose suite: 27/0. |
 | 4 | complete | ses_1bb04b0daffeSUR0CnF29k7wGI | 8c16cbc7d | ABORT protocol (Phase 2B): D11 schema (`abort_reason` optional struct on InterAgentCommunication); D11 runtime parser (`parseAbortReason` line-anchored regex at control.ts:221) + completion-watcher populates structured payload; D11 prose (`## ABORT` section with six reasons + format + last-line constraint in multi-agent-subagent.txt; brief refs in general/anthropic.txt, general/gemini.txt, explore.txt; ORCHESTRATOR_PROTOCOL.md cross-ref). INV-D-12..14 added (31/0 invariants total). New Wave 4 ABORT prose grep block (38/0 prose total). 4 tasks across attempts 1+2: T1+T2 from attempt 1 (crashed mid-orchestration; rolled forward); T3+T4 from attempt 2 (planner-skipped, pre-agreed contracts, 0 pivots). 38/38 contract criteria passed. Per-file 100% line coverage on inter-agent-communication.ts (100%) and control.ts (100% lines; 94.78% functions = pre-existing Schema.TaggedErrorClass gap per GOTCHA). GOTCHAS entry `agentcontrol-d11-abort-line-parser-last-line-only` registered. |
-| 5 | running  | ses_1baf41a10ffeZ422LtQm8VsmkF | — | Supervision strategies (Phase 3A): on_failure + pool_strategy params on spawn_agent; loop-level recovery decisions. INV-D-15..17. |
+| 5 | complete | ses_1baf41a10ffeZ422LtQm8VsmkF | — | Supervision strategies (Phase 3A): D12 control.ts runtime (OnFailureStrategy/PoolStrategy types + SpawnAgentInput extension + PerRootData 4 new maps + spawnAgent policy storage + completion-watcher respawn/ignore/cap-exceeded/escalate dispatch + 6 D12 it.live tests). D12 agent-spawn.ts tool (Schema.optional+Union+Literal for 4+3 enums + execute passthrough + 9 it.live tests). INV-D-15..17 integration invariants + `## Supervision strategies (D12)` section in agent-spawn.txt. 3 tasks T1+T2+T3 orchestrated via pre-agreed-contracts + per-task gen+eval pairs; 0 pivots. T1 evaluator self-closed mid-grade (C1-C7 only) → orchestrator inline-adjudicated C8-C12 + 2 recipe-shape adjustments per Wave 4 T2 precedent. T2 + T3 evaluators stayed alive through all criteria (explicit "STAY ALIVE" reminder in spawn message). 31/31 CONTRACT criteria passed. multi-agent-invariants: 34/0 (was 31). |
 | 6 | pending  | — | — | Spawn pool (Phase 3B): spawn_pool primitive + collect strategies (all/first/any_n). Permission key consults task. INV-D-18..20. |
 | 7 | pending  | — | — | Lifecycle (Phase 3C): link/unlink for paired death; bounded mailboxes + backpressure. INV-D-21..23. |
 | 8 | pending  | — | — | Behaviors (Phase 3D): declared per-agent_type behavior contracts + runtime validation harness. INV-D-24..26. |
