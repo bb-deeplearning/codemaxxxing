@@ -3,7 +3,7 @@
 ## Attempt 1 — success (WAVE COMPLETE)
 
 **Session:** ses_1baf41a10ffeZ422LtQm8VsmkF
-**Settle commit:** (to be filled by settle commit)
+**Settle commit:** 209ce3e63
 **Date:** 2026-05-20
 **Decision on entry:** first attempt
 **Orchestration:** orchestrator pre-agreed contracts (PLAN.json + CONTRACT.json drafted by /root before subagent dispatch) + sequential per-task gen+eval pairs for T1, T2, T3. 0 pivots.
