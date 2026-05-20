@@ -32,4 +32,23 @@ export class InterAgentCommunication extends Schema.Class<InterAgentCommunicatio
   // context_full, approach_failed, user_question. Optional + additive:
   // pre-existing notifications without abort_reason continue to validate.
   abort_reason: Schema.optional(Schema.Struct({ reason: Schema.String, details: Schema.String })),
+  // D16 (actor-discipline-2026-05-20 Wave 8) — behavior_violation is the
+  // machine-readable structured payload that supplements D5's prose
+  // safety-net warning. control.ts's completion-watcher resolves the
+  // child's declared BehaviorContract (per-agent_type, per-version) at
+  // terminal-status time and, if `Behaviors.computeViolations(...)`
+  // returns a non-empty list, attaches this field to the parent's
+  // notification. Supervisors dispatch on `contract_version` +
+  // `violations[].kind` (`missing_delivery` / `undeclared_failure_mode`)
+  // to pick a recovery strategy. Both D5's prose warning AND this
+  // structured field can fire on the same case; the prose warning is
+  // for the model, the structured field is for orchestration code.
+  // Optional + additive — pre-existing notifications without
+  // behavior_violation continue to validate.
+  behavior_violation: Schema.optional(
+    Schema.Struct({
+      contract_version: Schema.String,
+      violations: Schema.Array(Schema.Struct({ kind: Schema.String, detail: Schema.String })),
+    }),
+  ),
 }) {}

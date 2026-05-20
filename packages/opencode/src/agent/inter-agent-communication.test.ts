@@ -59,6 +59,24 @@ describe("InterAgentCommunication construction", () => {
     expect(msg.abort_reason?.reason).toBe("spec_wrong")
     expect(msg.abort_reason?.details).toBe("bad spec.")
   })
+
+  test("optional behavior_violation struct preserved when supplied (D16 Wave 8)", () => {
+    const msg = new InterAgentCommunication({
+      author: worker,
+      recipient: root,
+      content: "reached status: shutdown",
+      trigger_turn: true,
+      sent_at: 13,
+      behavior_violation: {
+        contract_version: "subagent_v1",
+        violations: [{ kind: "missing_delivery", detail: "child did not send_message" }],
+      },
+    })
+    expect(msg.behavior_violation?.contract_version).toBe("subagent_v1")
+    expect(msg.behavior_violation?.violations.length).toBe(1)
+    expect(msg.behavior_violation?.violations[0].kind).toBe("missing_delivery")
+    expect(msg.behavior_violation?.violations[0].detail).toBe("child did not send_message")
+  })
 })
 
 describe("InterAgentCommunication schema validation", () => {
@@ -130,6 +148,26 @@ describe("InterAgentCommunication schema validation", () => {
     expect(decoded.abort_reason?.reason).toBe("approach_failed")
     expect(decoded.abort_reason?.details).toBe("tried 3x.")
   })
+
+  test("decodes a payload carrying behavior_violation (D16 Wave 8)", () => {
+    const decoded = Schema.decodeUnknownSync(InterAgentCommunication)({
+      author: "/root/worker",
+      recipient: "/root",
+      content: "reached status: shutdown",
+      trigger_turn: true,
+      sent_at: 14,
+      behavior_violation: {
+        contract_version: "subagent_v2",
+        violations: [
+          { kind: "missing_delivery", detail: "no send_message" },
+          { kind: "undeclared_failure_mode", detail: "approach_failed not declared" },
+        ],
+      },
+    })
+    expect(decoded.behavior_violation?.contract_version).toBe("subagent_v2")
+    expect(decoded.behavior_violation?.violations.length).toBe(2)
+    expect(decoded.behavior_violation?.violations[1].kind).toBe("undeclared_failure_mode")
+  })
 })
 
 describe("InterAgentCommunication JSON roundtrip", () => {
@@ -180,5 +218,25 @@ describe("InterAgentCommunication JSON roundtrip", () => {
     const decoded = Schema.decodeUnknownSync(InterAgentCommunication)(json)
     expect(decoded.abort_reason?.reason).toBe("context_full")
     expect(decoded.abort_reason?.details).toBe("hit cap.")
+  })
+
+  test("preserves behavior_violation through a JSON roundtrip (D16 Wave 8)", () => {
+    const original = new InterAgentCommunication({
+      author: worker,
+      recipient: root,
+      content: "reached status: shutdown",
+      trigger_turn: true,
+      sent_at: 17,
+      behavior_violation: {
+        contract_version: "subagent_v1",
+        violations: [{ kind: "missing_delivery", detail: "no send_message before close" }],
+      },
+    })
+    const encoded = Schema.encodeUnknownSync(InterAgentCommunication)(original)
+    const json = JSON.parse(JSON.stringify(encoded))
+    const decoded = Schema.decodeUnknownSync(InterAgentCommunication)(json)
+    expect(decoded.behavior_violation?.contract_version).toBe("subagent_v1")
+    expect(decoded.behavior_violation?.violations[0].kind).toBe("missing_delivery")
+    expect(decoded.behavior_violation?.violations[0].detail).toBe("no send_message before close")
   })
 })
