@@ -3,7 +3,7 @@
 ## Attempt 1 — success (WAVE COMPLETE)
 
 **Session:** ses_1ba5566e5ffeUj6iUyR5ONe2dp
-**Settle commit:** (this commit)
+**Settle commit:** 8f52750a0
 **Date:** 2026-05-20
 **Decision on entry:** first attempt
 **Orchestration:** executor-solo per WAVE.md header. No planner, no gen+eval pairs, no pivots — the audit synthesis is irreducibly the executor's job and the instrumentation surface is small enough (4 metric emitters + 1 new file) that a planner-evaluator decomposition would multiply work without adding value.
