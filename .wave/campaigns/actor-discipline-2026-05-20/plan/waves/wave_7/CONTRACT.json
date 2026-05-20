@@ -384,8 +384,8 @@
     ],
     "depends_on": ["T1", "T2", "T3"],
     "pre_agreed_by_orchestrator": true,
-    "signed": false,
-    "commit_sha": null,
+    "signed": true,
+    "commit_sha": "59ae09523",
     "criteria": [
       {
         "id": "C1",
@@ -393,8 +393,8 @@
         "assertion": "multi-agent-invariants.test.ts contains it.instance blocks named INV-D-21 / INV-D-22 / INV-D-23 inside the existing INTEGRATION_INVARIANTS describe block.",
         "verify": "bash -c 'grep -qE \"INV-D-21-link-paired-death-on-either-crash\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts && grep -qE \"INV-D-22-bounded-mailbox-rejects-on-overflow\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts && grep -qE \"INV-D-23-bounded-mailbox-does-not-block-completion-notification\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts'",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "All three it.instance names matched: INV-D-21-link-paired-death-on-either-crash (L2401), INV-D-22-bounded-mailbox-rejects-on-overflow (L2524), INV-D-23-bounded-mailbox-does-not-block-completion-notification (L2597)."
       },
       {
         "id": "C2",
@@ -402,8 +402,8 @@
         "assertion": "INV-D-21 test exercises the linked-death cascade end-to-end (linkAgents + a crash trigger + status assertion on the peer) AND asserts the 'linked_death' notification label.",
         "verify": "bash -c 'awk \"/INV-D-21-link-paired-death/,/^  it\\\\.instance/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"linkAgents|linked_death\"'",
         "weight": 0.06,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "Recipe-shape adjustment: awk range start matches preceding comment line (L2387) and end matches the it.instance line itself (L2401) → empty body range. Re-ran with `sed -n 2401,2519p ... | grep -cE 'linkAgents|linked_death'` → 9 hits inside the INV-D-21 body, confirming the cascade assertion."
       },
       {
         "id": "C3",
@@ -411,8 +411,8 @@
         "assertion": "INV-D-22 test asserts MailboxFullError / mailbox_full when capacity is reached AND demonstrates recovery via drain.",
         "verify": "bash -c 'awk \"/INV-D-22-bounded-mailbox-rejects/,/^  it\\\\.instance/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"MailboxFullError|mailbox_full\"'",
         "weight": 0.06,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "Recipe-shape adjustment: same awk-range-start-matches-comment issue as C2. Re-ran with `sed -n 2524,2591p ... | grep -cE 'MailboxFullError|mailbox_full'` → 3 hits inside INV-D-22 body, confirming the overflow + drain assertion."
       },
       {
         "id": "C4",
@@ -420,8 +420,8 @@
         "assertion": "INV-D-23 test asserts the completion notification reaches the parent regardless of mailbox-full state.",
         "verify": "bash -c 'awk \"/INV-D-23-bounded-mailbox-does-not-block/,/^\\\\}\\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"completion notification|reached status:|sendSystem|system:\\s*true\"'",
         "weight": 0.06,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "awk range matched body containing reached status / sendSystem / system: true tokens (RC=0)."
       },
       {
         "id": "C5",
@@ -429,8 +429,8 @@
         "assertion": "multi-agent-root.txt has the new bullet point about bounded mailboxes (contains 'bounded mailboxes' or 'mailbox_full' AND 'completion notifications from terminating subagents bypass this cap' or close paraphrase).",
         "verify": "bash -c 'grep -qiE \"bounded mailbox|mailbox_full\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt && grep -qiE \"bypass|completion notification\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt'",
         "weight": 0.06,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "Both greps matched in multi-agent-root.txt: bounded mailbox / mailbox_full present AND bypass / completion notification present."
       },
       {
         "id": "C6",
@@ -438,8 +438,8 @@
         "assertion": "multi-agent-subagent.txt contains 'mailbox_full' AND 'retry with a small backoff' (or close paraphrase).",
         "verify": "bash -c 'grep -qiE \"mailbox_full\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt && grep -qiE \"retry|backoff\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt'",
         "weight": 0.05,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "Both greps matched in multi-agent-subagent.txt: mailbox_full AND retry/backoff present."
       },
       {
         "id": "C7",
@@ -447,8 +447,8 @@
         "assertion": "prose/subagent-prompts.test.ts extends with assertions on multi-agent-root.txt + multi-agent-subagent.txt mailbox prose AND on agent-link.txt presence + link-related substrings.",
         "verify": "bash -c 'grep -qiE \"mailbox_full|bounded mailbox\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -qE \"agent-link\\\\.txt\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts'",
         "weight": 0.06,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "Both greps matched: mailbox_full / bounded mailbox AND agent-link.txt referenced in prose/subagent-prompts.test.ts."
       },
       {
         "id": "C8",
@@ -456,8 +456,8 @@
         "assertion": "bun typecheck passes from packages/opencode.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "bun typecheck → exit 0 (tsgo --noEmit clean)."
       },
       {
         "id": "C9",
@@ -465,8 +465,8 @@
         "assertion": "The 3 new INV-D-21..23 tests pass when filtered via -t.",
         "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t \"INV-D-2\" 2>&1 | tee /tmp/wave7-t4-c9.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave7-t4-c9.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave7-t4-c9.log'",
         "weight": 0.12,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "4 pass / 0 fail / 28 expect() calls (INV-D-20 + INV-D-21 + INV-D-22 + INV-D-23 — substring -t 'INV-D-2' matches all four)."
       },
       {
         "id": "C10",
@@ -474,8 +474,8 @@
         "assertion": "Full multi-agent-invariants.test.ts AND prose/subagent-prompts.test.ts pass (no regressions).",
         "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts ./test/prose/subagent-prompts.test.ts 2>&1 | tee /tmp/wave7-t4-c10.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave7-t4-c10.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave7-t4-c10.log'",
         "weight": 0.15,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "88 pass / 0 fail / 249 expect() calls across multi-agent-invariants.test.ts + subagent-prompts.test.ts."
       },
       {
         "id": "C11",
@@ -483,8 +483,8 @@
         "assertion": "Generator commit exists matching 'wave 7 T4:' AND includes the integration test + prose diffs.",
         "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 7 T4\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat --format= \"$sha\" | grep -qE \"test/integration/multi-agent-invariants\\\\.test\\\\.ts|prompt/multi-agent-root\\\\.txt\"'",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "Commit 59ae09523 touches exactly the 4 contracted writes (multi-agent-root.txt, multi-agent-subagent.txt, multi-agent-invariants.test.ts, subagent-prompts.test.ts) — no spillover. Recipe-shape adjustment: default `git show --stat` truncates paths at terminal width → grep miss; re-ran with `--stat=200` which preserves full paths → match confirmed (4 files / 351 insertions, all under packages/opencode/{src/agent/prompt,test}/)."
       }
     ]
   }
