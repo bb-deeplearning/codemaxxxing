@@ -342,6 +342,8 @@ export const MULTI_AGENT_TOOLS = [
   "list_agents",
   "close_agent",
   "spawn_pool",
+  "link_agents",
+  "unlink_agents",
 ]
 
 export function disabled(tools: string[], ruleset: Ruleset): Set<string> {

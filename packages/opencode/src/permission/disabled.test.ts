@@ -91,6 +91,8 @@ describe("Permission.disabled", () => {
       "list_agents",
       "close_agent",
       "spawn_pool",
+      "link_agents",
+      "unlink_agents",
     ])
   })
 
@@ -105,6 +107,8 @@ describe("Permission.disabled", () => {
         "list_agents",
         "close_agent",
         "spawn_pool",
+        "link_agents",
+        "unlink_agents",
         "read",
       ],
       [{ permission: "task", pattern: "*", action: "deny" }],
@@ -120,7 +124,7 @@ describe("Permission.disabled", () => {
     // `explore: deny` is precise, not `*: deny`. Tools stay present in the
     // model list; per-call permission flow handles per-pattern denial.
     const result = Permission.disabled(
-      ["task", "spawn_agent", "send_message", "followup_task", "wait_agent", "list_agents", "close_agent", "spawn_pool"],
+      ["task", "spawn_agent", "send_message", "followup_task", "wait_agent", "list_agents", "close_agent", "spawn_pool", "link_agents", "unlink_agents"],
       [{ permission: "task", pattern: "explore", action: "deny" }],
     )
     for (const id of MULTI_AGENT_TOOLS) {

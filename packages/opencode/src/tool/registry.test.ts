@@ -215,6 +215,8 @@ describe("ToolRegistry.tools — Wave 4 model-visible list excludes bash + task"
             expect(ids).toContain("list_agents")
             expect(ids).toContain("close_agent")
             expect(ids).toContain("spawn_pool")
+            expect(ids).toContain("link_agents")
+            expect(ids).toContain("unlink_agents")
           }),
         ),
     )

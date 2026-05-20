@@ -22,6 +22,7 @@ import { AgentWaitTool, AgentWaitForReplyTool } from "./agent-wait/agent-wait"
 import { AgentListTool } from "./agent-list/agent-list"
 import { AgentCloseTool } from "./agent-close/agent-close"
 import { AgentPoolTool } from "./agent-pool/agent-pool"
+import { LinkAgentsTool, UnlinkAgentsTool } from "./agent-link/agent-link"
 import { AgentControl } from "@/agent/control"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
@@ -138,6 +139,8 @@ export const layer: Layer.Layer<
     const agentlist = yield* AgentListTool
     const agentclose = yield* AgentCloseTool
     const agentpool = yield* AgentPoolTool
+    const linkagents = yield* LinkAgentsTool
+    const unlinkagents = yield* UnlinkAgentsTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -245,6 +248,8 @@ export const layer: Layer.Layer<
           agentlist: Tool.init(agentlist),
           agentclose: Tool.init(agentclose),
           agentpool: Tool.init(agentpool),
+          linkagents: Tool.init(linkagents),
+          unlinkagents: Tool.init(unlinkagents),
         })
 
         return {
@@ -291,6 +296,8 @@ export const layer: Layer.Layer<
             tool.agentlist,
             tool.agentclose,
             tool.agentpool,
+            tool.linkagents,
+            tool.unlinkagents,
             ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
             ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [tool.plan] : []),
           ],
@@ -421,7 +428,9 @@ export const layer: Layer.Layer<
                   tool.id === AgentWaitForReplyTool.id ||
                   tool.id === AgentListTool.id ||
                   tool.id === AgentCloseTool.id ||
-                  tool.id === AgentPoolTool.id
+                  tool.id === AgentPoolTool.id ||
+                  tool.id === LinkAgentsTool.id ||
+                  tool.id === UnlinkAgentsTool.id
                 ? TaskTool.id
                 : null
           if (legacyId) {

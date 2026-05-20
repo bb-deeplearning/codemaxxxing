@@ -1,0 +1,115 @@
+Link two subagents into a paired-death relationship. When either peer
+terminates non-gracefully — crash, runtime error, or close from above —
+the runtime cascades the death to every linked partner. Use this to bind
+co-dependent workers so a partial failure doesn't leave orphaned fibers
+holding context and slot quota.
+
+This file documents BOTH tools the runtime exports from the link surface:
+`link_agents` (forge the edge) and `unlink_agents` (drop it). The
+parameter shape is identical for both — `target_a` + `target_b` — and the
+operation is symmetric on the pair: link(A, B) and link(B, A) yield the
+same adjacency entry.
+
+## link_agents
+
+### Mental model
+
+A link is a bidirectional edge on the per-root adjacency map. Forging it
+stores the same edge on both peers' link sets, so cascade lookups from
+either side see the partner. The cascade itself lives in the completion
+watcher — when peer A reaches a terminal non-shutdown status (errored,
+killed, or any defect), the watcher iterates A's link set and closes each
+peer with the `linked_death` label. The completion notification posted to
+the parent reads "reached status: linked_death" instead of plain
+"shutdown" so the operator can tell paired death apart from a clean
+self-close.
+
+Linking is idempotent — calling `link_agents` on an already-linked pair
+is a no-op (Set semantics). Re-link does not duplicate the edge, does
+not double-fire the cascade, and does not reset any state. Safe to call
+defensively before issuing work to either peer.
+
+### When to use
+
+- Two workers cooperating on a single deliverable where one without the
+  other is useless (producer + consumer, parser + writer, planner +
+  executor). If the producer crashes, you want the consumer to die too
+  rather than hang on an empty queue.
+- A worker plus its dedicated observer. The observer holds no value
+  without the worker; linking releases its slot the moment the worker
+  exits.
+- Coordinated sub-trees: link the two roots of two parallel sub-pools so
+  killing one pool by failure tears the other down in lockstep.
+
+### When NOT to use
+
+- One worker plus a long-lived observer that should outlive any single
+  worker. The observer holds state across worker generations; linking
+  would tear it down on every worker failure.
+- Independent siblings with disjoint work. Link adds coupling — if you
+  don't need the cascade, don't pay for it.
+- "I want a notification when this dies" — that's what the parent's
+  mailbox already gives you via the completion notification. Link is
+  about forced co-termination, not observation.
+
+### Cross-root constraint
+
+Both peers must live under the same root. The per-root scoping invariant
+makes cross-root coordination impossible by construction; attempts return
+`cross_root` and the call is rejected before any state changes. If you
+genuinely need cross-root coupling, the design is wrong — that's what
+two independent sessions are for.
+
+### Self-link
+
+Linking an agent to itself is rejected at this surface with `self_link`.
+The underlying primitive treats it as a no-op, but at the model level a
+self-link is almost always a typo (most often the same path passed twice)
+so we surface it loudly.
+
+## unlink_agents
+
+### Behavior
+
+Drops the symmetric edge between `target_a` and `target_b`. After unlink,
+either peer's death no longer cascades to the other. Idempotent: calling
+`unlink_agents` on an already-unlinked pair (or on a pair that was never
+linked) is a no-op and returns successfully — the model does not need to
+track link state to decide whether to call it.
+
+### When to use
+
+- A linked worker finished a phase of cooperative work and is moving to
+  an independent next phase. Unlink before the next phase so its peer's
+  failure no longer kills it.
+- Tearing down a pool: unlink members from one another before closing
+  individual members so the close cascade does not chain through links.
+
+### When NOT to use
+
+- Unlinking and immediately re-linking — that's a no-op pair. If you
+  want to suspend the cascade for a window, do something else.
+
+## Symmetric + idempotent semantics
+
+Both operations are symmetric on the pair (order doesn't matter) and
+idempotent (repeated calls don't accumulate effects). This means the
+model can call `link_agents` or `unlink_agents` defensively without
+tracking prior state. The runtime is the source of truth for the
+adjacency map.
+
+## Permission
+
+Both tools consult permission key `task` — the same group as
+`spawn_agent`, `send_message`, `followup_task`, `wait_agent`,
+`list_agents`, `close_agent`, `spawn_pool`. A saved rule like
+`permission.task: { "link:*": allow }` transparently allows link/unlink
+calls without re-prompting. A wildcard `permission.task: { "*": "deny" }`
+strips both tools from your model-visible tool list entirely.
+
+## Cost
+
+Forging or dropping an edge is a Set mutation under the caller's root
+slot — O(1), no fibers, no I/O. The cascade itself runs once per peer
+when the trigger fires, regardless of how many times you linked. Cheap;
+use freely when the coupling matches your design.
