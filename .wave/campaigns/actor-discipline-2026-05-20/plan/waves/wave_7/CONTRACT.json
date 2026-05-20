@@ -154,8 +154,8 @@
     ],
     "depends_on": ["T1"],
     "pre_agreed_by_orchestrator": true,
-    "signed": false,
-    "commit_sha": null,
+    "signed": true,
+    "commit_sha": "1d5006b70",
     "criteria": [
       {
         "id": "C1",
@@ -163,8 +163,8 @@
         "assertion": "agent-link.ts exports LinkAgentsTool AND UnlinkAgentsTool AND constants LINK_ID='link_agents' / UNLINK_ID='unlink_agents' / PermissionKey='task' (literal-as-const form).",
         "verify": "bash -c 'for p in \"export const LinkAgentsTool\" \"export const UnlinkAgentsTool\" \"export const LINK_ID = \\\"link_agents\\\" as const\" \"export const UNLINK_ID = \\\"unlink_agents\\\" as const\" \"export const PermissionKey = \\\"task\\\" as const\"; do grep -qF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.ts || { echo \"missing: $p\"; exit 1; }; done'",
         "weight": 0.07,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "All 5 literal exports present: LinkAgentsTool, UnlinkAgentsTool, LINK_ID/UNLINK_ID/PermissionKey as-const consts."
       },
       {
         "id": "C2",
@@ -172,8 +172,8 @@
         "assertion": "Parameters Schema for the link tools declares target_a + target_b as required String fields (both appear in the Schema AST; neither isOptional).",
         "verify": "bash -c 'grep -qE \"target_a:\\s*Schema\\.String\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.ts && grep -qE \"target_b:\\s*Schema\\.String\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.ts'",
         "weight": 0.04,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "target_a: Schema.String AND target_b: Schema.String required fields present."
       },
       {
         "id": "C3",
@@ -181,8 +181,8 @@
         "assertion": "LinkAgentsTool execute body rejects self-link (target_a resolves to same SessionID as target_b → errorOutput with tag 'self_link') AND handles cross-root rejection (control.linkAgents AgentNotFoundError → errorOutput tag 'cross_root') AND target_not_found case.",
         "verify": "bash -c 'grep -qE \"self_link\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.ts && grep -qE \"cross_root\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.ts && grep -qE \"target_not_found\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.ts'",
         "weight": 0.06,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "All 3 error tags present: self_link, cross_root, target_not_found."
       },
       {
         "id": "C4",
@@ -190,8 +190,8 @@
         "assertion": "Both tools call ctx.ask with PermissionKey + patterns array (the resolved link permission gate fires before the runtime call).",
         "verify": "bash -c 'c=$(grep -cE \"ctx\\\\.ask\\\\(\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.ts); [ \"$c\" -ge 2 ] || { echo \"need >=2 ctx.ask calls (one per tool); saw $c\"; exit 1; }'",
         "weight": 0.04,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "ctx.ask call count=2 (one per tool: LinkAgentsTool + UnlinkAgentsTool)."
       },
       {
         "id": "C5",
@@ -199,8 +199,8 @@
         "assertion": "agent-link.txt exists AND has length >= 60 lines AND covers sections on 'When to use' / 'When NOT to use' (or equivalent operational manual sections) AND mentions 'symmetric' / 'idempotent' / 'paired death' (or 'bidirectional').",
         "verify": "bash -c 'lines=$(wc -l < /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.txt); [ \"$lines\" -ge 60 ] && grep -qiE \"when (to|not) use|when not to use\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.txt && grep -qiE \"symmetric|bidirectional|paired death|linked\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.txt'",
         "weight": 0.05,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "agent-link.txt lines=115 (>=60); has when-to-use/when-not sections; mentions symmetric/linked."
       },
       {
         "id": "C6",
@@ -208,17 +208,17 @@
         "assertion": "permission/index.ts MULTI_AGENT_TOOLS includes 'link_agents' AND 'unlink_agents' (canonical order — appended after spawn_pool).",
         "verify": "bash -c 'grep -qE \"\\\"link_agents\\\",\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/permission/index.ts && grep -qE \"\\\"unlink_agents\\\",?\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/permission/index.ts'",
         "weight": 0.05,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "link_agents AND unlink_agents both present in MULTI_AGENT_TOOLS array."
       },
       {
         "id": "C7",
         "category": "correctness",
         "assertion": "permission/disabled.test.ts test updates include link_agents AND unlink_agents under MULTI_AGENT_TOOLS canonical-order assertions AND the wildcard-deny stripping test.",
-        "verify": "bash -c 'grep -qE "\\"link_agents\\"" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/permission/disabled.test.ts && grep -qE "\\"unlink_agents\\"" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/permission/disabled.test.ts'",
+        "verify": "bash -c 'grep -qE "\\\"link_agents\\\"" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/permission/disabled.test.ts && grep -qE "\\\"unlink_agents\\\"" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/permission/disabled.test.ts'",
         "weight": 0.04,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "disabled.test.ts references both \"link_agents\" and \"unlink_agents\"."
       },
       {
         "id": "C8",
@@ -226,8 +226,8 @@
         "assertion": "tool/registry.ts imports LinkAgentsTool + UnlinkAgentsTool AND adds both to builtin array AND extends the legacy-bridge OR chain to include them.",
         "verify": "bash -c 'grep -qE \"import \\{ LinkAgentsTool, UnlinkAgentsTool \\} from\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts && grep -qF \"tool.linkagents\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts && grep -qF \"tool.unlinkagents\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts && grep -qE \"LinkAgentsTool\\.id|UnlinkAgentsTool\\.id\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts'",
         "weight": 0.06,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "registry.ts imports both tools, references tool.linkagents/tool.unlinkagents, and includes LinkAgentsTool.id/UnlinkAgentsTool.id."
       },
       {
         "id": "C9",
@@ -235,8 +235,8 @@
         "assertion": "agent-link.test.ts contains >=10 it.live (or it.instance) tests AND tests rebuild against real AgentControl (no mocks of the multi-agent surface).",
         "verify": "bash -c 'c=$(grep -cE \"it\\\\.(live|instance)\\\\(\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-link/agent-link.test.ts); [ \"$c\" -ge 10 ] || { echo \"link test count=$c (need >=10)\"; exit 1; }'",
         "weight": 0.07,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "agent-link.test.ts it.live/it.instance count=14 (>=10)."
       },
       {
         "id": "C10",
@@ -244,8 +244,8 @@
         "assertion": "bun typecheck passes from packages/opencode.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "bun typecheck → exit 0 (tsgo --noEmit clean)."
       },
       {
         "id": "C11",
@@ -253,8 +253,8 @@
         "assertion": "agent-link.test.ts AND permission/disabled.test.ts AND tool/registry.test.ts all pass (no failures).",
         "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-link/agent-link.test.ts src/permission/disabled.test.ts src/tool/registry.test.ts 2>&1 | tee /tmp/wave7-t2-c11.log && grep -E \"[1-9][0-9]* pass\" /tmp/wave7-t2-c11.log && ! grep -E \"[1-9][0-9]+ fail|^ *[1-9][0-9]* fail\" /tmp/wave7-t2-c11.log'",
         "weight": 0.12,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "34 pass / 0 fail / 143 expect() calls across 3 test files."
       },
       {
         "id": "C12",
@@ -262,8 +262,8 @@
         "assertion": "Per-file 100% LINE coverage on agent-link.ts via single-file run.",
         "verify": "bash -c 'cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/tool/agent-link/agent-link.test.ts 2>&1 | tee /tmp/wave7-t2-c12.log | grep -E \"src/tool/agent-link/agent-link\\\\.ts\" | head -1 | awk -F\"|\" \"{gsub(/^[ \\t]+|[ \\t]+\\$/, \\\"\\\", \\$3); if (\\$3 == \\\"100.00\\\") exit 0; else { print \\\"line coverage = \\\" \\$3 \\\" (need 100.00)\\\"; exit 1 }}\"'",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "agent-link.ts coverage: Funcs=100.00, Lines=100.00 (RC=0)."
       },
       {
         "id": "C13",
@@ -271,8 +271,8 @@
         "assertion": "Generator commit exists matching 'wave 7 T2:' AND includes the new agent-link/ directory AND the permission/registry diffs.",
         "verify": "bash -c 'sha=$(git -C /Users/rohan/Documents/Personal/codemaxxxing log --oneline -20 --grep=\"wave 7 T2\" | head -1 | awk \"{print \\$1}\"); [ -n \"$sha\" ] && git -C /Users/rohan/Documents/Personal/codemaxxxing show --stat --format= \"$sha\" | grep -qE \"packages/opencode/src/tool/agent-link/\"'",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "Commit 1d5006b70 touches agent-link/{agent-link.ts,agent-link.txt,agent-link.test.ts}, permission/{index.ts,disabled.test.ts}, tool/{registry.ts,registry.test.ts} — all contracted writes + registry.test.ts extension."
       }
     ]
   },
