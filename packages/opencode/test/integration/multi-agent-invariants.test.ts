@@ -2383,6 +2383,307 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
       expect(disabled.has("read")).toBe(false)
     }),
   )
+
+  // INV-D-21 (actor-discipline-2026-05-20 Wave 7) — D14 link-paired-death.
+  // Three sub-assertions in one test (sub-cases share spawn/link plumbing
+  // and are quick — splitting would just duplicate setup):
+  //   (a) Crash peer_a → within ~200ms peer_b is closed, parent's mailbox
+  //       contains a peer_b notification whose body header reads
+  //       `reached status: linked_death`.
+  //   (b) Symmetric: a fresh pair where crashing peer_b kills peer_a.
+  //   (c) Unlink before crash → no cascade; peer_b stays alive.
+  // Pattern mirrors INV-D-15: single registerRunLoop, closure variable
+  // (`crashTarget: SessionID | undefined`) discriminates which fiber
+  // Effect.die's; non-crashers loop on Effect.sleep so the runtime gets
+  // turn boundaries to dispatch the crash. The completion watcher's
+  // cascade fires only when isShutdown is false (errored / completed) —
+  // Effect.die maps to errored, which is the trigger.
+  it.instance("INV-D-21-link-paired-death-on-either-crash", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      let crashTarget: SessionID | undefined = undefined
+      yield* control.registerRunLoop((sid) =>
+        Effect.gen(function* () {
+          yield* Effect.sleep(10)
+          if (crashTarget === sid) return yield* Effect.die("link cascade crash")
+        }).pipe(Effect.forever),
+      )
+
+      // ----- (a) crash peer_a → peer_b cascades closed with linked_death.
+      const root = yield* sessions.create({ title: "link_root_a" })
+      yield* control.registerSessionRoot(root.id)
+      const peerA = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "peer_a",
+        initial_message: "go a",
+      })
+      const peerB = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "peer_b",
+        initial_message: "go b",
+      })
+      yield* control.linkAgents(peerA.thread_id, peerB.thread_id, root.id)
+      // Confirm linkAgents stored the symmetric edge.
+      const linksA = yield* control.agentLinks(peerA.thread_id, root.id)
+      expect(linksA).toContain(peerB.thread_id)
+      const linksB = yield* control.agentLinks(peerB.thread_id, root.id)
+      expect(linksB).toContain(peerA.thread_id)
+
+      crashTarget = peerA.thread_id
+      yield* Effect.sleep(300)
+
+      // peer_b's status must read shutdown — the cascade closed it.
+      const refB = yield* control.subscribeStatus(peerB.thread_id)
+      const statusB = yield* SubscriptionRef.get(refB)
+      expect(statusB).toBe("shutdown")
+
+      // Parent mailbox carries the peer_b notification with the
+      // linked_death label in its header. Note the body can be
+      // safety-net-wrapped (peer_b never emitted assistant text → empty
+      // body → warning prefix), so we match by `reached status:` rather
+      // than `startsWith("Agent ")`.
+      const drained = yield* control.drainMailbox(root.id)
+      const peerBNote = drained.find(
+        (m) =>
+          String(m.author) === String(peerB.metadata.agent_path) &&
+          m.content.includes("reached status:"),
+      )
+      expect(peerBNote).toBeDefined()
+      expect(peerBNote?.content).toContain("reached status: linked_death")
+
+      // ----- (b) symmetric: crash peer_b first → peer_a cascades closed.
+      crashTarget = undefined
+      const root2 = yield* sessions.create({ title: "link_root_b" })
+      yield* control.registerSessionRoot(root2.id)
+      const peerA2 = yield* control.spawnAgent({
+        parentID: root2.id,
+        parentPath: AgentPath.root(),
+        task_name: "peer_a",
+        initial_message: "go a",
+      })
+      const peerB2 = yield* control.spawnAgent({
+        parentID: root2.id,
+        parentPath: AgentPath.root(),
+        task_name: "peer_b",
+        initial_message: "go b",
+      })
+      yield* control.linkAgents(peerA2.thread_id, peerB2.thread_id, root2.id)
+      crashTarget = peerB2.thread_id
+      yield* Effect.sleep(300)
+      const refA2 = yield* control.subscribeStatus(peerA2.thread_id)
+      const statusA2 = yield* SubscriptionRef.get(refA2)
+      expect(statusA2).toBe("shutdown")
+      const drained2 = yield* control.drainMailbox(root2.id)
+      const peerANote = drained2.find(
+        (m) =>
+          String(m.author) === String(peerA2.metadata.agent_path) &&
+          m.content.includes("reached status:"),
+      )
+      expect(peerANote).toBeDefined()
+      expect(peerANote?.content).toContain("reached status: linked_death")
+
+      // ----- (c) unlink before crash → no cascade.
+      crashTarget = undefined
+      const root3 = yield* sessions.create({ title: "link_root_c" })
+      yield* control.registerSessionRoot(root3.id)
+      const peerA3 = yield* control.spawnAgent({
+        parentID: root3.id,
+        parentPath: AgentPath.root(),
+        task_name: "peer_a",
+        initial_message: "go a",
+      })
+      const peerB3 = yield* control.spawnAgent({
+        parentID: root3.id,
+        parentPath: AgentPath.root(),
+        task_name: "peer_b",
+        initial_message: "go b",
+      })
+      yield* control.linkAgents(peerA3.thread_id, peerB3.thread_id, root3.id)
+      yield* control.unlinkAgents(peerA3.thread_id, peerB3.thread_id, root3.id)
+      // After unlink the adjacency is empty.
+      const linksA3 = yield* control.agentLinks(peerA3.thread_id, root3.id)
+      expect(linksA3).not.toContain(peerB3.thread_id)
+      crashTarget = peerA3.thread_id
+      yield* Effect.sleep(300)
+      const refB3 = yield* control.subscribeStatus(peerB3.thread_id)
+      const statusB3 = yield* SubscriptionRef.get(refB3)
+      // peer_b stays alive — its loop kept Effect.forever-ing on sleep.
+      expect(AgentStatus.isFinal(statusB3)).toBe(false)
+    }),
+  )
+
+  // INV-D-22 (actor-discipline-2026-05-20 Wave 7) — D15 bounded mailbox
+  // backpressure. Spawn a child with `mailbox_capacity: 4`; fire 4 sends
+  // → all succeed; the 5th send returns Effect.result failure carrying
+  // MailboxFullError. peek shows 4 items in delivery order. The 6th send
+  // still fails. After draining, sends succeed again.
+  it.instance("INV-D-22-bounded-mailbox-rejects-on-overflow", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const root = yield* sessions.create({ title: "cap_root" })
+      yield* control.registerSessionRoot(root.id)
+
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "capped",
+        initial_message: "seed",
+        mailbox_capacity: 4,
+      })
+
+      // Drain the initial-message seed first — it occupies the system
+      // slot but counts against the same underlying queue. Mailbox now
+      // has 0 user messages and 4 cap.
+      yield* control.drainMailbox(child.thread_id)
+
+      const send = (n: number) =>
+        control.sendInterAgentCommunication(
+          child.thread_id,
+          new InterAgentCommunication({
+            author: AgentPath.root(),
+            recipient: child.metadata.agent_path!,
+            content: `msg_${n}`,
+            trigger_turn: false,
+            sent_at: Date.now() + n,
+          }),
+          root.id,
+        )
+
+      // 4 sends succeed.
+      for (let i = 1; i <= 4; i++) {
+        const r = yield* Effect.result(send(i))
+        expect(Result.isSuccess(r)).toBe(true)
+      }
+
+      // 5th send fails with MailboxFullError.
+      const fifth = yield* Effect.result(send(5))
+      expect(Result.isFailure(fifth)).toBe(true)
+      if (Result.isFailure(fifth)) {
+        expect(fifth.failure._tag).toBe("MailboxFullError")
+      }
+
+      // 6th send still fails (cap unchanged).
+      const sixth = yield* Effect.result(send(6))
+      expect(Result.isFailure(sixth)).toBe(true)
+      if (Result.isFailure(sixth)) {
+        expect(sixth.failure._tag).toBe("MailboxFullError")
+      }
+
+      // Drain → frees capacity → subsequent sends succeed again.
+      const drained = yield* control.drainMailbox(child.thread_id)
+      // The 4 queued items appear in delivery order (msg_1 .. msg_4).
+      const contents = drained
+        .filter((m) => m.content.startsWith("msg_"))
+        .map((m) => m.content)
+      expect(contents).toEqual(["msg_1", "msg_2", "msg_3", "msg_4"])
+
+      const seventh = yield* Effect.result(send(7))
+      expect(Result.isSuccess(seventh)).toBe(true)
+    }),
+  )
+
+  // INV-D-23 (actor-discipline-2026-05-20 Wave 7) — bounded-mailbox cap
+  // does NOT block completion notifications. Fill the parent's mailbox
+  // to capacity, then crash a child. The completion watcher posts the
+  // notification via the `sendSystem` (flags.system=true) path which
+  // bypasses the cap — so the parent's mailbox grows past capacity and
+  // the "reached status:" notification arrives.
+  it.instance("INV-D-23-bounded-mailbox-does-not-block-completion-notification", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      // Single-shot crash loop — the runLoop dies on first dispatch so
+      // status flips to errored and the completion watcher fires.
+      yield* control.registerRunLoop(() =>
+        Effect.gen(function* () {
+          yield* Effect.sleep(10)
+          return yield* Effect.die("d23 crash")
+        }),
+      )
+
+      // Root mailbox uses MAILBOX_DEFAULT_CAPACITY=32 — we don't have a
+      // per-root override surface (ensureRootSlot calls Mailbox.make()
+      // with no arg). Fill to default capacity via system sends so the
+      // user-cap path is saturated and any further `send` would fail.
+      // We use Mailbox directly through control.sendInterAgentCommunication
+      // with system:true to pre-load — the test point is that the
+      // completion watcher posts ITS notification via the bypass path
+      // even though the user queue is full.
+      const root = yield* sessions.create({ title: "d23_root" })
+      yield* control.registerSessionRoot(root.id)
+
+      // Spawn a second never-loop child to be the sender. We can't
+      // address /root from /root with the user-send path (the sender
+      // and target must share a root — they do here — but root is its
+      // own slot, so this is fine). Pre-fill the root mailbox to cap.
+      // Note: the cap is 32 default; we use 32 to saturate.
+      for (let i = 0; i < 32; i++) {
+        yield* control
+          .sendInterAgentCommunication(
+            root.id,
+            new InterAgentCommunication({
+              author: AgentPath.root(),
+              recipient: AgentPath.root(),
+              content: `prefill_${i}`,
+              trigger_turn: false,
+              sent_at: Date.now() + i,
+            }),
+            root.id,
+          )
+          .pipe(Effect.catch(() => Effect.void))
+      }
+
+      // Confirm the mailbox is at cap by attempting one more USER send
+      // and verifying it fails with MailboxFullError.
+      const overflow = yield* Effect.result(
+        control.sendInterAgentCommunication(
+          root.id,
+          new InterAgentCommunication({
+            author: AgentPath.root(),
+            recipient: AgentPath.root(),
+            content: "should_fail",
+            trigger_turn: false,
+            sent_at: Date.now(),
+          }),
+          root.id,
+        ),
+      )
+      expect(Result.isFailure(overflow)).toBe(true)
+      if (Result.isFailure(overflow)) {
+        expect(overflow.failure._tag).toBe("MailboxFullError")
+      }
+
+      // Spawn the crash-on-first-tick child. The runLoop dies → errored
+      // → completion watcher posts notification via sendSystem (bypass).
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "crasher",
+        initial_message: "go",
+      })
+      yield* Effect.sleep(300)
+
+      // Drain and look for the completion notification on the parent's
+      // mailbox. Its presence proves system-bypass works under
+      // backpressure. The body may carry the safety-net warning prefix
+      // (no assistant text emitted) so we match on the header substring
+      // rather than `startsWith("Agent ")`.
+      const drained = yield* control.drainMailbox(root.id)
+      const completion = drained.find(
+        (m) =>
+          String(m.author) === String(child.metadata.agent_path) &&
+          m.content.includes("reached status:"),
+      )
+      expect(completion).toBeDefined()
+    }),
+  )
 })
 
 describe("bug 3 audit — agent_type role-vocabulary fix is intact", () => {

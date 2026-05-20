@@ -101,6 +101,7 @@ The actor surface is deliberately small. Know what it does NOT give you:
 - **no sibling introspection.** You cannot read a peer's mailbox or inspect their in-flight tool calls. `list_agents` shows status + last instruction; nothing more. If you need information from a peer, ask them via `followup_task` and let them reply.
 - **no deadlock detection.** The runtime will not break a wait cycle for you. Two agents each `wait_agent`-ing on the other will both sit until their timeouts fire. Set finite timeouts on every `wait_agent`. Design coordination so no agent waits on a message that requires the waiter to act first.
 - **idle ≠ alive.** An agent parked at `wait_agent` is alive but not making progress; it holds a slot in the 64-process cap and its context budget. When you are done with an agent — result integrated, no further turns expected — `close_agent` it. Don't leave done agents idling; close it if you are done.
+- **bounded mailboxes — sends can fail.** Each agent's mailbox has a finite capacity (default 32 user messages). When you `send_message` or `followup_task` to a peer whose mailbox is at capacity, the call returns `{ error: "mailbox_full", retry_after_ms: <hint> }` instead of queueing. Retry after a backoff, or use `followup_task` to wake the recipient so they drain. Completion notifications from terminating subagents bypass this cap — your subagent crashing always notifies you regardless of mailbox state.
 
 ## Wait timeouts
 

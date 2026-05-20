@@ -235,3 +235,50 @@ describe("Wave 6 — Routers and pools prose (D13 spawn_pool)", () => {
     expect(text).toMatch(/collect/i)
   })
 })
+
+// Wave 7 — D14/D15 bounded mailbox + link prose. The root prompt gets a
+// new Limits bullet describing the user-mailbox cap, the structured
+// `mailbox_full` error shape, and the system-bypass for completion
+// notifications. The subagent prompt mirrors a shorter paragraph after
+// the wait_for_reply bullet — same `mailbox_full` shape plus retry /
+// backoff guidance. The agent-link tool's prose file must exist (T2
+// landing) and carry the link doctrine vocabulary. INV-D-21..23 in the
+// integration suite exercise the runtime side.
+const agentLinkPath = new URL("../../src/tool/agent-link/agent-link.txt", import.meta.url).pathname
+
+describe("Wave 7 — bounded mailbox + link prose", () => {
+  test("multi-agent-root.txt mentions bounded mailboxes (case-insensitive)", async () => {
+    const text = await Bun.file(rootHintPath).text()
+    expect(text.toLowerCase()).toContain("bounded mailbox")
+  })
+
+  test("multi-agent-root.txt contains 'mailbox_full'", async () => {
+    const text = await Bun.file(rootHintPath).text()
+    expect(text).toContain("mailbox_full")
+  })
+
+  test("multi-agent-root.txt explains system-bypass via 'bypass' or 'completion notification'", async () => {
+    const text = await Bun.file(rootHintPath).text()
+    expect(text.toLowerCase()).toMatch(/bypass|completion notification/)
+  })
+
+  test("multi-agent-subagent.txt contains 'mailbox_full'", async () => {
+    const text = await Bun.file(subagentHintPath).text()
+    expect(text).toContain("mailbox_full")
+  })
+
+  test("multi-agent-subagent.txt mentions 'retry' or 'backoff'", async () => {
+    const text = await Bun.file(subagentHintPath).text()
+    expect(text.toLowerCase()).toMatch(/retry|backoff/)
+  })
+
+  test("agent-link.txt exists", async () => {
+    const exists = await Bun.file(agentLinkPath).exists()
+    expect(exists).toBe(true)
+  })
+
+  test("agent-link.txt carries link doctrine vocabulary (bidirectional / paired death / linked)", async () => {
+    const text = await Bun.file(agentLinkPath).text()
+    expect(text.toLowerCase()).toMatch(/bidirectional|paired death|linked/)
+  })
+})

@@ -29,6 +29,8 @@ To talk back:
 - `wait_agent` — block until any mailbox update arrives. Only when you are genuinely idle and waiting on a peer.
 - `wait_for_reply(correlation_id, timeout_ms)` — targeted variant: pair a request with its reply via `correlation_id`. Wakes ONLY on a matching reply; ignores unrelated mailbox traffic. Use when you sent a `send_message`/`followup_task` with `correlation_id: "<id>"` and need to block until that specific reply lands. Every wait MUST set a meaningful timeout — omitting emits a warning.
 
+Mailbox backpressure: `send_message` / `followup_task` can fail with `mailbox_full` when the recipient is over capacity. Treat it like any tool-recoverable error — retry with a small backoff (~250ms) or switch to `followup_task` to ensure the recipient wakes and drains. The recipient is alive; their queue is just full.
+
 If your message ends with a question or a request, you want `followup_task`, not `send_message`.
 
 You cannot `followup_task` the root agent — root is the user-facing surface, not a worker. If you (a subagent) need root's input, `send_message` and let root pick it up at their next turn.
