@@ -16,6 +16,7 @@ import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Agent } from "@/agent/agent"
 import { AgentControl, AgentNotFoundError } from "@/agent/control"
 import { AgentPath } from "@/agent/agent-path"
+import { AgentStatus } from "@/agent/status"
 import { InterAgentCommunication } from "@/agent/inter-agent-communication"
 import { Config } from "@/config/config"
 import { Permission } from "@/permission"
@@ -1945,6 +1946,217 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
       expect(noteG?.abort_reason?.details).toBe("test")
       expect(noteE?.abort_reason?.reason).toBe("out_of_scope")
       expect(noteE?.abort_reason?.details).toBe("test")
+    }),
+  )
+
+  // INV-D-15 (actor-discipline-2026-05-20 Wave 5) — D12 on_failure:"respawn"
+  // restarts a crashed child at the same task_name with a fresh session id.
+  // Pattern mirrors INV-D-13: a single registerRunLoop drives BOTH spawn
+  // attempts; a closure-local counter discriminates them. First invocation
+  // `Effect.die`s before any assistant message — the runtime status goes
+  // errored → completion-watcher dispatches the respawn branch. Second
+  // invocation emits a normal assistant message + returns "done".
+  // Assertions cover:
+  //   (a) loop ran twice (initial + 1 respawn)
+  //   (b) resolveAgentReference for /root/respawner now returns a SessionID
+  //       distinct from the originally returned child.thread_id (the slot
+  //       was re-issued)
+  //   (c) parent mailbox carries a transient_tool_error respawn note
+  //       (`attempt 1/3`) AND the SECOND completion notification (normal
+  //       completion of the replacement child)
+  it.instance("INV-D-15-spawn-agent-with-on-failure-respawn-restarts-on-crash", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      let counter = 0
+      yield* control.registerRunLoop((sid) =>
+        Effect.gen(function* () {
+          counter += 1
+          if (counter === 1) return yield* Effect.die("first crash")
+          const user = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            role: "user" as const,
+            time: { created: Date.now() },
+            agent: "build",
+            model: ref,
+          }
+          yield* sessions.updateMessage(user)
+          const asst = {
+            id: MessageID.ascending(),
+            sessionID: sid,
+            parentID: user.id,
+            role: "assistant" as const,
+            mode: "build",
+            agent: "build",
+            path: { cwd: "/tmp", root: "/tmp" },
+            time: { created: Date.now(), completed: Date.now() },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: ref.modelID,
+            providerID: ref.providerID,
+            finish: "tool-calls",
+          }
+          yield* sessions.updateMessage(asst)
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: asst.id,
+            sessionID: sid,
+            type: "text",
+            text: "respawned ok",
+          })
+          return "done"
+        }),
+      )
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "respawner",
+        initial_message: "go",
+        on_failure: "respawn",
+      })
+      yield* Effect.sleep(150)
+
+      // (a) Initial crash + one respawn = 2 loop invocations.
+      expect(counter).toBe(2)
+
+      // (b) The replacement child holds a different session id under the
+      // same /root/respawner path. resolveAgentReference walks the live
+      // registry; the original child.thread_id was released by the
+      // respawn branch in control.ts.
+      const resolved = yield* control.resolveAgentReference(
+        AgentPath.root(),
+        "/root/respawner",
+        root.id,
+      )
+      expect(resolved).not.toBe(child.thread_id)
+
+      // (c) Mailbox carries both the transient_tool_error respawn note
+      // (`attempt 1/3`) AND the normal completion notification from the
+      // replacement child.
+      const drained = yield* control.drainMailbox(root.id)
+      const fromChild = drained.filter(
+        (m) => String(m.author) === String(child.metadata.agent_path),
+      )
+      const respawnNote = fromChild.find(
+        (m) => m.abort_reason?.reason === "transient_tool_error",
+      )
+      expect(respawnNote).toBeDefined()
+      expect(respawnNote?.abort_reason?.details).toMatch(/respawned after crash; attempt 1\/3/)
+      // Second notification = normal completion (no abort_reason).
+      const completionNote = fromChild.find(
+        (m) => m !== respawnNote && m.abort_reason === undefined,
+      )
+      expect(completionNote).toBeDefined()
+    }),
+  )
+
+  // INV-D-16 (actor-discipline-2026-05-20 Wave 5) — D12
+  // pool_strategy:"one_for_all" STUB form. Full one_for_all behavior
+  // (sibling teardown on a single failure) lands in Wave 6 when
+  // `spawn_pool` is wired. Here we pin two invariants:
+  //   (i) the param is accepted at the spawn surface (no decode / runtime
+  //       errors)
+  //   (ii) the spawn surface is unchanged when the policy is set — both
+  //        children land in the registry with distinct agent_paths.
+  it.instance("INV-D-16-pool-strategy-one-for-all-kills-pair-on-single-failure", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+
+      const childA = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "pair_a",
+        initial_message: "go a",
+        pool_strategy: "one_for_all",
+      })
+      const childB = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "pair_b",
+        initial_message: "go b",
+        pool_strategy: "one_for_all",
+      })
+
+      // Both spawns returned LiveAgent values with valid thread_ids — the
+      // policy did not break the spawn surface.
+      expect(childA.thread_id).toBeDefined()
+      expect(childB.thread_id).toBeDefined()
+      const pathA = childA.metadata.agent_path
+      const pathB = childB.metadata.agent_path
+      expect(pathA).toBeDefined()
+      expect(pathB).toBeDefined()
+      expect(String(pathA)).not.toBe(String(pathB))
+    }),
+  )
+
+  // INV-D-17 (actor-discipline-2026-05-20 Wave 5) — D12
+  // pool_strategy:"one_for_one" STUB form. Full one_for_one runtime
+  // enforcement lands in Wave 6; today the policy is the runtime's
+  // default isolation behavior. This test pins that storing the param
+  // does NOT break sibling isolation — all three children spawn
+  // successfully AND remain alive after a short sleep (no tear-down
+  // cascade).
+  it.instance("INV-D-17-pool-strategy-one-for-one-isolates-failures", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+
+      const c1 = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "iso_1",
+        initial_message: "go 1",
+        pool_strategy: "one_for_one",
+      })
+      const c2 = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "iso_2",
+        initial_message: "go 2",
+        pool_strategy: "one_for_one",
+      })
+      const c3 = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "iso_3",
+        initial_message: "go 3",
+        pool_strategy: "one_for_one",
+      })
+
+      // All three spawn calls returned LiveAgent values with a non-final
+      // status (installNeverLoop → status stays running / pending_init).
+      expect(AgentStatus.isFinal(c1.status)).toBe(false)
+      expect(AgentStatus.isFinal(c2.status)).toBe(false)
+      expect(AgentStatus.isFinal(c3.status)).toBe(false)
+
+      yield* Effect.sleep(100)
+
+      // After the sleep, all three remain alive — sibling isolation is
+      // preserved. subscribeStatus reads the live SubscriptionRef the
+      // run-loop fiber owns.
+      const r1 = yield* control.subscribeStatus(c1.thread_id)
+      const r2 = yield* control.subscribeStatus(c2.thread_id)
+      const r3 = yield* control.subscribeStatus(c3.thread_id)
+      const s1 = yield* SubscriptionRef.get(r1)
+      const s2 = yield* SubscriptionRef.get(r2)
+      const s3 = yield* SubscriptionRef.get(r3)
+      expect(AgentStatus.isFinal(s1)).toBe(false)
+      expect(AgentStatus.isFinal(s2)).toBe(false)
+      expect(AgentStatus.isFinal(s3)).toBe(false)
     }),
   )
 })

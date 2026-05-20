@@ -110,3 +110,37 @@ Controls how much of your conversation history the child inherits.
   initial message is enough.
 - A positive integer string (e.g. `"3"`): the most recent N turns. Use
   when only recent context matters.
+
+## Supervision strategies (D12)
+
+Two optional parameters control how the runtime supervises this child
+when its run-loop reaches a terminal status. Both default to today's
+implicit behavior — existing call sites need no changes.
+
+`on_failure` declares what happens when the child terminates non-cleanly
+(crash, errored status):
+
+- `escalate` (default): the runtime forwards an errored notification to
+  your mailbox. You decide what to do next (close, retry, ignore).
+- `respawn`: the runtime re-spawns the child at the same task_name with
+  a fresh session id, capped at 3 attempts. After the cap, the runtime
+  escalates with a respawn-cap-exceeded notification (abort_reason.reason
+  = `transient_tool_error`).
+- `ignore`: the runtime swallows the failure silently. You receive no
+  completion notification. Useful for fire-and-forget probes you do not
+  want to react to.
+- `kill_pool`: stub-only this release. Wave 6 wires pool teardown
+  semantics.
+
+`pool_strategy` declares how a failure in one pool member affects its
+siblings (Erlang OTP-style):
+
+- `one_for_one` (default): pool failures are isolated; surviving
+  siblings keep running.
+- `one_for_all`: any single failure tears down the entire pool. Wired in
+  Wave 6.
+- `rest_for_one`: any single failure tears down pool members spawned
+  after the failing one. Wired in Wave 6.
+
+Today, both params are stored on the per-child slot until Wave 6's
+`spawn_pool` wires active behavior.
