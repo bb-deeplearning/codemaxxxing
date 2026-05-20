@@ -728,4 +728,66 @@ describe("tool.wait_for_reply", () => {
       }),
     ),
   )
+
+  // D10 coverage — wait_for_reply on an unregistered session (no mailbox in the
+  // AgentControl registry) falls back to a plain sleep-then-timeout, mirroring
+  // the wait_agent semantics so the model gets a sensible answer instead of a
+  // typed error. Covers the AgentNotFoundError fallback branch in
+  // wait_for_reply's execute body.
+  it.live(
+    "falls back to sleep-then-timeout when calling session is unknown to AgentControl",
+    () =>
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          yield* installNeverLoop
+          const sessions = yield* Session.Service
+          // Create a bare session WITHOUT registerSessionRoot — sessionToRoot
+          // is empty for this id, so subscribeMailboxSeq returns
+          // AgentNotFoundError and the fallback runs.
+          const orphan = yield* sessions.create({ title: "orphan" })
+
+          const def = yield* initReplyTool()
+          const { ctx } = makeCtx(orphan.id)
+          const start = Date.now()
+          const result = yield* def.execute(
+            { correlation_id: "req-1", timeout_ms: 500 },
+            ctx,
+          )
+          const elapsed = Date.now() - start
+
+          expect(result.metadata.timed_out).toBe(true)
+          expect(result.metadata.matched).toBe(false)
+          expect(elapsed).toBeGreaterThan(400)
+          expect(elapsed).toBeLessThan(1500)
+        }),
+      ),
+  )
+})
+
+// D10 coverage — same shape as the wait_for_reply orphan test, exercised
+// against wait_agent. Targets the pre-existing AgentNotFoundError fallback
+// branch in wait_agent's execute body (the legacy test at line 210 above uses
+// root.id which DOES have a mailbox post-Wave 2 registerSessionRoot creates
+// one; that test exercises the timeout path with a real mailbox subscription,
+// not the typed-error fallback).
+describe("tool.wait_agent — calling session is unknown to AgentControl", () => {
+  it.live("falls back to sleep-then-timeout when sessionID has no slot", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const orphan = yield* sessions.create({ title: "orphan" })
+
+        const def = yield* initTool()
+        const { ctx } = makeCtx(orphan.id)
+        const start = Date.now()
+        const result = yield* def.execute({ timeout_ms: 500 }, ctx)
+        const elapsed = Date.now() - start
+
+        expect(result.metadata.timed_out).toBe(true)
+        expect(elapsed).toBeGreaterThan(400)
+        expect(elapsed).toBeLessThan(1500)
+      }),
+    ),
+  )
 })

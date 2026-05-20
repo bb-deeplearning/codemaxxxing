@@ -1058,6 +1058,105 @@ describe("AgentControl.hasPendingMailboxItems", () => {
   )
 })
 
+// D10 (actor-discipline-2026-05-20 Wave 3) — findMailboxByCorrelationId peeks
+// the caller's mailbox for a message carrying a matching correlation_id WITHOUT
+// draining. Powers the wait_for_reply tool's filter (fast-path on already-queued
+// matches; mailbox-seq watch re-scans on each new send).
+describe("AgentControl.findMailboxByCorrelationId", () => {
+  it.live("returns the matching message without draining (idempotent)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "replier",
+          initial_message: "init",
+        })
+        const childPath = child.metadata.agent_path ?? ROOT
+        yield* control.drainMailbox(root.id)
+        yield* control.sendInterAgentCommunication(
+          root.id,
+          new InterAgentCommunication({
+            author: childPath,
+            recipient: ROOT,
+            content: "the reply",
+            trigger_turn: false,
+            sent_at: 1,
+            correlation_id: "req-x",
+          }),
+          child.thread_id,
+        )
+
+        const first = yield* control.findMailboxByCorrelationId(root.id, "req-x")
+        expect(first?.content).toBe("the reply")
+        expect(first?.correlation_id).toBe("req-x")
+
+        // Idempotent: a second peek returns the same message; nothing drained.
+        const second = yield* control.findMailboxByCorrelationId(root.id, "req-x")
+        expect(second?.content).toBe("the reply")
+
+        // Drain confirms the message is still queued post-peek.
+        const drained = yield* control.drainMailbox(root.id)
+        expect(drained).toHaveLength(1)
+        expect(drained[0]?.correlation_id).toBe("req-x")
+      }),
+    ),
+  )
+
+  it.live("returns undefined when no message matches the correlation_id", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "noisy",
+          initial_message: "init",
+        })
+        const childPath = child.metadata.agent_path ?? ROOT
+        yield* control.drainMailbox(root.id)
+        // Send a message with a DIFFERENT correlation_id.
+        yield* control.sendInterAgentCommunication(
+          root.id,
+          new InterAgentCommunication({
+            author: childPath,
+            recipient: ROOT,
+            content: "unrelated",
+            trigger_turn: false,
+            sent_at: 2,
+            correlation_id: "other",
+          }),
+          child.thread_id,
+        )
+
+        const out = yield* control.findMailboxByCorrelationId(root.id, "req-x")
+        expect(out).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("returns undefined when the session has no slot (unregistered)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        yield* seedRoot()
+        const control = yield* AgentControl.Service
+        // SessionID.descending() yields a fresh unregistered id.
+        const out = yield* control.findMailboxByCorrelationId(
+          SessionID.descending(),
+          "req-x",
+        )
+        expect(out).toBeUndefined()
+      }),
+    ),
+  )
+})
+
 // Local helper that mirrors AgentStatus.isFinal — we re-implement here to keep
 // tests independent of the module under examination. If this duplicates and
 // the implementation drifts, the test fails meaningfully.

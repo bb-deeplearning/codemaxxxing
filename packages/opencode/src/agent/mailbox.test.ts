@@ -170,6 +170,32 @@ describe("Mailbox subscribe wakeup", () => {
   )
 })
 
+describe("Mailbox.peek (Wave 3 D10)", () => {
+  it.live("returns the current messages snapshot without draining", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make()
+      yield* mb.send(mail("first"))
+      yield* mb.send(mail("second"))
+
+      const peeked = yield* mb.peek()
+      expect(peeked.map((m) => m.content)).toEqual(["first", "second"])
+
+      // peek MUST NOT drain — a subsequent drain still returns everything.
+      const drained = yield* mb.drain()
+      expect(drained.map((m) => m.content)).toEqual(["first", "second"])
+      // After drain the peek snapshot reflects the empty mailbox.
+      expect(yield* mb.peek()).toEqual([])
+    }),
+  )
+
+  it.live("peek on a fresh mailbox returns an empty array", () =>
+    Effect.gen(function* () {
+      const mb = yield* Mailbox.make()
+      expect(yield* mb.peek()).toEqual([])
+    }),
+  )
+})
+
 describe("Mailbox concurrency", () => {
   it.live("concurrent sends from N fibers each get a unique seq covering 1..N", () =>
     Effect.gen(function* () {

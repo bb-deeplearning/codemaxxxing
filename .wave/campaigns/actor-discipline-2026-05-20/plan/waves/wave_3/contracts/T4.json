@@ -1,0 +1,133 @@
+{
+  "task_id": "T4",
+  "title": "Prose: mandatory-timeout doctrine + INV-D-09..11 integration invariants + prose grep tests",
+  "writes": [
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+    "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts"
+  ],
+  "depends_on": ["T1", "T2", "T3"],
+  "pre_agreed_by_orchestrator": true,
+  "signed": true,
+  "commit_sha": "53dc82de012bc5f87cf14be629cea9198d53ff3e",
+  "criteria": [
+    {
+      "id": "C1",
+      "category": "correctness",
+      "assertion": "multi-agent-root.txt contains the '## Wait timeouts' section header.",
+      "verify": "grep -E '^## Wait timeouts' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "exit 0; matched literal '## Wait timeouts' header."
+    },
+    {
+      "id": "C2",
+      "category": "correctness",
+      "assertion": "multi-agent-root.txt 'Wait timeouts' section mentions wait_for_reply AND the doctrine 'every wait MUST' (or 'mandatory' / 'meaningful timeout').",
+      "verify": "grep -F 'wait_for_reply' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt && grep -i -E 'every wait MUST|meaningful timeout|mandatory|warning' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "exit 0; wait_for_reply present + 'Every wait MUST specify a meaningful timeout' + 'missing_timeout warning' + 'timeout_clamped' all present in section prose."
+    },
+    {
+      "id": "C3",
+      "category": "correctness",
+      "assertion": "multi-agent-subagent.txt mentions wait_for_reply (mirror sentence).",
+      "verify": "grep -F 'wait_for_reply' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-subagent.txt",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "exit 0; mirror bullet `wait_for_reply(correlation_id, timeout_ms)` present with 'Every wait MUST set a meaningful timeout' addendum."
+    },
+    {
+      "id": "C4",
+      "category": "correctness",
+      "assertion": "multi-agent-invariants.test.ts contains the literal slug 'INV-D-09-correlation-id-pairs-reply-to-request' on an `it.instance(\"...\",` line.",
+      "verify": "grep -E 'it\\.instance\\(\"INV-D-09-correlation-id-pairs-reply-to-request\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "exit 0; `it.instance(\"INV-D-09-correlation-id-pairs-reply-to-request\", () =>` present."
+    },
+    {
+      "id": "C5",
+      "category": "correctness",
+      "assertion": "multi-agent-invariants.test.ts contains the literal slug 'INV-D-10-wait-for-reply-times-out-without-matching-correlation'.",
+      "verify": "grep -E 'it\\.instance\\(\"INV-D-10-wait-for-reply-times-out-without-matching-correlation\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "exit 0; `it.instance(\"INV-D-10-wait-for-reply-times-out-without-matching-correlation\", () =>` present."
+    },
+    {
+      "id": "C6",
+      "category": "correctness",
+      "assertion": "multi-agent-invariants.test.ts contains the literal slug 'INV-D-11-missing-timeout-on-wait-emits-warning'.",
+      "verify": "grep -E 'it\\.instance\\(\"INV-D-11-missing-timeout-on-wait-emits-warning\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "exit 0; `it.instance(\"INV-D-11-missing-timeout-on-wait-emits-warning\", () =>` present."
+    },
+    {
+      "id": "C7",
+      "category": "integration",
+      "assertion": "INV-D-09 test passes when filtered by exact slug.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-09-correlation-id-pairs-reply-to-request' 2>&1 | tee /tmp/wave3-t4-c7.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t4-c7.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t4-c7.log",
+      "weight": 0.1,
+      "status": "passed",
+      "evidence": "exit 0; 1 pass / 0 fail / 27 filtered out, 8 expect() calls in 1245ms."
+    },
+    {
+      "id": "C8",
+      "category": "integration",
+      "assertion": "INV-D-10 test passes when filtered by exact slug.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-10-wait-for-reply-times-out-without-matching-correlation' 2>&1 | tee /tmp/wave3-t4-c8.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t4-c8.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t4-c8.log",
+      "weight": 0.1,
+      "status": "passed",
+      "evidence": "exit 0; 1 pass / 0 fail / 27 filtered out, 6 expect() calls in 2.21s."
+    },
+    {
+      "id": "C9",
+      "category": "integration",
+      "assertion": "INV-D-11 test passes when filtered by exact slug.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-11-missing-timeout-on-wait-emits-warning' 2>&1 | tee /tmp/wave3-t4-c9.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t4-c9.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t4-c9.log",
+      "weight": 0.1,
+      "status": "passed",
+      "evidence": "exit 0; 1 pass / 0 fail / 27 filtered out, 4 expect() calls in 1221ms."
+    },
+    {
+      "id": "C10",
+      "category": "bc_preservation",
+      "assertion": "Full multi-agent-invariants.test.ts passes (>= 28 tests now: 25 existing + 3 new).",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave3-t4-c10.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t4-c10.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t4-c10.log",
+      "weight": 0.15,
+      "status": "passed",
+      "evidence": "exit 0; 28 pass / 0 fail, 123 expect() calls in 5.92s."
+    },
+    {
+      "id": "C11",
+      "category": "correctness",
+      "assertion": "subagent-prompts.test.ts contains a new describe block referencing 'Wave 3' and 'wait_for_reply'.",
+      "verify": "grep -F 'Wave 3' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -F 'wait_for_reply' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts",
+      "weight": 0.05,
+      "status": "passed",
+      "evidence": "exit 0; describe('Wave 3 — mandatory-timeout doctrine + wait_for_reply variant') block + multiple wait_for_reply assertions present."
+    },
+    {
+      "id": "C12",
+      "category": "integration",
+      "assertion": "Full prose suite passes.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test test/prose/subagent-prompts.test.ts 2>&1 | tee /tmp/wave3-t4-c12.log && grep -E '[1-9][0-9]* pass' /tmp/wave3-t4-c12.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave3-t4-c12.log",
+      "weight": 0.1,
+      "status": "passed",
+      "evidence": "exit 0; 27 pass / 0 fail, 27 expect() calls in 767ms."
+    },
+    {
+      "id": "C13",
+      "category": "convention",
+      "assertion": "bun typecheck passes from packages/opencode.",
+      "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+      "weight": 0.1,
+      "status": "passed",
+      "evidence": "exit 0; tsgo --noEmit clean."
+    }
+  ]
+}
