@@ -1,0 +1,485 @@
+[
+  {
+    "task_id": "T1",
+    "title": "control.ts pool primitives — CreatePoolInput/PoolDeliverable types + createPool/collectPool/listPoolMembers/closePoolMembers methods + PerRootData pool maps",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.test.ts"
+    ],
+    "depends_on": [],
+    "pre_agreed_by_orchestrator": true,
+    "signed": true,
+    "commit_sha": "44d2dc800",
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "control.ts exports CreatePoolInput, CreatePoolResult, PoolMemberFailure, PoolDeliverable interfaces and CollectStrategy type alias.",
+        "verify": "bash -c 'for p in \"export interface CreatePoolInput\" \"export interface CreatePoolResult\" \"export interface PoolMemberFailure\" \"export interface PoolDeliverable\" \"export type CollectStrategy\"; do grep -qF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts || { echo \"missing: $p\"; exit 1; }; done'",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "all 5 exports found in control.ts (exit 0)"
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "PerRootData has poolMembers: Map<string, ReadonlyArray<SessionID>> AND poolOf: Map<SessionID, string> fields.",
+        "verify": "bash -c 'grep -qF \"poolMembers: Map<string, ReadonlyArray<SessionID>>\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -qF \"poolOf: Map<SessionID, string>\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts'",
+        "weight": 0.05,
+        "status": "passed",
+        "evidence": "both PerRootData fields present (exit 0)"
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "ensureRootSlot initializes poolMembers + poolOf as empty Maps AND the teardown subscriber + disposal finalizer clear them (>= 2 .clear() call sites per field).",
+        "verify": "bash -c 'grep -qF \"poolMembers: new Map\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -qF \"poolOf: new Map\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && c1=$(grep -cF \".poolMembers.clear\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts) && c2=$(grep -cF \".poolOf.clear\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts) && [ \"$c1\" -ge 2 ] && [ \"$c2\" -ge 2 ]'",
+        "weight": 0.06,
+        "status": "passed",
+        "evidence": "init present; poolMembers.clear count=2, poolOf.clear count=2 (both >=2)"
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "AgentControl Interface declares createPool + collectPool + listPoolMembers + closePoolMembers methods AND the layer's Service.of returns them.",
+        "verify": "bash -c 'for p in \"createPool:\" \"collectPool:\" \"listPoolMembers:\" \"closePoolMembers:\"; do c=$(grep -cF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts); [ \"$c\" -ge 2 ] || { echo \"need >=2 of $p (interface + Service.of); saw $c\"; exit 1; }; done'",
+        "weight": 0.07,
+        "status": "passed",
+        "evidence": "all 4 method names occur >=2x (interface + Service.of) (exit 0)"
+      },
+      {
+        "id": "C5",
+        "category": "correctness",
+        "assertion": "createPool body generates pool_id via Identifier.create(\"pool\", ...) AND propagates pool_strategy + on_failure to per-member spawnAgent calls.",
+        "verify": "bash -c 'grep -qE \"Identifier\\.create\\((\\\"pool\\\"|\\x27pool\\x27)\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -q \"pool_strategy: input.pool_strategy\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -q \"on_failure: input.on_failure\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts'",
+        "weight": 0.05,
+        "status": "passed",
+        "evidence": "Identifier.create(\"pool\",...) + pool_strategy/on_failure propagation present (exit 0)"
+      },
+      {
+        "id": "C6",
+        "category": "correctness",
+        "assertion": "collectPool body filters out completion notifications (text starts with \"Agent \" and contains \"reached status:\") so only explicit send_message deliverables are counted.",
+        "verify": "bash -c 'grep -F \"reached status:\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts | grep -v \"//\" | head -1 | grep -qF \"reached status:\" && grep -qF \"Agent \" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts'",
+        "weight": 0.05,
+        "status": "passed",
+        "evidence": "collectPool filters completion-notification text \"Agent ... reached status:\" (exit 0)"
+      },
+      {
+        "id": "C7",
+        "category": "correctness",
+        "assertion": "control.test.ts adds a new describe block referencing D13 AND contains at least 5 it.live (or it.instance) tests for pool primitives.",
+        "verify": "bash -c 'grep -qE \"describe\\(.*(D13|pool primitive)\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.test.ts && count=$(awk \"/describe\\\\(\\\"AgentControl D13/,/^}\\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.test.ts | grep -cE \"it\\\\.(live|instance)\\\\(\"); [ \"$count\" -ge 5 ] || { echo \"D13 test count=$count\"; exit 1; }'",
+        "weight": 0.1,
+        "status": "passed",
+        "evidence": "AgentControl D13 describe block has 17 it.live/it.instance tests (>=5)"
+      },
+      {
+        "id": "C8",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.12,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C9",
+        "category": "correctness",
+        "assertion": "Full control.test.ts passes (no failures).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/agent/control.test.ts 2>&1 | tee /tmp/wave6-t1-c9.log && grep -E '[1-9][0-9]* pass' /tmp/wave6-t1-c9.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave6-t1-c9.log",
+        "weight": 0.14,
+        "status": "passed",
+        "evidence": "111 pass / 0 fail / 264 expect() calls in 6.53s"
+      },
+      {
+        "id": "C10",
+        "category": "convention",
+        "assertion": "Per-file 100% LINE coverage on control.ts via single-file run (column 2 of the bun coverage report is `% Lines`). Function coverage is structurally bounded by Schema.TaggedErrorClass per GOTCHA `schema-class-function-coverage`; pre-existing baseline already 93.16% funcs / 100.00% lines (documented in Wave 4 NOTES). LINE coverage MUST be 100.00; FUNCTION coverage drift is tolerated when it traces to TaggedErrorClass-only gain.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/agent/control.test.ts 2>&1 | tee /tmp/wave6-t1-c10.log | grep -E 'src/agent/control\\.ts' | head -1 | awk -F'|' '{gsub(/^[ \\t]+|[ \\t]+$/, \"\", $3); if ($3 == \"100.00\") exit 0; else { print \"line coverage = \" $3 \" (need 100.00)\"; exit 1 }}'",
+        "weight": 0.1,
+        "status": "passed",
+        "evidence": "control.ts lines=100.00% funcs=93.53% (func gap = TaggedErrorClass synthetic accessors per GOTCHA schema-class-function-coverage L808; accepted per Wave 4 NOTES)"
+      },
+      {
+        "id": "C11",
+        "category": "convention",
+        "assertion": "Effect v4 conventions — uses Effect.fn / Effect.gen, no Effect.fork (uses forkIn(data.scope) when forking), respects per-root scoping invariant (every pool method takes a sessionID and resolves caller's root via slotFor).",
+        "verify": "bash -c '! grep -nE \"\\\\bEffect\\\\.fork\\\\(\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts | grep -v forkIn | grep -v forkScoped | grep -v forkDaemon'",
+        "weight": 0.08,
+        "status": "passed",
+        "evidence": "no bare Effect.fork( found outside forkIn/forkScoped/forkDaemon variants (exit 0)"
+      },
+      {
+        "id": "C12",
+        "category": "correctness",
+        "assertion": "control.ts NEW pool methods accept caller's sessionID and resolve via slotFor (per-root scoping invariant — AgentControl methods MUST not walk every root).",
+        "verify": "bash -c 'grep -nA 2 \"const collectPool\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts | grep -qF \"SessionID\" && grep -nA 2 \"const listPoolMembers\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts | grep -qF \"SessionID\" && grep -nA 2 \"const closePoolMembers\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts | grep -qF \"SessionID\"'",
+        "weight": 0.12,
+        "status": "passed",
+        "evidence": "collectPool/listPoolMembers/closePoolMembers all accept SessionID (exit 0)"
+      }
+    ]
+  },
+  {
+    "task_id": "T2",
+    "title": "agent-pool tool — NEW directory packages/opencode/src/tool/agent-pool/ with agent-pool.ts + agent-pool.txt + agent-pool.test.ts",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.txt",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.test.ts"
+    ],
+    "depends_on": ["T1"],
+    "pre_agreed_by_orchestrator": true,
+    "signed": false,
+    "commit_sha": null,
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "agent-pool.ts exports ID = 'spawn_pool', PermissionKey = 'task', Parameters schema, AgentPoolTool, and self-reexports as AgentPool.",
+        "verify": "bash -c 'for p in \"export const ID = \\\"spawn_pool\\\" as const\" \"export const PermissionKey = \\\"task\\\" as const\" \"export const Parameters\" \"export const AgentPoolTool\" \"export * as AgentPool from\"; do grep -qF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts || { echo \"missing: $p\"; exit 1; }; done'",
+        "weight": 0.06,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "Parameters Schema.Struct includes agent_type, count, message, collect, and optional per_worker_messages, collect_n, pool_strategy, on_failure, task_prefix, timeout_ms, fork_turns fields.",
+        "verify": "bash -c 'for p in \"agent_type:\" \"count:\" \"message:\" \"collect:\" \"per_worker_messages\" \"collect_n\" \"pool_strategy\" \"on_failure\" \"task_prefix\" \"timeout_ms\"; do grep -qF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts || { echo \"missing param: $p\"; exit 1; }; done'",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "Execute body calls control.createPool + control.collectPool AND control.closePoolMembers (for collect=\"first\" path) AND uses ctx.ask with PermissionKey.",
+        "verify": "bash -c 'for p in \"control.createPool\" \"control.collectPool\" \"control.closePoolMembers\" \"permission: PermissionKey\"; do grep -qF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts || { echo \"missing call: $p\"; exit 1; }; done'",
+        "weight": 0.07,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "Execute body validates count > 0, agent_type against agents.list(), per_worker_messages.length === count when present, collect='any_n' → collect_n provided.",
+        "verify": "bash -c 'grep -qF \"agents.list\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts && grep -qE \"count\\\\b.*<=\\\\s*0|count\\\\b.*<\\\\s*1\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts && grep -qF \"per_worker_messages\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts && grep -qF \"collect_n\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts'",
+        "weight": 0.07,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C5",
+        "category": "correctness",
+        "assertion": "agent-pool.txt exists, is non-empty, and contains the required sections: Mental model, Parameters/Collect semantics, Partial pools, Permission, Cost, plus a 'spawn_pool' reference.",
+        "verify": "bash -c 'test -s /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.txt && for p in \"Mental model\" \"Collect\" \"Partial pools\" \"Permission\" \"Cost\" \"spawn_pool\"; do grep -qiF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.txt || { echo \"missing section/term: $p\"; exit 1; }; done'",
+        "weight": 0.06,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C6",
+        "category": "correctness",
+        "assertion": "agent-pool.test.ts has at least 6 tests covering parameters validation, permission key, collect='all', collect='first' closing remaining, agent_type validation.",
+        "verify": "bash -c 'count=$(grep -cE \"^\\s*(test|it\\\\.(live|instance|effect))\\\\(\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.test.ts); [ \"$count\" -ge 6 ] || { echo \"test count=$count\"; exit 1; }'",
+        "weight": 0.08,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C7",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.12,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C8",
+        "category": "correctness",
+        "assertion": "agent-pool.test.ts passes (no failures).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-pool/agent-pool.test.ts 2>&1 | tee /tmp/wave6-t2-c8.log && grep -E '[1-9][0-9]* pass' /tmp/wave6-t2-c8.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave6-t2-c8.log",
+        "weight": 0.14,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C9",
+        "category": "convention",
+        "assertion": "Per-file 100% line coverage on agent-pool.ts via single-file run.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/tool/agent-pool/agent-pool.test.ts 2>&1 | tee /tmp/wave6-t2-c9.log | grep -E 'agent-pool\\.ts' | head -1 | grep -qE 'agent-pool\\.ts\\s+\\|\\s+100\\.00\\s*\\|'",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C10",
+        "category": "convention",
+        "assertion": "Tool.define inner-Effect.gen pattern — execute returns an inner Effect.gen body (per GOTCHA tool-define-execute-r-must-be-never-capture-services-in-closure); no Service yields happen in execute's inner body (services captured in outer closure).",
+        "verify": "bash -c 'awk \"/Tool.define\\\\(/,/^\\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts | grep -qE \"const control = yield\\\\* AgentControl\" && awk \"/execute:/,/^      \\\\}\\\\)/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts | wc -l | awk \"{exit (\\$1>0)?0:1}\"'",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C11",
+        "category": "correctness",
+        "assertion": "agent-pool.ts uses AgentToolContext.currentAgentPath to resolve the caller's path (matches the existing agent-spawn / agent-close / agent-list pattern).",
+        "verify": "grep -F 'AgentToolContext.currentAgentPath' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C12",
+        "category": "correctness",
+        "assertion": "agent-pool.test.ts uses Tool.init pattern to materialize the tool def (matches existing pattern in test files).",
+        "verify": "grep -qE 'Tool\\.init\\(|yield\\* AgentPoolTool' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-pool/agent-pool.test.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": null
+      }
+    ]
+  },
+  {
+    "task_id": "T3",
+    "title": "permission/registry wiring + multi-agent-root.txt 'Routers and pools' prose",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/permission/index.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/permission/disabled.test.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.test.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts"
+    ],
+    "depends_on": ["T2"],
+    "pre_agreed_by_orchestrator": true,
+    "signed": false,
+    "commit_sha": null,
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "MULTI_AGENT_TOOLS in permission/index.ts includes 'spawn_pool' as a string entry.",
+        "verify": "bash -c 'awk \"/export const MULTI_AGENT_TOOLS = \\\\[/,/\\\\]/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/permission/index.ts | grep -qF \"\\\"spawn_pool\\\"\"'",
+        "weight": 0.07,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "permission/disabled.test.ts updated to assert spawn_pool is in MULTI_AGENT_TOOLS canonical order AND is stripped under wildcard task deny.",
+        "verify": "grep -F 'spawn_pool' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/permission/disabled.test.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "tool/registry.ts imports AgentPoolTool AND resolves it via Tool.init AND adds it to the builtin array.",
+        "verify": "bash -c 'grep -qF \"import { AgentPoolTool }\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts && grep -qF \"agentpool: Tool.init\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts && grep -qF \"tool.agentpool\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts'",
+        "weight": 0.06,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "tool/registry.ts extends the legacy-id bridge OR chain to include AgentPoolTool (so its plugin tool.definition hook bridges through the legacy 'task' id).",
+        "verify": "grep -F 'AgentPoolTool.id' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.ts",
+        "weight": 0.04,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C5",
+        "category": "correctness",
+        "assertion": "tool/registry.test.ts asserts spawn_pool appears in ids for every builtin agent.",
+        "verify": "grep -F \"toContain(\\\"spawn_pool\\\")\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/registry.test.ts",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C6",
+        "category": "correctness",
+        "assertion": "multi-agent-root.txt contains a new '## Routers and pools' subsection AND references 'spawn_pool' AND mentions the 'collect' strategies.",
+        "verify": "bash -c 'grep -qF \"## Routers and pools\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt && grep -qF \"spawn_pool\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt && grep -qE \"collect\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt'",
+        "weight": 0.07,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C7",
+        "category": "correctness",
+        "assertion": "subagent-prompts.test.ts has new tests asserting 'Routers and pools' header AND 'spawn_pool' reference in multi-agent-root.txt.",
+        "verify": "bash -c 'grep -qF \"Routers and pools\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts && grep -qF \"spawn_pool\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/prose/subagent-prompts.test.ts'",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C8",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.12,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C9",
+        "category": "correctness",
+        "assertion": "permission/disabled.test.ts + registry.test.ts + subagent-prompts.test.ts all pass.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/permission/disabled.test.ts src/tool/registry.test.ts test/prose/subagent-prompts.test.ts 2>&1 | tee /tmp/wave6-t3-c9.log && grep -E '[1-9][0-9]* pass' /tmp/wave6-t3-c9.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave6-t3-c9.log",
+        "weight": 0.18,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C10",
+        "category": "convention",
+        "assertion": "permission/disabled.test.ts coverage on permission/index.ts remains at 100% (the new entry must not introduce uncovered branches).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/permission/disabled.test.ts 2>&1 | grep -E 'permission/index\\.ts' | head -1 | grep -qE 'index\\.ts\\s+\\|\\s+100\\.00\\s*\\|'",
+        "weight": 0.06,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C11",
+        "category": "convention",
+        "assertion": "multi-agent-root.txt is well-formed (non-empty, no trailing whitespace, consistent header style).",
+        "verify": "bash -c 'test -s /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt && c=$(grep -cE \"^## \" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt); [ \"$c\" -ge 5 ]'",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C12",
+        "category": "correctness",
+        "assertion": "multi-agent-root.txt 'Routers and pools' section appears AFTER the existing 'Sibling coordination' section (preserves logical ordering).",
+        "verify": "bash -c 'sib=$(grep -n \"## Sibling coordination\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt | head -1 | cut -d: -f1); pool=$(grep -n \"## Routers and pools\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/prompt/multi-agent-root.txt | head -1 | cut -d: -f1); [ -n \"$sib\" ] && [ -n \"$pool\" ] && [ \"$pool\" -gt \"$sib\" ]'",
+        "weight": 0.05,
+        "status": "pending",
+        "evidence": null
+      }
+    ]
+  },
+  {
+    "task_id": "T4",
+    "title": "INV-D-18..20 integration invariants in multi-agent-invariants.test.ts",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts"
+    ],
+    "depends_on": ["T1", "T2", "T3"],
+    "pre_agreed_by_orchestrator": true,
+    "signed": false,
+    "commit_sha": null,
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "multi-agent-invariants.test.ts contains three new it.instance blocks named INV-D-18, INV-D-19, INV-D-20 with the canonical slugs.",
+        "verify": "bash -c 'for slug in \"INV-D-18-spawn-pool-collect-all-aggregates-results\" \"INV-D-19-spawn-pool-collect-first-cancels-remaining\" \"INV-D-20-spawn-pool-permission-collapses-to-task\"; do grep -qF \"\\\"$slug\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts || { echo \"missing: $slug\"; exit 1; }; done'",
+        "weight": 0.1,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "INV-D-18 exercises control.createPool with count=3 AND control.collectPool with strategy { type: 'all' } AND asserts 3 deliverables.",
+        "verify": "bash -c 'awk \"/INV-D-18-spawn-pool-collect-all-aggregates-results/,/^  \\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qF \"createPool\" && awk \"/INV-D-18-spawn-pool-collect-all-aggregates-results/,/^  \\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qF \"collectPool\"'",
+        "weight": 0.07,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "INV-D-19 exercises collect 'first' strategy AND calls closePoolMembers AND asserts non-winners reach 'shutdown' status.",
+        "verify": "bash -c 'awk \"/INV-D-19-spawn-pool-collect-first-cancels-remaining/,/^  \\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"closePoolMembers|shutdown\"'",
+        "weight": 0.06,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "INV-D-20 asserts Permission.disabled with task wildcard deny strips spawn_pool from the active set (proves spawn_pool collapses onto task key).",
+        "verify": "bash -c 'awk \"/INV-D-20-spawn-pool-permission-collapses-to-task/,/^  \\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qF \"Permission.disabled\" && awk \"/INV-D-20-spawn-pool-permission-collapses-to-task/,/^  \\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qF \"spawn_pool\"'",
+        "weight": 0.06,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C5",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.12,
+        "status": "passed",
+        "evidence": "bun typecheck exit 0 (tsgo --noEmit clean)"
+      },
+      {
+        "id": "C6",
+        "category": "correctness",
+        "assertion": "INV-D-18..20 tests pass individually.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-18' 2>&1 | tee /tmp/wave6-t4-inv18.log && grep -E '[1-9][0-9]* pass' /tmp/wave6-t4-inv18.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave6-t4-inv18.log && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-19' 2>&1 | tee /tmp/wave6-t4-inv19.log && grep -E '[1-9][0-9]* pass' /tmp/wave6-t4-inv19.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave6-t4-inv19.log && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-20' 2>&1 | tee /tmp/wave6-t4-inv20.log && grep -E '[1-9][0-9]* pass' /tmp/wave6-t4-inv20.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave6-t4-inv20.log",
+        "weight": 0.2,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C7",
+        "category": "correctness",
+        "assertion": "Full multi-agent-invariants.test.ts passes (no regressions).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave6-t4-c7.log && grep -E '[1-9][0-9]* pass' /tmp/wave6-t4-c7.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave6-t4-c7.log",
+        "weight": 0.2,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C8",
+        "category": "convention",
+        "assertion": "Test names exactly match the invariant slugs from INTEGRATION_INVARIANTS.md (so verification can grep for them).",
+        "verify": "bash -c 'c=$(grep -cE \"INV-D-(18|19|20)-\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts); [ \"$c\" -ge 3 ]'",
+        "weight": 0.04,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C9",
+        "category": "correctness",
+        "assertion": "INV-D-18 + INV-D-19 use registerRunLoop that drives workers to send deliverables (or skip them, per the strategy under test) — not Effect.never alone for all workers, otherwise collect='all' would deadlock.",
+        "verify": "bash -c 'awk \"/INV-D-18-spawn-pool-collect-all-aggregates-results/,/^  \\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"registerRunLoop|sendInterAgentCommunication\"'",
+        "weight": 0.07,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C10",
+        "category": "correctness",
+        "assertion": "Each test uses installNeverLoop OR registers its own runLoop (mutually exclusive — never both at the same time, since only one runLoop registration is honored).",
+        "verify": "bash -c 'true'",
+        "weight": 0.03,
+        "status": "pending",
+        "evidence": null
+      },
+      {
+        "id": "C11",
+        "category": "correctness",
+        "assertion": "INV-D-20 also asserts Permission.evaluate('task', 'explore', ruleset).action returns 'allow' (proves user config under `task` key resolves for any agent_type — the collapse semantics).",
+        "verify": "bash -c 'awk \"/INV-D-20-spawn-pool-permission-collapses-to-task/,/^  \\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qF \"Permission.evaluate\"'",
+        "weight": 0.07,
+        "status": "pending",
+        "evidence": null
+      }
+    ]
+  }
+]
