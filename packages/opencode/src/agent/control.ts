@@ -1,6 +1,7 @@
 import {
   Cause,
   Context,
+  Duration,
   Effect,
   Exit,
   Fiber,
@@ -345,6 +346,51 @@ export type SpawnError =
   | PathAlreadyExistsError
   | NoNicknameAvailableError
 
+// D13 (actor-discipline-2026-05-20 Wave 6) — spawn_pool primitive surface.
+// `createPool` fans N workers out under a shared pool_id. `collectPool`
+// drains the caller's mailbox for deliverables authored by pool members.
+// `listPoolMembers` / `closePoolMembers` expose membership for the tool
+// surface (Wave 6 T2 wires `spawn_pool`). Pool member spawning is
+// non-atomic per WAVE.md gotcha 1 — partial failures are surfaced via the
+// `failures` array, never aborting the whole pool.
+export interface CreatePoolInput {
+  readonly parentID: SessionID
+  readonly parentPath: AgentPath
+  readonly agent_type?: string
+  readonly count: number
+  readonly task_prefix?: string
+  readonly common_message: string
+  readonly per_worker_messages?: ReadonlyArray<string>
+  readonly pool_strategy?: PoolStrategy
+  readonly on_failure?: OnFailureStrategy
+  readonly options?: SpawnAgentOptions
+  readonly max_threads?: number
+}
+
+export interface PoolMemberFailure {
+  readonly task_name: string
+  readonly error_tag: string
+  readonly reason: string
+}
+
+export interface CreatePoolResult {
+  readonly pool_id: string
+  readonly members: ReadonlyArray<LiveAgent>
+  readonly failures: ReadonlyArray<PoolMemberFailure>
+}
+
+export interface PoolDeliverable {
+  readonly worker_path: AgentPath
+  readonly worker_session_id: SessionID
+  readonly content: string
+  readonly delivered_at: number
+}
+
+export type CollectStrategy =
+  | { readonly type: "all" }
+  | { readonly type: "first" }
+  | { readonly type: "any_n"; readonly n: number }
+
 export interface Interface {
   readonly registerRunLoop: (
     fn: (sessionID: SessionID) => Effect.Effect<unknown>,
@@ -407,6 +453,29 @@ export interface Interface {
     sessionID: SessionID,
     callID: string,
     timedOut: boolean,
+  ) => Effect.Effect<void>
+  // D13 (actor-discipline-2026-05-20 Wave 6) — pool primitives. Every
+  // method takes the caller's SessionID and resolves the per-root slot
+  // via slotFor (mirrors the per-root scoping invariant the other reads
+  // already follow).
+  readonly createPool: (input: CreatePoolInput) => Effect.Effect<CreatePoolResult>
+  readonly collectPool: (
+    pool_id: string,
+    callerID: SessionID,
+    strategy: CollectStrategy,
+    timeout_ms?: number,
+  ) => Effect.Effect<{
+    readonly deliverables: ReadonlyArray<PoolDeliverable>
+    readonly timed_out: boolean
+  }>
+  readonly listPoolMembers: (
+    pool_id: string,
+    callerID: SessionID,
+  ) => Effect.Effect<ReadonlyArray<SessionID>>
+  readonly closePoolMembers: (
+    pool_id: string,
+    callerID: SessionID,
+    except?: SessionID,
   ) => Effect.Effect<void>
 }
 
@@ -471,6 +540,14 @@ interface PerRootData {
   readonly poolStrategyOf: Map<SessionID, PoolStrategy>
   readonly respawnCountByPath: Map<string, number>
   readonly respawnInputByPath: Map<string, SpawnAgentInput>
+  // D13 (actor-discipline-2026-05-20 Wave 6) — spawn_pool primitive
+  // storage. `poolMembers` maps pool_id → ordered worker SessionIDs (the
+  // order matches the createPool fan-out — caller index 0 is first).
+  // `poolOf` is the reverse index: worker SessionID → pool_id (so a
+  // single member-id lookup yields its pool). Both are cleared with the
+  // rest of the slot on per-root teardown / instance disposal.
+  readonly poolMembers: Map<string, ReadonlyArray<SessionID>>
+  readonly poolOf: Map<SessionID, string>
 }
 
 interface InternalState {
@@ -581,6 +658,8 @@ export const layer = Layer.effect(
           slot.poolStrategyOf.clear()
           slot.respawnCountByPath.clear()
           slot.respawnInputByPath.clear()
+          slot.poolMembers.clear()
+          slot.poolOf.clear()
           perRoot.delete(deletedID)
           for (const [sid, rid] of sessionToRoot.entries()) {
             if (rid === deletedID) sessionToRoot.delete(sid)
@@ -610,6 +689,8 @@ export const layer = Layer.effect(
               data.poolStrategyOf.clear()
               data.respawnCountByPath.clear()
               data.respawnInputByPath.clear()
+              data.poolMembers.clear()
+              data.poolOf.clear()
             }
             perRoot.clear()
             sessionToRoot.clear()
@@ -653,6 +734,8 @@ export const layer = Layer.effect(
           poolStrategyOf: new Map(),
           respawnCountByPath: new Map(),
           respawnInputByPath: new Map(),
+          poolMembers: new Map(),
+          poolOf: new Map(),
         }
         data.perRoot.set(id, slot)
         data.sessionToRoot.set(id, id)
@@ -1644,6 +1727,189 @@ export const layer = Layer.effect(
       yield* bus.publish(Event.WaitEnded, data).pipe(Effect.ignore)
     })
 
+    // D13 (actor-discipline-2026-05-20 Wave 6) — spawn N pool members
+    // under a shared pool_id. Per WAVE.md gotcha 1 the spawn is
+    // non-atomic: a per-worker spawnAgent failure is caught into the
+    // `failures` array so the remaining workers continue. Members are
+    // recorded in `slot.poolMembers` keyed by pool_id; reverse index
+    // `slot.poolOf` resolves a member id back to its pool.
+    const createPool: (input: CreatePoolInput) => Effect.Effect<CreatePoolResult> = Effect.fn(
+      "AgentControl.createPool",
+    )(function* (input: CreatePoolInput) {
+      const data = yield* InstanceState.get(state)
+      const pool_id = Identifier.create("pool", "ascending")
+      let slot = slotFor(data, input.parentID)
+      if (!slot && AgentPath.isRoot(input.parentPath)) {
+        slot = yield* ensureRootSlot(data, input.parentID)
+      }
+      if (!slot) {
+        return { pool_id, members: [], failures: [] } as CreatePoolResult
+      }
+      const prefix = input.task_prefix ?? "pool"
+      const members: LiveAgent[] = []
+      const failures: PoolMemberFailure[] = []
+      for (let i = 0; i < input.count; i++) {
+        const task_name = `${prefix}_${i}`
+        const initial_message =
+          input.per_worker_messages?.[i] ?? input.common_message
+        const result = yield* Effect.result(
+          spawnAgent({
+            parentID: input.parentID,
+            parentPath: input.parentPath,
+            task_name,
+            agent_type: input.agent_type,
+            initial_message,
+            options: input.options,
+            pool_strategy: input.pool_strategy,
+            on_failure: input.on_failure,
+            max_threads: input.max_threads,
+          }),
+        )
+        if (result._tag === "Success") {
+          members.push(result.success)
+          slot.poolOf.set(result.success.thread_id, pool_id)
+        } else {
+          failures.push({
+            task_name,
+            error_tag: spawnErrorTag(result.failure),
+            reason: (result.failure as { message?: string }).message ?? String(result.failure),
+          })
+        }
+      }
+      slot.poolMembers.set(
+        pool_id,
+        members.map((m) => m.thread_id),
+      )
+      return { pool_id, members, failures } as CreatePoolResult
+    })
+
+    // D13 (actor-discipline-2026-05-20 Wave 6) — drain the caller's
+    // mailbox for deliverables authored by pool members. Filters out
+    // completion notifications ("Agent <path> reached status: ...") so
+    // only explicit send_message bodies count as deliverables. Loops
+    // until the strategy is satisfied OR timeout_ms elapses. The shared
+    // `collectedRef` is populated as messages arrive — on timeout we
+    // snapshot it instead of re-walking the mailbox, so the timeout
+    // branch never needs a second slot lookup (which could race a
+    // concurrent root deletion).
+    const collectPool = (
+      pool_id: string,
+      callerID: SessionID,
+      strategy: CollectStrategy,
+      timeout_ms?: number,
+    ): Effect.Effect<{
+      readonly deliverables: ReadonlyArray<PoolDeliverable>
+      readonly timed_out: boolean
+    }> =>
+      Effect.gen(function* () {
+        const data = yield* InstanceState.get(state)
+        const slot = slotFor(data, callerID)
+        if (!slot) {
+          return { deliverables: [] as ReadonlyArray<PoolDeliverable>, timed_out: false }
+        }
+        const memberIDs = slot.poolMembers.get(pool_id) ?? []
+        const memberPathByID = new Map<string, { path: AgentPath; sid: SessionID }>()
+        for (const mid of memberIDs) {
+          const meta = yield* slot.registry.agentMetadataForThread(mid)
+          if (meta?.agent_path) {
+            memberPathByID.set(String(meta.agent_path), { path: meta.agent_path, sid: mid })
+          }
+        }
+        const mailbox = slot.mailboxes.get(callerID)
+        if (!mailbox) {
+          return { deliverables: [] as ReadonlyArray<PoolDeliverable>, timed_out: false }
+        }
+        const notify = yield* mailbox.subscribe()
+        const collectedRef = yield* Ref.make(new Map<string, PoolDeliverable>())
+
+        const isCompletionNotification = (content: string) =>
+          content.startsWith("Agent ") && content.includes("reached status:")
+
+        const drainSnapshot = Effect.gen(function* () {
+          const snapshot = yield* mailbox.peek()
+          const collected = yield* Ref.get(collectedRef)
+          for (const msg of snapshot) {
+            const authorKey = String(msg.author)
+            const member = memberPathByID.get(authorKey)
+            if (!member) continue
+            if (collected.has(authorKey)) continue
+            if (isCompletionNotification(msg.content)) continue
+            collected.set(authorKey, {
+              worker_path: member.path,
+              worker_session_id: member.sid,
+              content: msg.content,
+              delivered_at: msg.sent_at,
+            })
+          }
+          yield* Ref.set(collectedRef, collected)
+        })
+
+        const satisfied = (size: number) => {
+          if (strategy.type === "all") return size >= memberIDs.length
+          if (strategy.type === "first") return size >= 1
+          return size >= strategy.n
+        }
+
+        const snapshotResult = (timedOut: boolean) =>
+          Effect.gen(function* () {
+            const collected = yield* Ref.get(collectedRef)
+            const deliverables = [...collected.values()].sort(
+              (a, b) => a.delivered_at - b.delivered_at,
+            )
+            return {
+              deliverables: deliverables as ReadonlyArray<PoolDeliverable>,
+              timed_out: timedOut,
+            }
+          })
+
+        const loop = Effect.gen(function* () {
+          while (true) {
+            yield* drainSnapshot
+            const collected = yield* Ref.get(collectedRef)
+            if (satisfied(collected.size)) break
+            yield* SubscriptionRef.changes(notify).pipe(
+              Stream.drop(1),
+              Stream.take(1),
+              Stream.runDrain,
+            )
+          }
+          return yield* snapshotResult(false)
+        })
+
+        if (timeout_ms === undefined) {
+          return yield* loop
+        }
+        return yield* loop.pipe(
+          Effect.timeout(Duration.millis(timeout_ms)),
+          Effect.catchTag("TimeoutError", () => snapshotResult(true)),
+        )
+      })
+
+    const listPoolMembers = Effect.fn("AgentControl.listPoolMembers")(function* (
+      pool_id: string,
+      callerID: SessionID,
+    ) {
+      const data = yield* InstanceState.get(state)
+      const slot = slotFor(data, callerID)
+      if (!slot) return [] as ReadonlyArray<SessionID>
+      return (slot.poolMembers.get(pool_id) ?? []) as ReadonlyArray<SessionID>
+    })
+
+    const closePoolMembers = Effect.fn("AgentControl.closePoolMembers")(function* (
+      pool_id: string,
+      callerID: SessionID,
+      except?: SessionID,
+    ) {
+      const data = yield* InstanceState.get(state)
+      const slot = slotFor(data, callerID)
+      if (!slot) return
+      const memberIDs = slot.poolMembers.get(pool_id) ?? []
+      for (const mid of memberIDs) {
+        if (mid === except) continue
+        yield* closeAgent(mid, callerID).pipe(Effect.catch(() => Effect.void))
+      }
+    })
+
     return Service.of({
       registerRunLoop,
       registerSessionRoot,
@@ -1663,6 +1929,10 @@ export const layer = Layer.effect(
       wasKnownPath,
       emitWaitStarted,
       emitWaitEnded,
+      createPool: createPool,
+      collectPool: collectPool,
+      listPoolMembers: listPoolMembers,
+      closePoolMembers: closePoolMembers,
     })
   }),
 )

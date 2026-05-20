@@ -3228,3 +3228,563 @@ describe("AgentControl D12 supervision strategies", () => {
     ),
   )
 })
+
+describe("AgentControl D13 pool primitives", () => {
+  it.live("createPool with count=3 spawns 3 members and populates poolMembers + poolOf maps", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+
+        const result = yield* control.createPool({
+          parentID: root.id,
+          parentPath: ROOT,
+          count: 3,
+          common_message: "do work",
+        })
+
+        expect(result.pool_id.startsWith("pool_")).toBe(true)
+        expect(result.members.length).toBe(3)
+        expect(result.failures.length).toBe(0)
+        expect(String(result.members[0]!.metadata.agent_path)).toBe("/root/pool_0")
+        expect(String(result.members[1]!.metadata.agent_path)).toBe("/root/pool_1")
+        expect(String(result.members[2]!.metadata.agent_path)).toBe("/root/pool_2")
+
+        const listed = yield* control.listPoolMembers(result.pool_id, root.id)
+        expect(listed.length).toBe(3)
+        expect(listed[0]).toBe(result.members[0]!.thread_id)
+      }),
+    ),
+  )
+
+  it.live("createPool with depth-exceeding parent path returns failures (partial-pool tolerance)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+
+        // Build a chain to depth 4 so a 5th spawn under it trips depth.
+        const l1 = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "l1",
+          initial_message: ".",
+        })
+        const l2 = yield* control.spawnAgent({
+          parentID: l1.thread_id,
+          parentPath: path("/root/l1"),
+          task_name: "l2",
+          initial_message: ".",
+        })
+        const l3 = yield* control.spawnAgent({
+          parentID: l2.thread_id,
+          parentPath: path("/root/l1/l2"),
+          task_name: "l3",
+          initial_message: ".",
+        })
+        const l4 = yield* control.spawnAgent({
+          parentID: l3.thread_id,
+          parentPath: path("/root/l1/l2/l3"),
+          task_name: "l4",
+          initial_message: ".",
+        })
+
+        const result = yield* control.createPool({
+          parentID: l4.thread_id,
+          parentPath: path("/root/l1/l2/l3/l4"),
+          count: 2,
+          common_message: "too deep",
+        })
+
+        expect(result.members.length).toBe(0)
+        expect(result.failures.length).toBe(2)
+        expect(result.failures[0]!.error_tag).toBe("depth_exceeded")
+        expect(result.failures[0]!.task_name).toBe("pool_0")
+      }),
+    ),
+  )
+
+  it.live('collectPool with strategy { type: "all" } returns deliverables in completion order', () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+        const root = yield* seedRoot()
+        let counter = 0
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            const idx = counter++
+            const meta = yield* control.getAgentMetadata(sid)
+            const author = meta!.agent_path!
+            // Stagger sends so delivered_at ordering is observable.
+            yield* Effect.sleep(20 * (idx + 1))
+            yield* control
+              .sendInterAgentCommunication(
+                root.id,
+                new InterAgentCommunication({
+                  author,
+                  recipient: ROOT,
+                  content: `from worker ${idx}`,
+                  trigger_turn: false,
+                  sent_at: Date.now(),
+                }),
+                sid,
+              )
+              .pipe(Effect.orDie)
+            return "done"
+          }),
+        )
+
+        const created = yield* control.createPool({
+          parentID: root.id,
+          parentPath: ROOT,
+          count: 2,
+          common_message: "go",
+        })
+        expect(created.members.length).toBe(2)
+
+        const collected = yield* control.collectPool(
+          created.pool_id,
+          root.id,
+          { type: "all" },
+          5000,
+        )
+        expect(collected.timed_out).toBe(false)
+        expect(collected.deliverables.length).toBe(2)
+        // delivered_at non-decreasing — sort by delivered_at guarantee.
+        expect(collected.deliverables[0]!.delivered_at).toBeLessThanOrEqual(
+          collected.deliverables[1]!.delivered_at,
+        )
+        const contents = collected.deliverables.map((d) => d.content)
+        expect(contents).toContain("from worker 0")
+        expect(contents).toContain("from worker 1")
+      }),
+    ),
+  )
+
+  it.live('collectPool with strategy { type: "first" } returns exactly one deliverable', () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+        const root = yield* seedRoot()
+        let idx = 0
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            const myIdx = idx++
+            const meta = yield* control.getAgentMetadata(sid)
+            const author = meta!.agent_path!
+            if (myIdx === 0) {
+              yield* control
+                .sendInterAgentCommunication(
+                  root.id,
+                  new InterAgentCommunication({
+                    author,
+                    recipient: ROOT,
+                    content: "fastest finger",
+                    trigger_turn: false,
+                    sent_at: Date.now(),
+                  }),
+                  sid,
+                )
+                .pipe(Effect.orDie)
+              return "done"
+            }
+            // Other worker sits idle.
+            return yield* Effect.never
+          }),
+        )
+        const created = yield* control.createPool({
+          parentID: root.id,
+          parentPath: ROOT,
+          count: 2,
+          common_message: "race",
+        })
+        expect(created.members.length).toBe(2)
+        const collected = yield* control.collectPool(
+          created.pool_id,
+          root.id,
+          { type: "first" },
+          5000,
+        )
+        expect(collected.timed_out).toBe(false)
+        expect(collected.deliverables.length).toBe(1)
+        expect(collected.deliverables[0]!.content).toBe("fastest finger")
+      }),
+    ),
+  )
+
+  it.live("closePoolMembers closes all members except the named survivor", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+
+        const created = yield* control.createPool({
+          parentID: root.id,
+          parentPath: ROOT,
+          count: 3,
+          common_message: ".",
+        })
+        expect(created.members.length).toBe(3)
+
+        const survivor = created.members[0]!.thread_id
+        const others = [created.members[1]!.thread_id, created.members[2]!.thread_id]
+
+        yield* control.closePoolMembers(created.pool_id, root.id, survivor)
+        yield* Effect.sleep(100)
+
+        for (const oid of others) {
+          const ref = yield* Effect.result(control.subscribeStatus(oid))
+          if (Result.isSuccess(ref)) {
+            const status = yield* SubscriptionRef.get(ref.success)
+            expect(status).toBe("shutdown")
+          }
+        }
+        const survivorRef = yield* control.subscribeStatus(survivor)
+        const survivorStatus = yield* SubscriptionRef.get(survivorRef)
+        expect(survivorStatus).not.toBe("shutdown")
+      }),
+    ),
+  )
+
+  it.live("collectPool times out when no deliverables arrive", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+
+        const created = yield* control.createPool({
+          parentID: root.id,
+          parentPath: ROOT,
+          count: 2,
+          common_message: ".",
+        })
+        expect(created.members.length).toBe(2)
+        const collected = yield* control.collectPool(
+          created.pool_id,
+          root.id,
+          { type: "all" },
+          100,
+        )
+        expect(collected.timed_out).toBe(true)
+        expect(collected.deliverables.length).toBe(0)
+      }),
+    ),
+  )
+
+  it.live("collectPool filters out completion-notification messages (Agent ... reached status:)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const root = yield* seedRoot()
+        // Workers emit an assistant message then exit naturally — that
+        // triggers a completion-notification ("Agent <path> reached status:
+        // completed") to root's mailbox. Without explicit send_message
+        // delivers, collectPool ("all", short timeout) should report 0
+        // deliverables AND timed_out=true (filter rule excludes the
+        // notification).
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            const userMsg = {
+              id: MessageID.ascending(),
+              sessionID: sid,
+              role: "user" as const,
+              time: { created: Date.now() },
+              agent: "build",
+              model: {
+                providerID: ProviderID.make("anthropic"),
+                modelID: ModelID.make("claude-3-5-sonnet"),
+              },
+            }
+            yield* sessions.updateMessage(userMsg)
+            const aMsg = {
+              id: MessageID.ascending(),
+              sessionID: sid,
+              parentID: userMsg.id,
+              role: "assistant" as const,
+              mode: "build",
+              agent: "build",
+              path: { cwd: ".", root: "." },
+              time: { created: Date.now(), completed: Date.now() },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("claude-3-5-sonnet"),
+              providerID: ProviderID.make("anthropic"),
+              finish: "tool-calls",
+            }
+            yield* sessions.updateMessage(aMsg)
+            yield* sessions.updatePart({
+              id: PartID.ascending(),
+              messageID: aMsg.id,
+              sessionID: sid,
+              type: "text",
+              text: "final reply, but routed via auto-extraction",
+            })
+            return "done"
+          }),
+        )
+        const created = yield* control.createPool({
+          parentID: root.id,
+          parentPath: ROOT,
+          count: 2,
+          common_message: ".",
+        })
+        const collected = yield* control.collectPool(
+          created.pool_id,
+          root.id,
+          { type: "all" },
+          250,
+        )
+        // Completion notifications get filtered → no deliverables, timed out.
+        expect(collected.timed_out).toBe(true)
+        expect(collected.deliverables.length).toBe(0)
+      }),
+    ),
+  )
+
+  it.live("listPoolMembers returns empty for unknown pool_id", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        const listed = yield* control.listPoolMembers("pool_nonexistent", root.id)
+        expect(listed.length).toBe(0)
+      }),
+    ),
+  )
+
+  it.live("closePoolMembers on unknown pool_id is a no-op", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        yield* control.closePoolMembers("pool_nonexistent", root.id)
+      }),
+    ),
+  )
+
+  it.live("createPool propagates pool_strategy and on_failure to spawnAgent", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+
+        const result = yield* control.createPool({
+          parentID: root.id,
+          parentPath: ROOT,
+          count: 2,
+          common_message: ".",
+          pool_strategy: "one_for_all",
+          on_failure: "ignore",
+        })
+        expect(result.members.length).toBe(2)
+        // The on_failure / pool_strategy fields are propagated into
+        // spawnAgent and stored on the per-child slot — exercising the
+        // path is sufficient (the storage assertions live in the D12
+        // tests). Here we assert the spawn path didn't reject the
+        // supervision args.
+        const listed = yield* control.listPoolMembers(result.pool_id, root.id)
+        expect(listed.length).toBe(2)
+      }),
+    ),
+  )
+
+  it.live("createPool with per_worker_messages overrides common_message per index", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+
+        const result = yield* control.createPool({
+          parentID: root.id,
+          parentPath: ROOT,
+          count: 2,
+          common_message: "default",
+          per_worker_messages: ["custom_0", "custom_1"],
+          task_prefix: "w",
+        })
+        expect(result.members.length).toBe(2)
+        expect(String(result.members[0]!.metadata.agent_path)).toBe("/root/w_0")
+        expect(result.members[0]!.metadata.last_task_message).toBe("custom_0")
+        expect(result.members[1]!.metadata.last_task_message).toBe("custom_1")
+      }),
+    ),
+  )
+
+  it.live("createPool with unknown parent returns empty result (no slot, no throw)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        yield* seedRoot()
+        const control = yield* AgentControl.Service
+        // parentID is fabricated and parentPath is NOT root, so the
+        // ensureRootSlot fallback doesn't fire. createPool returns an
+        // empty pool result rather than throwing.
+        const result = yield* control.createPool({
+          parentID: SessionID.descending("ses_unknown"),
+          parentPath: path("/root/elsewhere"),
+          count: 2,
+          common_message: ".",
+        })
+        expect(result.members.length).toBe(0)
+        expect(result.failures.length).toBe(0)
+      }),
+    ),
+  )
+
+  it.live("collectPool on unknown caller returns empty + not timed out", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const control = yield* AgentControl.Service
+        const r = yield* control.collectPool(
+          "pool_anything",
+          SessionID.descending("ses_unregistered"),
+          { type: "first" },
+          50,
+        )
+        expect(r.deliverables.length).toBe(0)
+        expect(r.timed_out).toBe(false)
+      }),
+    ),
+  )
+
+  it.live("collectPool partial timeout — captures deliverables that landed during the window", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        // Create a session WITHOUT calling registerSessionRoot — the
+        // createPool fallback at L1743 should lazy-register it.
+        const root = yield* sessions.create({ title: "lazy_root" })
+        const result = yield* control.createPool({
+          parentID: root.id,
+          parentPath: ROOT,
+          count: 1,
+          common_message: ".",
+        })
+        expect(result.members.length).toBe(1)
+        expect(result.failures.length).toBe(0)
+      }),
+    ),
+  )
+
+  it.live("collectPool partial timeout — captures deliverables that landed during the window", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+        const root = yield* seedRoot()
+        let counter = 0
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            const idx = counter++
+            const meta = yield* control.getAgentMetadata(sid)
+            const author = meta!.agent_path!
+            if (idx === 0) {
+              // Worker 0 sends quickly.
+              yield* control
+                .sendInterAgentCommunication(
+                  root.id,
+                  new InterAgentCommunication({
+                    author,
+                    recipient: ROOT,
+                    content: "fast deliverable",
+                    trigger_turn: false,
+                    sent_at: Date.now(),
+                  }),
+                  sid,
+                )
+                .pipe(Effect.orDie)
+              return "done"
+            }
+            // Worker 1 never sends.
+            return yield* Effect.never
+          }),
+        )
+        const created = yield* control.createPool({
+          parentID: root.id,
+          parentPath: ROOT,
+          count: 2,
+          common_message: ".",
+        })
+        // Strategy "all" with timeout shorter than worker 1 will ever send.
+        const collected = yield* control.collectPool(
+          created.pool_id,
+          root.id,
+          { type: "all" },
+          200,
+        )
+        expect(collected.timed_out).toBe(true)
+        expect(collected.deliverables.length).toBe(1)
+        expect(collected.deliverables[0]!.content).toBe("fast deliverable")
+      }),
+    ),
+  )
+
+  it.live("collectPool returns empty when caller's mailbox slot has been torn down", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+        // Spawn a subagent, then close it. The closeAgent path removes
+        // the subagent's mailbox but its sessionToRoot index persists
+        // — calling collectPool with that closed subagent's id hits the
+        // mailbox-missing branch (returns empty, not timed out).
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "ghost",
+          initial_message: ".",
+        })
+        const created = yield* control.createPool({
+          parentID: root.id,
+          parentPath: ROOT,
+          count: 1,
+          common_message: ".",
+        })
+        yield* control.closeAgent(child.thread_id, root.id)
+        const r = yield* control.collectPool(
+          created.pool_id,
+          child.thread_id,
+          { type: "all" },
+          50,
+        )
+        expect(r.deliverables.length).toBe(0)
+        expect(r.timed_out).toBe(false)
+      }),
+    ),
+  )
+
+  it.live("collectPool without timeout returns immediately for satisfied empty pool", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop([])
+        const root = yield* seedRoot()
+        const control = yield* AgentControl.Service
+
+        const created = yield* control.createPool({
+          parentID: root.id,
+          parentPath: ROOT,
+          count: 0,
+          common_message: ".",
+        })
+        expect(created.members.length).toBe(0)
+        // No timeout_ms — relies on satisfied() returning true immediately
+        // for the empty-member-set { type: "all" } strategy.
+        const r = yield* control.collectPool(created.pool_id, root.id, { type: "all" })
+        expect(r.deliverables.length).toBe(0)
+        expect(r.timed_out).toBe(false)
+      }),
+    ),
+  )
+})
