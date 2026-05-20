@@ -2159,6 +2159,230 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
       expect(AgentStatus.isFinal(s3)).toBe(false)
     }),
   )
+
+  // INV-D-18 (actor-discipline-2026-05-20 Wave 6) — spawn_pool collect=all
+  // aggregates deliverables from every member. Each worker's runLoop pushes
+  // a unique payload to the parent's mailbox via sendInterAgentCommunication
+  // (the same code path the send_message tool uses). collectPool with
+  // { type: "all" } drains until every member has authored a deliverable.
+  // Assertions: 3 deliverables; contents are the three worker payloads;
+  // delivered_at ordering is monotonic (matches the +counter stagger we
+  // bake into sent_at); every worker_path is one of the spawned members.
+  it.instance("INV-D-18-spawn-pool-collect-all-aggregates-results", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const root = yield* sessions.create({ title: "pool_root" })
+      yield* control.registerSessionRoot(root.id)
+
+      let counter = 0
+      yield* control.registerRunLoop((childSid) =>
+        Effect.gen(function* () {
+          const myCounter = ++counter
+          const meta = yield* control.getAgentMetadata(childSid)
+          const myPath = meta?.agent_path
+          if (!myPath) return "skipped"
+          yield* control
+            .sendInterAgentCommunication(
+              root.id,
+              new InterAgentCommunication({
+                author: myPath,
+                recipient: AgentPath.root(),
+                content: `worker_${myCounter}_payload`,
+                trigger_turn: false,
+                sent_at: Date.now() + myCounter,
+              }),
+              childSid,
+            )
+            .pipe(Effect.orDie)
+          return "delivered"
+        }),
+      )
+
+      // Drain any incidental seed messages before creating the pool so the
+      // collect loop only sees pool-member deliverables.
+      yield* control.drainMailbox(root.id)
+
+      const created = yield* control.createPool({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        count: 3,
+        common_message: "go",
+      })
+      expect(created.members.length).toBe(3)
+      expect(created.failures.length).toBe(0)
+
+      const collected = yield* control.collectPool(
+        created.pool_id,
+        root.id,
+        { type: "all" },
+        10_000,
+      )
+
+      expect(collected.timed_out).toBe(false)
+      expect(collected.deliverables.length).toBe(3)
+
+      const contents = collected.deliverables.map((d) => d.content).sort()
+      expect(contents).toEqual([
+        "worker_1_payload",
+        "worker_2_payload",
+        "worker_3_payload",
+      ])
+
+      // collectPool sorts by delivered_at — the +myCounter we baked into
+      // sent_at guarantees monotonic order.
+      const times = collected.deliverables.map((d) => d.delivered_at)
+      for (let i = 1; i < times.length; i++) {
+        expect(times[i]).toBeGreaterThanOrEqual(times[i - 1]!)
+      }
+
+      // Every reported worker_path is one of the spawned members.
+      const memberPaths = new Set(
+        created.members.map((m) => String(m.metadata.agent_path)),
+      )
+      for (const d of collected.deliverables) {
+        expect(memberPaths.has(String(d.worker_path))).toBe(true)
+      }
+    }),
+  )
+
+  // INV-D-19 (actor-discipline-2026-05-20 Wave 6) — spawn_pool collect=first
+  // returns the first deliverable, and closePoolMembers tears down the
+  // non-winners. Only the first invocation of the runLoop sends a payload;
+  // workers 2+3 idle in Effect.never. collectPool returns after the first
+  // arrival; closePoolMembers(..., except: winnerID) then closes everyone
+  // else. After a 100ms grace, the non-winners' status reads `shutdown`
+  // (or their slot is fully released → AgentNotFoundError). Winner
+  // survives.
+  it.instance("INV-D-19-spawn-pool-collect-first-cancels-remaining", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const root = yield* sessions.create({ title: "race_root" })
+      yield* control.registerSessionRoot(root.id)
+
+      let invocation = 0
+      yield* control.registerRunLoop((childSid) =>
+        Effect.gen(function* () {
+          const which = ++invocation
+          if (which === 1) {
+            yield* Effect.sleep(20)
+            const meta = yield* control.getAgentMetadata(childSid)
+            const myPath = meta?.agent_path
+            if (!myPath) return "skipped"
+            yield* control
+              .sendInterAgentCommunication(
+                root.id,
+                new InterAgentCommunication({
+                  author: myPath,
+                  recipient: AgentPath.root(),
+                  content: "first_winner",
+                  trigger_turn: false,
+                  sent_at: Date.now(),
+                }),
+                childSid,
+              )
+              .pipe(Effect.orDie)
+            return "won"
+          }
+          return yield* Effect.never
+        }),
+      )
+
+      yield* control.drainMailbox(root.id)
+
+      const created = yield* control.createPool({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        count: 3,
+        common_message: "race",
+      })
+      expect(created.members.length).toBe(3)
+
+      const collected = yield* control.collectPool(
+        created.pool_id,
+        root.id,
+        { type: "first" },
+        5_000,
+      )
+      expect(collected.timed_out).toBe(false)
+      expect(collected.deliverables.length).toBe(1)
+      expect(collected.deliverables[0]!.content).toBe("first_winner")
+
+      const winnerID = collected.deliverables[0]!.worker_session_id
+
+      // closePoolMembers closes every member except the winner.
+      yield* control.closePoolMembers(created.pool_id, root.id, winnerID)
+      yield* Effect.sleep(100)
+
+      // Non-winners must be shut down: subscribeStatus either returns
+      // status="shutdown" (slot retained with terminal status) OR fails
+      // with AgentNotFoundError (slot fully released). Both are valid
+      // teardown outcomes.
+      for (const m of created.members) {
+        if (m.thread_id === winnerID) continue
+        const refResult = yield* Effect.result(
+          control.subscribeStatus(m.thread_id),
+        )
+        if (Result.isSuccess(refResult)) {
+          const status = yield* SubscriptionRef.get(refResult.success)
+          expect(status).toBe("shutdown")
+        } else {
+          expect(refResult.failure._tag).toBe("AgentNotFoundError")
+        }
+      }
+
+      // Winner survived — subscribeStatus succeeds and status is not
+      // "shutdown" (the runLoop reached terminal `completed` via the
+      // "won" return).
+      const winnerRefResult = yield* Effect.result(
+        control.subscribeStatus(winnerID),
+      )
+      if (Result.isSuccess(winnerRefResult)) {
+        const winnerStatus = yield* SubscriptionRef.get(winnerRefResult.success)
+        expect(winnerStatus).not.toBe("shutdown")
+      }
+    }),
+  )
+
+  // INV-D-20 (actor-discipline-2026-05-20 Wave 6) — spawn_pool's
+  // PermissionKey collapses onto the existing `task` group. Two assertions
+  // prove the collapse without requiring a live spawn (the runtime spawn
+  // flow needs full Permission.Service plumbing the integration harness
+  // doesn't stand up):
+  //   (1) Permission.evaluate("task", "explore", ruleset) returns "allow"
+  //       when user config is `permission.task: { explore: allow }` — any
+  //       tool whose PermissionKey === "task" (spawn_pool, spawn_agent,
+  //       send_message, …) reads from the SAME group key, so no per-tool
+  //       rule re-declaration is needed.
+  //   (2) Permission.disabled(["spawn_pool", "spawn_agent", "task",
+  //       "read"], [{permission:"task", pattern:"*", action:"deny"}])
+  //       strips spawn_pool alongside the other MULTI_AGENT_TOOLS — if
+  //       spawn_pool were NOT in MULTI_AGENT_TOOLS, the lookup would fall
+  //       through to its own literal key and the wildcard task deny would
+  //       NOT strip it. The fact that the deny strips it proves the
+  //       collapse.
+  it.instance("INV-D-20-spawn-pool-permission-collapses-to-task", () =>
+    Effect.gen(function* () {
+      // (1) evaluate — user's task rule resolves for explore agent_type.
+      const ruleset: PermissionTypes.Ruleset = [
+        { permission: "task", pattern: "explore", action: "allow" },
+      ]
+      const rule = Permission.evaluate("task", "explore", ruleset)
+      expect(rule.action).toBe("allow")
+
+      // (2) disabled — wildcard task deny strips spawn_pool.
+      const disabled = Permission.disabled(
+        ["spawn_pool", "spawn_agent", "task", "read"],
+        [{ permission: "task", pattern: "*", action: "deny" }],
+      )
+      expect(disabled.has("spawn_pool")).toBe(true)
+      expect(disabled.has("spawn_agent")).toBe(true)
+      expect(disabled.has("task")).toBe(true)
+      // Tools outside the task group are unaffected (sanity).
+      expect(disabled.has("read")).toBe(false)
+    }),
+  )
 })
 
 describe("bug 3 audit — agent_type role-vocabulary fix is intact", () => {
