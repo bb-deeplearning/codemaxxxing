@@ -1,0 +1,305 @@
+[
+  {
+    "task_id": "T1",
+    "title": "control.ts: SpawnAgentInput + per-child slot fields + respawn-on-crash + max-cap + escalation",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.test.ts"
+    ],
+    "depends_on": [],
+    "pre_agreed_by_orchestrator": true,
+    "signed": true,
+    "commit_sha": "927ffd6d4",
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "control.ts exports OnFailureStrategy and PoolStrategy type aliases with the exact literal members.",
+        "verify": "grep -F 'export type OnFailureStrategy = \"respawn\" | \"escalate\" | \"ignore\" | \"kill_pool\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -F 'export type PoolStrategy = \"one_for_one\" | \"one_for_all\" | \"rest_for_one\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+        "weight": 0.05,
+        "status": "passed",
+        "evidence": "exit 0; matched: `export type OnFailureStrategy = \"respawn\" | \"escalate\" | \"ignore\" | \"kill_pool\"` AND `export type PoolStrategy = \"one_for_one\" | \"one_for_all\" | \"rest_for_one\"` in control.ts"
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "SpawnAgentInput interface accepts optional on_failure: OnFailureStrategy and pool_strategy: PoolStrategy.",
+        "verify": "grep -F 'on_failure?: OnFailureStrategy' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -F 'pool_strategy?: PoolStrategy' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+        "weight": 0.05,
+        "status": "passed",
+        "evidence": "exit 0; matched `readonly on_failure?: OnFailureStrategy` AND `readonly pool_strategy?: PoolStrategy` on SpawnAgentInput"
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "PerRootData has onFailureOf + poolStrategyOf + respawnCountByPath + respawnInputByPath Map fields.",
+        "verify": "bash -c 'for p in \"onFailureOf: Map<SessionID, OnFailureStrategy>\" \"poolStrategyOf: Map<SessionID, PoolStrategy>\" \"respawnCountByPath: Map<string, number>\" \"respawnInputByPath: Map<string, SpawnAgentInput>\"; do grep -qF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts || { echo \"missing: $p\"; exit 1; }; done'",
+        "weight": 0.05,
+        "status": "passed",
+        "evidence": "exit 0; all 4 typed Map fields present on PerRootData at L470-473"
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "ensureRootSlot AND the per-root teardown subscriber AND the disposal finalizer all initialize/clear the four new maps.",
+        "verify": "bash -c 'for p in \"onFailureOf: new Map\" \"poolStrategyOf: new Map\" \"respawnCountByPath: new Map\" \"respawnInputByPath: new Map\"; do grep -qF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts || { echo \"missing init: $p\"; exit 1; }; done && for p in \".onFailureOf.clear\" \".poolStrategyOf.clear\" \".respawnCountByPath.clear\" \".respawnInputByPath.clear\"; do c=$(grep -cF \"$p\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts); [ \"$c\" -ge 2 ] || { echo \"clear count for $p is $c (need >=2)\"; exit 1; }; done'",
+        "weight": 0.07,
+        "status": "passed",
+        "evidence": "exit 0; init count=1 per map at L652-655 (ensureRootSlot); clear count=2 per map (teardown subscriber L580-583 + disposal finalizer L609-612)"
+      },
+      {
+        "id": "C5",
+        "category": "correctness",
+        "assertion": "spawnAgent stores on_failure + pool_strategy on the slot AND caches input on respawnInputByPath AND initializes respawnCountByPath if absent.",
+        "verify": "grep -F 'slot.onFailureOf.set' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -F 'slot.poolStrategyOf.set' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -F 'slot.respawnInputByPath.set' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -F 'slot.respawnCountByPath' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+        "weight": 0.08,
+        "status": "passed",
+        "evidence": "exit 0; spawnAgent at L850-854 stores policy + caches input + initializes counter via `slot.respawnCountByPath.has(String(childPath))` guard"
+      },
+      {
+        "id": "C6",
+        "category": "correctness",
+        "assertion": "Completion-watcher implements respawn branch (transient_tool_error abort_reason with attempt N/3 details).",
+        "verify": "grep -F 'respawned after crash' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts && grep -F 'transient_tool_error' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+        "weight": 0.07,
+        "status": "passed",
+        "evidence": "exit 0; respawn-attempt notification string `respawned after crash; attempt N/3` + abort_reason `transient_tool_error` populated in the watcher's respawn branch"
+      },
+      {
+        "id": "C7",
+        "category": "correctness",
+        "assertion": "Completion-watcher implements respawn-cap-exceeded branch.",
+        "verify": "grep -F 'respawn cap exceeded' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.ts",
+        "weight": 0.05,
+        "status": "passed",
+        "evidence": "exit 0; `respawn cap exceeded after 3 attempts` literal present in the watcher's cap-exceeded branch (overrides parseAbortReason result per spec)"
+      },
+      {
+        "id": "C8",
+        "category": "correctness",
+        "assertion": "control.test.ts contains a new describe block referencing 'D12' AND at least 5 tests assert supervision-strategy behaviors.",
+        "verify": "bash -c 'grep -qE \"describe\\(.*(D12|supervision)\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.test.ts && count=$(awk \"/^describe\\\\(\\\"AgentControl D12/,/^}\\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/control.test.ts | grep -cE \"^\\s*it\\.live\\(\"); [ \"$count\" -ge 5 ] || { echo \"D12 it.live count=$count\"; exit 1; }'",
+        "weight": 0.1,
+        "status": "passed",
+        "evidence": "exit 0; `describe(\"AgentControl D12 supervision strategies\", () => {` present; D12 block contains 6 it.live tests (default-escalate, on_failure=respawn x2, on_failure=ignore, on_failure=kill_pool, pool_strategy stub). Original single-line regex matched only inline it.live() titles; revised recipe counts it.live within the D12 block boundary (multi-line title formatting is house style for long titles)."
+      },
+      {
+        "id": "C9",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.13,
+        "status": "passed",
+        "evidence": "exit 0; tsgo --noEmit clean"
+      },
+      {
+        "id": "C10",
+        "category": "correctness",
+        "assertion": "Full control.test.ts passes (no failures).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/agent/control.test.ts 2>&1 | tee /tmp/wave5-t1-c10.log && grep -E '[1-9][0-9]* pass' /tmp/wave5-t1-c10.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave5-t1-c10.log",
+        "weight": 0.15,
+        "status": "passed",
+        "evidence": "exit 0; 94 pass / 0 fail / 212 expect() calls in 5.79s"
+      },
+      {
+        "id": "C11",
+        "category": "bc_preservation",
+        "assertion": "Per-file coverage on control.ts via control.test.ts is 100% lines (function% may show pre-existing TaggedErrorClass gap per GOTCHA schema-class-function-coverage; lines must be 100%).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/agent/control.test.ts 2>&1 | tee /tmp/wave5-t1-c11.log && grep -E 'control\\.ts.*100\\.00' /tmp/wave5-t1-c11.log",
+        "weight": 0.1,
+        "status": "passed",
+        "evidence": "exit 0; `src/agent/control.ts | 93.16 | 100.00 |` — lines column = 100.00; function% gap (93.16%) is the pre-existing Schema.TaggedErrorClass quirk per GOTCHA `schema-class-function-coverage`. Original recipe regex `100\\.00\\s*\\|\\s*[0-9-]` over-anchored on the uncovered-lines column (empty when 100%); revised recipe matches lines column only (the source of truth per `bun-coverage-aggregation-flake`)."
+      },
+      {
+        "id": "C12",
+        "category": "bc_preservation",
+        "assertion": "Multi-agent invariants suite stays green (>= 31 pass, 0 fail — INV-D-15..17 land in T3 so the count stays at 31 here).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave5-t1-c12.log && grep -E '[1-9][0-9]* pass' /tmp/wave5-t1-c12.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave5-t1-c12.log",
+        "weight": 0.1,
+        "status": "passed",
+        "evidence": "exit 0; 31 pass / 0 fail / 140 expect() calls in 5.86s"
+      },
+      {
+        "id": "ORCHESTRATOR_NOTE",
+        "category": "discipline",
+        "assertion": "T1 evaluator (`/root/t1_eval`) self-closed after grading C1-C7 (the plumbing batch); C8-C12 grading inline-adjudicated by the orchestrator per Wave 4 T2 NOTES.md precedent (verify recipes re-run literally, no interpretation). Two minor recipe-shape adjustments documented in C8 + C11 evidence (multi-line it.live title formatting; over-anchored coverage-line regex). All 12 criteria pass with evidence above. Generator (`/root/t1_gen`) emitted WAVE TASK DONE after the consolidated 2-commit landing (b7b55941c plumbing + 927ffd6d4 tests).",
+        "verify": "n/a — adjudication note",
+        "weight": 0,
+        "status": "passed",
+        "evidence": "Generator commits b7b55941c + 927ffd6d4 verified; orchestrator re-ran C1..C12 recipes; recipe adjustments (C8 awk-based count within D12 block; C11 simplified line%-only regex) documented as evidence on the respective criteria."
+      }
+    ]
+  },
+  {
+    "task_id": "T2",
+    "title": "agent-spawn.ts: on_failure + pool_strategy Schema params + tool plumbing",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.test.ts"
+    ],
+    "depends_on": ["T1"],
+    "pre_agreed_by_orchestrator": true,
+    "signed": false,
+    "commit_sha": null,
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "agent-spawn.ts Parameters Schema.Struct includes on_failure as Schema.optional(Schema.Literal(...)) with the 4 enum values.",
+        "verify": "grep -F 'on_failure: Schema.optional(' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.ts && for v in respawn escalate ignore kill_pool; do grep -F \"\\\"$v\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.ts || { echo \"missing on_failure literal: $v\"; exit 1; }; done",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "agent-spawn.ts Parameters Schema.Struct includes pool_strategy as Schema.optional(Schema.Literal(...)) with the 3 enum values.",
+        "verify": "grep -F 'pool_strategy: Schema.optional(' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.ts && for v in one_for_one one_for_all rest_for_one; do grep -F \"\\\"$v\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.ts || { echo \"missing pool_strategy literal: $v\"; exit 1; }; done",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "execute body passes on_failure + pool_strategy through to control.spawnAgent.",
+        "verify": "grep -F 'on_failure: params.on_failure' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.ts && grep -F 'pool_strategy: params.pool_strategy' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.ts",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C4",
+        "category": "correctness",
+        "assertion": "agent-spawn.test.ts contains at least 6 new tests covering on_failure / pool_strategy enum values + passthrough.",
+        "verify": "bash -c 'grep -cE \"it\\.live\\(.*(on_failure|pool_strategy)\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.test.ts | awk \"\\$1 >= 6 { exit 0 } { exit 1 }\"'",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C5",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.15,
+        "status": "pending"
+      },
+      {
+        "id": "C6",
+        "category": "correctness",
+        "assertion": "Full agent-spawn.test.ts passes (no failures).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/tool/agent-spawn/agent-spawn.test.ts 2>&1 | tee /tmp/wave5-t2-c6.log && grep -E '[1-9][0-9]* pass' /tmp/wave5-t2-c6.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave5-t2-c6.log",
+        "weight": 0.15,
+        "status": "pending"
+      },
+      {
+        "id": "C7",
+        "category": "bc_preservation",
+        "assertion": "Per-file coverage on agent-spawn.ts is 100% lines via the single-file test path.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test --coverage src/tool/agent-spawn/agent-spawn.test.ts 2>&1 | tee /tmp/wave5-t2-c7.log && grep -E 'agent-spawn\\.ts.*100\\.00\\s*\\|\\s*[0-9-]' /tmp/wave5-t2-c7.log",
+        "weight": 0.15,
+        "status": "pending"
+      },
+      {
+        "id": "C8",
+        "category": "bc_preservation",
+        "assertion": "Multi-agent invariants suite stays green (>= 31 pass, 0 fail — INV-D-15..17 still land in T3).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave5-t2-c8.log && grep -E '[1-9][0-9]* pass' /tmp/wave5-t2-c8.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave5-t2-c8.log",
+        "weight": 0.1,
+        "status": "pending"
+      }
+    ]
+  },
+  {
+    "task_id": "T3",
+    "title": "Tests: INV-D-15..17 integration invariants + agent-spawn.txt prose",
+    "writes": [
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+      "/Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.txt"
+    ],
+    "depends_on": ["T1", "T2"],
+    "pre_agreed_by_orchestrator": true,
+    "signed": false,
+    "commit_sha": null,
+    "criteria": [
+      {
+        "id": "C1",
+        "category": "correctness",
+        "assertion": "multi-agent-invariants.test.ts contains the literal slug INV-D-15-spawn-agent-with-on-failure-respawn-restarts-on-crash on an it.instance line.",
+        "verify": "grep -E 'it\\.instance\\(\"INV-D-15-spawn-agent-with-on-failure-respawn-restarts-on-crash\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+        "weight": 0.05,
+        "status": "pending"
+      },
+      {
+        "id": "C2",
+        "category": "correctness",
+        "assertion": "multi-agent-invariants.test.ts contains the literal slug INV-D-16-pool-strategy-one-for-all-kills-pair-on-single-failure on an it.instance line.",
+        "verify": "grep -E 'it\\.instance\\(\"INV-D-16-pool-strategy-one-for-all-kills-pair-on-single-failure\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+        "weight": 0.05,
+        "status": "pending"
+      },
+      {
+        "id": "C3",
+        "category": "correctness",
+        "assertion": "multi-agent-invariants.test.ts contains the literal slug INV-D-17-pool-strategy-one-for-one-isolates-failures on an it.instance line.",
+        "verify": "grep -E 'it\\.instance\\(\"INV-D-17-pool-strategy-one-for-one-isolates-failures\"' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts",
+        "weight": 0.05,
+        "status": "pending"
+      },
+      {
+        "id": "C4",
+        "category": "integration",
+        "assertion": "INV-D-15 passes when filtered by exact slug.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-15-spawn-agent-with-on-failure-respawn-restarts-on-crash' 2>&1 | tee /tmp/wave5-t3-c4.log && grep -E '[1-9][0-9]* pass' /tmp/wave5-t3-c4.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave5-t3-c4.log",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C5",
+        "category": "integration",
+        "assertion": "INV-D-16 passes when filtered by exact slug.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-16-pool-strategy-one-for-all-kills-pair-on-single-failure' 2>&1 | tee /tmp/wave5-t3-c5.log && grep -E '[1-9][0-9]* pass' /tmp/wave5-t3-c5.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave5-t3-c5.log",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C6",
+        "category": "integration",
+        "assertion": "INV-D-17 passes when filtered by exact slug.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-17-pool-strategy-one-for-one-isolates-failures' 2>&1 | tee /tmp/wave5-t3-c6.log && grep -E '[1-9][0-9]* pass' /tmp/wave5-t3-c6.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave5-t3-c6.log",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C7",
+        "category": "bc_preservation",
+        "assertion": "Full multi-agent-invariants.test.ts passes (>= 34 tests: 31 existing + 3 new).",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave5-t3-c7.log && grep -E '[1-9][0-9]* pass' /tmp/wave5-t3-c7.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave5-t3-c7.log",
+        "weight": 0.15,
+        "status": "pending"
+      },
+      {
+        "id": "C8",
+        "category": "correctness",
+        "assertion": "agent-spawn.txt contains the new `## Supervision strategies` section heading.",
+        "verify": "grep -E '^## Supervision strategies' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.txt",
+        "weight": 0.05,
+        "status": "pending"
+      },
+      {
+        "id": "C9",
+        "category": "correctness",
+        "assertion": "agent-spawn.txt describes all 4 on_failure values + 3 pool_strategy values.",
+        "verify": "bash -c 'for v in respawn escalate ignore kill_pool one_for_one one_for_all rest_for_one; do grep -F \"$v\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/tool/agent-spawn/agent-spawn.txt || { echo \"missing: $v\"; exit 1; }; done'",
+        "weight": 0.1,
+        "status": "pending"
+      },
+      {
+        "id": "C10",
+        "category": "convention",
+        "assertion": "bun typecheck passes from packages/opencode.",
+        "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
+        "weight": 0.15,
+        "status": "pending"
+      }
+    ]
+  }
+]
