@@ -378,8 +378,8 @@
     ],
     "depends_on": ["T1", "T2", "T3"],
     "pre_agreed_by_orchestrator": true,
-    "signed": false,
-    "commit_sha": null,
+    "signed": true,
+    "commit_sha": "ed033dc3e",
     "criteria": [
       {
         "id": "C1",
@@ -387,8 +387,8 @@
         "assertion": "multi-agent-invariants.test.ts contains three new it.instance blocks named INV-D-18, INV-D-19, INV-D-20 with the canonical slugs.",
         "verify": "bash -c 'for slug in \"INV-D-18-spawn-pool-collect-all-aggregates-results\" \"INV-D-19-spawn-pool-collect-first-cancels-remaining\" \"INV-D-20-spawn-pool-permission-collapses-to-task\"; do grep -qF \"\\\"$slug\\\"\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts || { echo \"missing: $slug\"; exit 1; }; done'",
         "weight": 0.1,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "all 3 canonical slugs present as it.instance test names (L2171, L2257, L2365)"
       },
       {
         "id": "C2",
@@ -396,8 +396,8 @@
         "assertion": "INV-D-18 exercises control.createPool with count=3 AND control.collectPool with strategy { type: 'all' } AND asserts 3 deliverables.",
         "verify": "bash -c 'awk \"/INV-D-18-spawn-pool-collect-all-aggregates-results/,/^  \\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qF \"createPool\" && awk \"/INV-D-18-spawn-pool-collect-all-aggregates-results/,/^  \\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qF \"collectPool\"'",
         "weight": 0.07,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "createPool({count:3}) L2206-2211; collectPool with {type:'all'} L2215-2220; expect(collected.deliverables.length).toBe(3) L2223"
       },
       {
         "id": "C3",
@@ -405,8 +405,8 @@
         "assertion": "INV-D-19 exercises collect 'first' strategy AND calls closePoolMembers AND asserts non-winners reach 'shutdown' status.",
         "verify": "bash -c 'awk \"/INV-D-19-spawn-pool-collect-first-cancels-remaining/,/^  \\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"closePoolMembers|shutdown\"'",
         "weight": 0.06,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "{type:'first'} L2305; closePoolMembers L2315; expect(status).toBe('shutdown') L2329 (with AgentNotFoundError alt branch L2331)"
       },
       {
         "id": "C4",
@@ -414,8 +414,8 @@
         "assertion": "INV-D-20 asserts Permission.disabled with task wildcard deny strips spawn_pool from the active set (proves spawn_pool collapses onto task key).",
         "verify": "bash -c 'awk \"/INV-D-20-spawn-pool-permission-collapses-to-task/,/^  \\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qF \"Permission.disabled\" && awk \"/INV-D-20-spawn-pool-permission-collapses-to-task/,/^  \\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qF \"spawn_pool\"'",
         "weight": 0.06,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "Permission.disabled(['spawn_pool',...],[{permission:'task',pattern:'*',action:'deny'}]) L2375; expect(disabled.has('spawn_pool')).toBe(true) L2379"
       },
       {
         "id": "C5",
@@ -432,8 +432,8 @@
         "assertion": "INV-D-18..20 tests pass individually.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-18' 2>&1 | tee /tmp/wave6-t4-inv18.log && grep -E '[1-9][0-9]* pass' /tmp/wave6-t4-inv18.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave6-t4-inv18.log && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-19' 2>&1 | tee /tmp/wave6-t4-inv19.log && grep -E '[1-9][0-9]* pass' /tmp/wave6-t4-inv19.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave6-t4-inv19.log && bun test ./test/integration/multi-agent-invariants.test.ts -t 'INV-D-20' 2>&1 | tee /tmp/wave6-t4-inv20.log && grep -E '[1-9][0-9]* pass' /tmp/wave6-t4-inv20.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave6-t4-inv20.log",
         "weight": 0.2,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "INV-D-18: 1 pass / 0 fail / 10 expect (1317ms); INV-D-19: 1 pass / 0 fail / 7 expect (1126ms); INV-D-20: 1 pass / 0 fail / 5 expect (991ms)"
       },
       {
         "id": "C7",
@@ -441,8 +441,8 @@
         "assertion": "Full multi-agent-invariants.test.ts passes (no regressions).",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave6-t4-c7.log && grep -E '[1-9][0-9]* pass' /tmp/wave6-t4-c7.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave6-t4-c7.log",
         "weight": 0.2,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "37 pass / 0 fail / 178 expect() calls in 6.47s (matches generator-reported 37/0)"
       },
       {
         "id": "C8",
@@ -450,8 +450,8 @@
         "assertion": "Test names exactly match the invariant slugs from INTEGRATION_INVARIANTS.md (so verification can grep for them).",
         "verify": "bash -c 'c=$(grep -cE \"INV-D-(18|19|20)-\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts); [ \"$c\" -ge 3 ]'",
         "weight": 0.04,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "6 INV-D-(18|19|20)- matches (3 comment headers + 3 it.instance names) >= 3"
       },
       {
         "id": "C9",
@@ -459,8 +459,8 @@
         "assertion": "INV-D-18 + INV-D-19 use registerRunLoop that drives workers to send deliverables (or skip them, per the strategy under test) — not Effect.never alone for all workers, otherwise collect='all' would deadlock.",
         "verify": "bash -c 'awk \"/INV-D-18-spawn-pool-collect-all-aggregates-results/,/^  \\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qE \"registerRunLoop|sendInterAgentCommunication\"'",
         "weight": 0.07,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "INV-D-18 calls control.registerRunLoop L2179 and sendInterAgentCommunication L2186; INV-D-19 also uses registerRunLoop L2265 with winner-only send branch"
       },
       {
         "id": "C10",
@@ -468,8 +468,8 @@
         "assertion": "Each test uses installNeverLoop OR registers its own runLoop (mutually exclusive — never both at the same time, since only one runLoop registration is honored).",
         "verify": "bash -c 'true'",
         "weight": 0.03,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "INV-D-18/19 use registerRunLoop only (no installNeverLoop); INV-D-20 uses neither (pure Permission.evaluate/disabled — no spawn). Mutex preserved."
       },
       {
         "id": "C11",
@@ -477,8 +477,8 @@
         "assertion": "INV-D-20 also asserts Permission.evaluate('task', 'explore', ruleset).action returns 'allow' (proves user config under `task` key resolves for any agent_type — the collapse semantics).",
         "verify": "bash -c 'awk \"/INV-D-20-spawn-pool-permission-collapses-to-task/,/^  \\\\)$/\" /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/test/integration/multi-agent-invariants.test.ts | grep -qF \"Permission.evaluate\"'",
         "weight": 0.07,
-        "status": "pending",
-        "evidence": null
+        "status": "passed",
+        "evidence": "Permission.evaluate('task','explore',ruleset) L2371 + expect(rule.action).toBe('allow') L2372"
       }
     ]
   }
