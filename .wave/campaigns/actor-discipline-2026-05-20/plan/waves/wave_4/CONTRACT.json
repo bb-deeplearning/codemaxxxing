@@ -9,7 +9,7 @@
     "depends_on": [],
     "pre_agreed_by_orchestrator": true,
     "signed": true,
-    "commit_sha": "",
+    "commit_sha": "f0591a5c0932123ecc3b2effa3d9823513388f21",
     "criteria": [
       {
         "id": "C1",
@@ -17,8 +17,8 @@
         "assertion": "inter-agent-communication.ts contains `abort_reason: Schema.optional(Schema.Struct({ reason: Schema.String, details: Schema.String }))`.",
         "verify": "grep -E 'abort_reason:\\s*Schema\\.optional\\(Schema\\.Struct\\(' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts && grep -E 'reason:\\s*Schema\\.String' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts && grep -E 'details:\\s*Schema\\.String' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts",
         "weight": 0.2,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "grep matched: `abort_reason: Schema.optional(Schema.Struct({ reason: Schema.String, details: Schema.String })),` plus reason:/details: lines"
       },
       {
         "id": "C2",
@@ -26,8 +26,8 @@
         "assertion": "File contains a comment block referencing D11 / Wave 4 / ABORT protocol attribution.",
         "verify": "grep -iE '(D11|Wave 4|ABORT protocol|abort.*last assistant)' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.ts",
         "weight": 0.05,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "matched: `// D11 (actor-discipline-2026-05-20 Wave 4) — abort_reason carries the` and `// `ABORT(<reason>): <details>` as its last assistant line.`"
       },
       {
         "id": "C3",
@@ -35,8 +35,8 @@
         "assertion": "inter-agent-communication.test.ts contains at least one new test that constructs/decodes a message with abort_reason supplied.",
         "verify": "grep -F 'abort_reason' /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode/src/agent/inter-agent-communication.test.ts | wc -l | awk '$1 >= 3 { exit 0 } { exit 1 }'",
         "weight": 0.15,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "abort_reason occurrences >= 3 in test file; awk exit 0"
       },
       {
         "id": "C4",
@@ -44,8 +44,8 @@
         "assertion": "bun typecheck passes from packages/opencode.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun typecheck",
         "weight": 0.2,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "bun typecheck → exit 0 (tsgo --noEmit)"
       },
       {
         "id": "C5",
@@ -53,8 +53,8 @@
         "assertion": "Existing inter-agent-communication.test.ts continues to pass + new tests pass.",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test src/agent/inter-agent-communication.test.ts 2>&1 | tee /tmp/wave4-t1-c5.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t1-c5.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t1-c5.log",
         "weight": 0.2,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "13 pass / 0 fail / 28 expect() calls"
       },
       {
         "id": "C6",
@@ -62,8 +62,8 @@
         "assertion": "Multi-agent invariants suite stays green (>= 28 pass / 0 fail).",
         "verify": "cd /Users/rohan/Documents/Personal/codemaxxxing/packages/opencode && bun test ./test/integration/multi-agent-invariants.test.ts 2>&1 | tee /tmp/wave4-t1-c6.log && grep -E '[1-9][0-9]* pass' /tmp/wave4-t1-c6.log && ! grep -E '[1-9][0-9]* fail' /tmp/wave4-t1-c6.log",
         "weight": 0.2,
-        "status": "pending",
-        "evidence": ""
+        "status": "passed",
+        "evidence": "28 pass / 0 fail / 123 expect() calls"
       }
     ]
   },
