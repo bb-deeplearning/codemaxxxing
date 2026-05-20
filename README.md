@@ -2,31 +2,31 @@
 
 ![codemaxxxing](./hero.png)
 
-started as a fork of [opencode](https://github.com/anomalyco/opencode). isn't really one anymore. this is the daily coding tool we use internally for everything we build at [clauseo](https://clauseo.chat) and other [bbdeeplearning.systems](https://bbdeeplearning.systems) projects. it's not a product. it's our shop tool, shaped to how we work.
+the question driving everything here is simple: how large a task can I hand off and leave running in the background while I do something else? every iteration — the prompts, the wave runner FSM, the OTP-style multi-agent actor system (supervision, links, bounded mailboxes, behavior contracts), the persistent processes, the observability metrics, the integration invariants — is in service of pushing the answer further. the actor-discipline work that just landed was itself a 6-hour unsupervised wave campaign: 10 waves, 35 generator+evaluator pairs, the harness orchestrating itself end-to-end while I worked on something else. that's where the current answer sits. it isn't a product or a configurable platform; it's an instrument, and every hour spent on it expands the radius of work I can hand off.
 
-opencode gave us a great starting point and we kept its bones. we then diverged. first on prompts, then on the wave runner, then on the agent communication model, then on the tool surface. when we want a capability another harness has done well, we pull from there too. [openai/codex-cli](https://github.com/openai/codex-cli) was a great reference for persistent processes and concurrent subagents because they'd already solved those problems in a shape close to what we wanted. that doesn't make this a codex port. the architecture is ours; codex just made implementation faster.
+this repo plays two roles in chasing that. it's the daily tool I use to build things at [clauseo](https://clauseo.chat) and other [bbdeeplearning.systems](https://bbdeeplearning.systems) projects, and it's the surface where I experiment with how to build longer-running agents at all. the multi-agent actor system, persistent process tools, integration-invariants discipline, durable wave campaigns — these are experimental shapes that prove out here first, then get adapted into clauseo's production agents. nothing in this README is load-bearing dogma; it's the current iteration, and some of it will get re-litigated when the next model ships or a campaign surfaces something I got wrong. shares a file tree with [opencode](https://github.com/anomalyco/opencode) and very little else — the architecture has diverged on every surface I cared about.
 
-five things differ substantially from upstream:
+what I wanted that the upstream defaults didn't give:
 
-- **[wave runner](#wave-runner)**. a finite state machine that drives large tasks across many fresh AI sessions. auto-retry, in-flight plan amendment, conversational pauses when the agent needs us, full git audit trail.
-- **[multi-agent architecture](#multi-agent-architecture)**. concurrent subagents that talk to each other through a mailbox, not fire-and-forget. parents can spawn 5 workers in parallel, message them mid-flight, and integrate results without re-spawning.
-- **[persistent processes](#persistent-processes)**. PTY-backed tools (`exec_command` + `write_stdin`) that hold state between calls. REPLs keep their imports. dev servers stay running while you observe their logs. file watchers report new diagnostics as edits land.
-- **[drafting-table TUI](#tui)**. lighter chrome, more density, easier to read over mosh + tmux on small windows. plus a wave campaign dashboard.
-- **[rewritten prompts](#prompts)**. anti-over-engineering, parallelism baked in, distinguishing questions from action requests. rewritten for Anthropic, Gemini, and other (GLM/Qwen) backends.
+- a way to drive multi-hour, multi-session tasks without sitting on the keyboard. a finite state machine on disk with auto-retry, conversational user pauses, and a full git audit trail. → [**wave runner**](#wave-runner).
+- subagents that behave like real actors instead of fire-and-forget RPC calls — concurrent, addressable, supervisable, with mailboxes, links, bounded queues, and per-agent_type behavior contracts. erlang/otp/akka conceptual lineage adapted for LLM constraints. → [**multi-agent actor system**](#multi-agent-architecture).
+- shell tools that hold state between calls so REPLs keep their imports, dev servers stay running while I observe their logs, file watchers report new diagnostics as edits land. → [**persistent processes**](#persistent-processes).
+- a TUI that's readable on the setup I actually live in (mosh + tmux + iPad over hotel wifi on a long flight). lighter chrome, more density, a wave campaign dashboard so the FSM is observable. → [**drafting-table TUI**](#tui).
+- system prompts that don't over-engineer, don't moralise, distinguish questions from action requests, and parallelize aggressively. constantly reworked — nine iterations and counting, because the right prompt for Opus 4.6 isn't the right prompt for Opus 4.7. → [**rewritten prompts**](#prompts).
 
-the rest of the README walks through each one and how to install. there's a separate [WAVES.md](./WAVES.md) for the full wave-runner algorithm, [GOTCHAS.md](./GOTCHAS.md) for the sharp edges we've accumulated, and per-campaign engineering references in [specs/](./specs/).
+the rest of the README walks through each one and how to install. there's a separate [WAVES.md](./WAVES.md) for the full wave-runner algorithm, [GOTCHAS.md](./GOTCHAS.md) for the sharp edges accumulated along the way, and per-campaign engineering references in [specs/](./specs/).
 
 ## wave runner
 
-long agent sessions degrade. the context window is a sliding window. early details rot, compaction makes knowledge shallow, late-stage errors compound. the wave runner splits large tasks across many small fresh sessions, persists progress on disk as a finite state machine, and recovers from failures by patching the plan or asking us. no babysitting between waves.
+long agent sessions degrade. the context window is a sliding window. early details rot, compaction makes knowledge shallow, late-stage errors compound. the wave runner splits large tasks across many small fresh sessions, persists progress on disk as a finite state machine, and recovers from failures by patching the plan or asking me. no babysitting between waves.
 
 three agents:
 
 - `wave_plan` decomposes a plan markdown file into a campaign directory under `.wave/campaigns/<id>/`.
 - `wave_verify` sanity-checks the campaign before any wave runs (probes reality with cheap shell commands to catch planner blind spots), and re-amends it whenever a wave fails because the spec was wrong.
-- an executor agent (caveman, build, our choice) runs each wave. reads its `WAVE.md`, dispatches sub-agents, runs verification, commits, updates state.
+- an executor agent (caveman, build, my choice) runs each wave. reads its `WAVE.md`, dispatches sub-agents, runs verification, commits, updates state.
 
-a loop in `packages/opencode/src/wave/loop.ts` orchestrates everything. after we arm it once, every wave completion auto-spawns the next, transient failures auto-retry up to 3 times, and `PLAN UNDOABLE` outcomes auto-escalate to the verifier. when an agent needs user input it pauses conversationally. the session stays alive, we reply in chat, the same agent resumes mid-thread. every outcome (success, failure, undoable, paused, crash) produces a git commit, so the working tree is always clean between sessions and we have a full audit trail in `git log`.
+a loop in `packages/opencode/src/wave/loop.ts` orchestrates everything. after I arm it once, every wave completion auto-spawns the next, transient failures auto-retry up to 3 times, and `PLAN UNDOABLE` outcomes auto-escalate to the verifier. when an agent needs user input it pauses conversationally. the session stays alive, I reply in chat, the same agent resumes mid-thread. every outcome (success, failure, undoable, paused, crash) produces a git commit, so the working tree is always clean between sessions and I have a full audit trail in `git log`.
 
 **workflow**:
 
@@ -45,38 +45,126 @@ a loop in `packages/opencode/src/wave/loop.ts` orchestrates everything. after we
 
 4. **respond to questions.** when the dashboard shows a USER ATTENTION banner, press `↵` on the wave row to open the session in chat. read the agent's full contextual question, reply normally. the agent picks up the reply and continues.
 
+### orchestrated waves
+
+per-wave executors aren't limited to single-session runs. for non-trivial waves the executor itself spawns subagents: a **planner** that breaks the wave into PLAN.json tasks (one file or one tight bundle per task), then per-task **generator + evaluator** pairs that build and grade independently. the executor's role is supervisor — it watches for set-phrases and reads CONTRACT.json but never grades criteria directly. the evaluator is asymmetric and adversarial, judging only the OUTPUT (never the generator's reasoning trace), using tools (greps, type-checks, `bun test`, verify recipes) to verify behavior rather than inspect code.
+
+this is the discipline that lets a wave with 5-15 file changes ship in one orchestrated session without a human review pass: the per-task evaluator catches the bugs the generator missed, the orchestrator drafts CONTRACT.json upfront from the wave spec (pre-agreed contract pattern), and disjoint-write tasks run in parallel via the multi-agent surface. the actor-discipline campaign (iteration 9) validated this shape across 10 waves: 35 generator+evaluator pairs, 340 contract criteria, zero pivots in Phase 3, T2+T3+T4 3-way parallelized in Wave 8. each wave's full orchestration trace lives in `.wave/campaigns/<id>/waves/wave_N/NOTES.md`.
+
+self-evaluation is a trap (a builder tuned to be self-critical doesn't critique). orchestrated waves always spawn a separate evaluator subagent; the generator never grades its own work. the same agent never holds both roles.
+
 read more: [WAVES.md](./WAVES.md) for the full algorithm, FSM states, set phrases, recovery paths, and architectural choices.
 
 ## multi-agent architecture
 
-opencode's `task` is fire-and-forget. parent calls task, child runs to completion, parent gets back a single text string. no channel back during execution. no concurrent siblings. no observable status. fine for "go grep the codebase". falls apart for everything else we kept wanting to do: parallel fan-out with N explorers, observer + worker patterns, debate between two framings, long-running siblings the parent checks in on later.
+upstream's `task` is fire-and-forget. parent calls task, child runs to completion, parent gets back a single text string. no channel back during execution. no concurrent siblings. no observable status. no supervision. fine for "go grep the codebase". falls apart for everything else I kept wanting to do: parallel fan-out with N explorers, observer + worker patterns, debate between two framings, long-running siblings the parent checks in on later, fault tolerance when one of those siblings crashes mid-flight.
 
-we replaced it. six tools, all backed by an `AgentControl` service with per-root agent registry and per-session mailbox.
+I replaced it with a real actor system. ten tools, all backed by an `AgentControl` service with per-root agent registry, per-session bounded mailboxes, supervision strategies, link cascades, and per-`agent_type` behavior contracts. erlang/otp/akka conceptual lineage adapted for LLM constraints — `on_failure: respawn` mirrors OTP supervisor `restart: permanent`, `pool_strategy: one_for_all` is OTP one_for_all, `link_agents`/`unlink_agents` are erlang `link/1`/`unlink/1`. deliberately NOT imported: lifecycle hooks (preStart/postStop don't help LLM subagents), deep escalation chains (LLM cost makes them expensive), or persistence (state lives in messages, not in subagent memory across crashes).
+
+### the ten tools, grouped
+
+**lifecycle**
 
 | Tool | What it does |
 |---|---|
-| `spawn_agent` | fire-and-keep-running. returns immediately with the child's canonical path. parent keeps working. |
-| `send_message` | FYI queue. message lands in recipient's mailbox; recipient sees it on their next turn. |
-| `followup_task` | queue AND wake. recipient picks up the work immediately. |
-| `wait_agent` | block on any mailbox update. use only when genuinely blocked. |
+| `spawn_agent` | fire-and-keep-running. returns immediately with the child's canonical path. parent keeps working. accepts `on_failure: respawn / escalate / ignore / kill_pool` and `pool_strategy: one_for_one / one_for_all / rest_for_one`. |
+| `close_agent` | release a slot. cascades through descendants. `target` is optional (self-close); returns `already_terminated` (success — child exited before close arrived) vs `path_invalid` (model bug — wrong path). |
+
+**messaging**
+
+| Tool | What it does |
+|---|---|
+| `send_message` | FYI queue. message lands in recipient's mailbox; recipient sees it on their next turn. optional `correlation_id` pairs request to reply. returns `mailbox_full` with `retry_after_ms` hint on overflow. |
+| `followup_task` | queue AND wake. recipient picks up the work immediately. same `correlation_id` + `mailbox_full` shape as `send_message`. |
+
+**waits**
+
+| Tool | What it does |
+|---|---|
+| `wait_agent` | block on any mailbox update. emits `missing_timeout` warning when `timeout_ms` is omitted, `timeout_clamped` when above the 600000ms cap. |
+| `wait_for_reply` | targeted variant. blocks until a mailbox message carrying the matching `correlation_id` arrives. wakes only on the matching reply; ignores unrelated mailbox traffic. |
+
+**fan-out**
+
+| Tool | What it does |
+|---|---|
+| `spawn_pool` | declarative N-worker fan-out under a shared pool_id. three collect strategies: `all` (wait for every member), `first` (race; runtime closes losers), `any_n` (quorum — return when K members deliver, leave the rest alive). non-atomic spawning — failures land in a `failures[]` array. |
+
+**linking**
+
+| Tool | What it does |
+|---|---|
+| `link_agents` | forge a bidirectional symmetric paired-death edge between two peers. when either terminates non-gracefully (crash, runtime error, close from above), the runtime cascades the death to every linked partner with the `linked_death` label. |
+| `unlink_agents` | drop the edge. symmetric + idempotent. |
+
+**introspection**
+
+| Tool | What it does |
+|---|---|
 | `list_agents` | snapshot of every live agent in your session tree. status, last instruction. cheap. |
-| `close_agent` | release a slot. cascades through descendants. |
+
+### runtime model
 
 the spawn tree is depth-limited (4 levels under `/root`). each agent runs in its own fiber, makes its own LLM calls, can spawn its own descendants. siblings push results to each other via `send_message` or `followup_task`; results land in the recipient's mailbox and get drained automatically at the start of the recipient's next turn (shown as `[from <author>] ...` prefixed entries).
 
 a sibling watcher fiber forks at every spawn. when the child reaches a final, non-shutdown status, the watcher posts a completion notification to the parent's mailbox. parent's `wait_agent` wakes within milliseconds.
 
-per-root scoping is the structural invariant. two chat sessions opened against the same project don't see each other's subagents. each registered root gets its own slot (registry, mailboxes, statuses, fibers). a `sessionToRoot` index resolves any session id to its root in O(1). every service method routes through the slot resolver before doing anything.
+### supervision
 
-scenario-level coverage lives at `packages/opencode/test/integration/multi-agent-invariants.test.ts`. 13 invariants, each `it.instance` walks the scenario the invariant describes and asserts what a user would observe. every wave touching multi-agent code must add at least one invariant before its production code lands. coverage alone is necessary but not sufficient. the harness is what catches the composed-primitives bugs (multi-chat collision, wait_agent never waking, agent_type not validated) that 100% line coverage missed.
+`spawn_agent` accepts `on_failure` to declare what happens when a child terminates non-gracefully: `escalate` (default; the runtime forwards the completion notification with terminal status), `respawn` (re-spawn at the same task_name with a fresh session id, capped at 3 attempts then escalates with `transient_tool_error`), `ignore` (swallow the failure silently — no completion notification; use for fire-and-forget probes), `kill_pool` (cascade to the pool — applies to pool members only).
 
-engineering reference: [specs/codex-parity.md](./specs/codex-parity.md) for the initial port, [specs/codex-parity-hardening.md](./specs/codex-parity-hardening.md) for the per-root scoping + completion watcher fixes that came after.
+`pool_strategy` controls how a failure in one pool member affects siblings (OTP-style): `one_for_one` (default; failures are isolated), `one_for_all` (any single failure tears down the entire pool), `rest_for_one` (any failure tears down members spawned after the failing one).
+
+### bounded mailboxes
+
+every agent's mailbox is bounded (default 32 user messages). sends to a full mailbox return `{ error: "mailbox_full", retry_after_ms: 250 }` instead of queueing. callers retry with backoff or use `followup_task` to wake the recipient so it drains. completion notifications from terminating subagents bypass the cap — your subagent crashing always notifies you regardless of mailbox state.
+
+backpressure surfaces context rot before it cascades. the alternative — unbounded mailboxes — lets a stuck subagent's inbox accumulate hundreds of messages while the supervisor thinks everything is fine; the bound makes that situation visible as a tool error the model can react to.
+
+### behavior contracts
+
+each `agent_type` declares a `BehaviorContract` (e.g. `general` requires `send_message_to_spawner` before terminating; `explore` requires read-only completion). at terminal-status time the runtime computes `BehaviorViolation`s against the declared contract and attaches them to the parent's notification as a `behavior_violation` struct. observer-only — spawn returns successfully regardless; the orchestrator decides whether to pivot, retry, or abort.
+
+custom agents declared in `.opencode/agent/` inherit no contract by default. per-spawn override via `spawn_agent(..., behavior_version: "subagent_v2")`.
+
+### per-root scoping
+
+per-root scoping is the structural invariant. two chat sessions opened against the same project don't see each other's subagents. each registered root gets its own slot (registry, mailboxes, statuses, fibers, supervision policies, links, behaviors). a `sessionToRoot` index resolves any session id to its root in O(1). every service method routes through the slot resolver before doing anything.
+
+### the delivery contract
+
+subagents MUST deliver their result via `send_message` or `followup_task` to their spawner before calling `close_agent`. text-extraction from the subagent's final assistant message is a fallback, not the primary path. when the safety net fires (subagent terminated silently with no substantive body), the parent's notification is prepended with a ⚠️ warning so the gap is visible loudly instead of silently shipping a one-line cleanup as the deliverable.
+
+subagents can also emit `ABORT(<reason>): <details>` as their last assistant line. the runtime parses the set-phrase line-anchored to the LAST non-empty line, populates a structured `abort_reason: { reason, details }` field on the parent's notification, continues with the human-readable text. six reasons in the enum: `spec_wrong`, `transient_tool_error`, `out_of_scope`, `context_full`, `approach_failed`, `user_question`. orchestrators pivot on `approach_failed`; the rest are observer signals.
+
+### observability
+
+four bus events under the `agent.metric.*` prefix surface the rates worth watching:
+
+- **`deliverable_arrival_rate`** — fraction of subagent completions whose deliverable reached the spawner via explicit send or auto-extraction (NOT via the safety net). target: ~1.0; close to 0 means subagents are silently failing.
+- **`safety_net_firing_rate`** — count of safety-net warnings per completion. inverse twin. >0.1 over rolling window of 20+ is the canary that prompts aren't teaching the delivery contract.
+- **`sibling_deadlock_rate`** — count of `wait_agent`/`wait_for_reply` calls that exited via timeout. surfaces blocked-on-message-that-never-arrives shapes live.
+- **`subagent_tool_error_rate`** — count of multi-agent tool calls that returned a tool-recoverable error. context-rot canary.
+
+four pure rate helpers (`deliverableArrivalRate`, `safetyNetFiringRate`, `siblingDeadlockRate`, `subagentToolErrorRate`) compose with `Array.prototype.filter` / `slice` to scope by time window or session. consumers subscribe via `Bus.Service.subscribeCallback`; failure to attach is silent and safe.
+
+### integration invariants
+
+scenario-level coverage lives at `packages/opencode/test/integration/multi-agent-invariants.test.ts`. 45 invariants — 17 pre-existing (multi-root scoping, child-completion-wakes-parent, cross-root-send-rejection, session-deletion-cleanup, parent-close-cascades) plus 28 D-series (delivery contract, sibling coordination, ask pattern, ABORT protocol, supervision, pools, links, bounded mailboxes, behavior contracts, observability). each `it.instance` walks the scenario the invariant describes and asserts what a user would observe. every wave touching multi-agent code must add at least one invariant before its production code lands.
+
+coverage alone is necessary but not sufficient. the harness is what catches the composed-primitives bugs (multi-chat collision, wait_agent never waking, agent_type not validated, silent delivery failure when child emits text + close_agent in the same turn, sibling deadlock when both peers wait on broadcasts that don't exist) that 100% line coverage missed.
+
+### engineering references
+
+- [specs/actor-discipline.md](./specs/actor-discipline.md) — full surface as of iteration 9. supervision, pools, links, bounded mailboxes, behavior contracts, observability, integration invariants discipline.
+- [specs/codex-parity.md](./specs/codex-parity.md) — original 6-tool port that preceded actor-discipline.
+- [specs/codex-parity-hardening.md](./specs/codex-parity-hardening.md) — per-root scoping + completion watcher fixes after the initial port.
 
 ## persistent processes
 
-opencode's `bash` is one-shot. every call spawns a fresh process and exits when the command does. fine for `ls`, `git status`, `mkdir`. useless for REPLs, dev servers, file watchers, anything that holds state.
+upstream's `bash` is one-shot. every call spawns a fresh process and exits when the command does. fine for `ls`, `git status`, `mkdir`. useless for REPLs, dev servers, file watchers, anything that holds state.
 
-we replaced it with two tools backed by a 64-process PTY pool.
+I replaced it with two tools backed by a 64-process PTY pool.
 
 | Tool | What it does |
 |---|---|
@@ -85,7 +173,7 @@ we replaced it with two tools backed by a 64-process PTY pool.
 
 state stays between calls. boot a Python REPL once, load imports once, run 50 expressions against the same in-memory state. spin up `next dev`, edit a file, poll for new log lines as the server reacts. tail `kubectl logs -f` in one slot while the main thread does other work.
 
-operational guarantees match what other harnesses have settled on: 64-process LRU pool, head/tail-buffered output (50/50 split inside 1 MiB so the model always sees both prologue and recent activity), yield-time clamps tuned to keep REPLs responsive and prevent spam-polling (5s floor on empty polls, 250ms floor on input-sending writes, 30s ceiling everywhere). `tty: true` is required if you intend to send stdin later; without it the connection is one-way.
+operational guarantees: 64-process LRU pool, head/tail-buffered output (50/50 split inside 1 MiB so the model always sees both prologue and recent activity), yield-time clamps tuned to keep REPLs responsive and prevent spam-polling (5s floor on empty polls, 250ms floor on input-sending writes, 30s ceiling everywhere). `tty: true` is required if you intend to send stdin later; without it the connection is one-way.
 
 the model-spawned PTYs persist past process exit so the model can drain final output via a follow-up empty poll. desktop-spawned PTYs (from the TUI terminal pane) keep their old auto-remove-on-exit behavior. distinguished by an `origin: "tui" | "model"` field on `Pty.Info`.
 
@@ -93,12 +181,12 @@ engineering reference: [specs/codex-parity.md](./specs/codex-parity.md).
 
 ## tool surface
 
-the model's tool list no longer shows `bash` or `task`. they're covered by `exec_command` plus `write_stdin` for shell work and the six v2 multi-agent tools for agent-spawning. cleaner: no decision overload, no near-duplicate tools competing for the same intent.
+the model's tool list no longer shows `bash` or `task`. they're covered by `exec_command` plus `write_stdin` for shell work and the [ten multi-agent tools](#multi-agent-architecture) for agent orchestration. cleaner: no decision overload, no near-duplicate tools competing for the same intent.
 
 saved permissions keep working without edits. permission key collapse:
 
 - `SHELL_TOOLS = ["bash", "exec_command", "write_stdin"]` all consult permission key `bash`. saved `permission.bash: { "git *": "allow" }` rules transparently gate the new tools.
-- `MULTI_AGENT_TOOLS = ["task", "spawn_agent", "send_message", "followup_task", "wait_agent", "list_agents", "close_agent"]` all consult permission key `task`. saved `permission.task: { "explore": "allow" }` gates the new tools too.
+- `MULTI_AGENT_TOOLS = ["task", "spawn_agent", "send_message", "followup_task", "wait_agent", "wait_for_reply", "list_agents", "close_agent", "spawn_pool", "link_agents", "unlink_agents"]` all consult permission key `task`. saved `permission.task: { "explore": "allow" }` gates every member.
 
 mirror of the existing `EDIT_TOOLS` precedent (where `edit`, `write`, `apply_patch` all consult permission key `edit`).
 
@@ -114,7 +202,7 @@ engineering reference: [specs/replace-bash-task.md](./specs/replace-bash-task.md
 
 ![codemaxxxing](./screenshot.gif)
 
-lighter, more information-dense chrome. easier to read over mosh + tmux on smaller windows. personal preference. not a feature, just our taste.
+lighter, more information-dense chrome. shaped for the setup I actually live in: mosh + tmux over hotel wifi on an iPad, sometimes splitscreen with notes or a browser, sometimes a 60-column window because the keyboard takes half the screen. every wasted line is a line of session history I can't see. personal preference, not a feature — but the constraints drove the shape.
 
 most of it is subtraction. panels lose their backgrounds and become single-cell left rules. message blocks lose their closing rules. tool calls collapse to `label · target · meta` instead of labeled separator lines. speaker identity moves to a `u·1` / `a·1` mark in the left margin. sidebar gains a small live stats block (messages, tokens, cost, duration). prompt has a state-aware `▎` accent and a two-row status (identity + ephemeral hints) with a small usage meter.
 
@@ -136,12 +224,14 @@ also:
 
 ## prompts
 
-we keep iteration logs in [`PROMPT_ITERATIONS/`](./PROMPT_ITERATIONS/) and corresponding change lists in [`CHANGES/`](./CHANGES/). the reason isn't process discipline. it's that we forget what we tried. when something starts misbehaving again, the logs are how we find what we already learned. each iteration follows the same structure:
+I keep iteration logs in [`PROMPT_ITERATIONS/`](./PROMPT_ITERATIONS/) and corresponding change lists in [`CHANGES/`](./CHANGES/). the reason isn't process discipline. it's that I forget what I tried. when something starts misbehaving again, the logs are how I find what I already learned. each iteration follows the same structure:
 
 1. **discovery**. what behavior is going wrong, with concrete examples.
-2. **research**. how Claude Code, Cursor, Ralph, codex, and community patterns handle it.
+2. **research**. how I've thought about it, what patterns I've seen elsewhere.
 3. **solution**. exact files changed and why.
 4. **observe**. what to watch for to know if it worked.
+
+prompts are alive here. the right framing for Opus 4.6 isn't the right framing for Opus 4.7 — 4.7 stopped inferring implicit contracts and I had to rewrite the multi-agent prose to state the delivery contract literally (iteration 9). every model release prompts a re-evaluation; sections get added, deleted, reframed. nine iterations in, the prompts barely resemble the upstream defaults.
 
 a full index of files differing from upstream is in [`CHANGES/INDEX.md`](./CHANGES/INDEX.md).
 
@@ -155,10 +245,11 @@ a full index of files differing from upstream is in [`CHANGES/INDEX.md`](./CHANG
 | [6](./PROMPT_ITERATIONS/2026-04-11-caveman-agent.md)           | 2026-04-11 | Caveman agent: ultra-terse primary agent, terse subagent output rules                            |
 | [7](./PROMPT_ITERATIONS/2026-05-06-wave-system.md)             | 2026-05-06 | Wave system overhaul: verifier agent, retry/escalation FSM, conversational user pause            |
 | [8](./PROMPT_ITERATIONS/2026-05-13-multi-agent-and-tool-overhaul.md) | 2026-05-13 | Multi-agent architecture + tool surface overhaul: replaced `task` and `bash` from the model's view |
+| [9](./PROMPT_ITERATIONS/2026-05-20-actor-discipline.md) | 2026-05-20 | Actor discipline: delivery contract prose, ask pattern + ABORT protocol, supervision + pools + links + bounded mailboxes + behavior contracts, observability metrics |
 
 ### system prompts
 
-the Anthropic, Gemini, and default (GLM/Qwen/other) system prompts have all been rewritten with our flavour:
+the Anthropic, Gemini, and default (GLM/Qwen/other) system prompts have all been rewritten with my flavour:
 
 - **anti-over-engineering**. don't add features, abstractions, error handling, or comments beyond what was asked.
 - **inquiry vs directive awareness**. distinguish questions and discussions from action requests. don't start implementing when the user is exploring ideas.
@@ -183,7 +274,7 @@ agents with a tool denied don't see hints about that tool. compaction, title, an
 
 ### general subagent
 
-in upstream OpenCode, the general subagent inherits its system prompt from the parent verbatim. we ship native general subagent prompts (one for Anthropic models, one for Gemini) purpose-built for task execution with anti-over-engineering rules and structured reporting back to the parent. model selection happens automatically via `Agent.resolvePrompt()` in `agent.ts`. custom agents defined via `.opencode/agent/` config still take precedence.
+in upstream OpenCode, the general subagent inherits its system prompt from the parent verbatim. I ship native general subagent prompts (one for Anthropic models, one for Gemini) purpose-built for task execution with anti-over-engineering rules and structured reporting back to the parent. model selection happens automatically via `Agent.resolvePrompt()` in `agent.ts`. custom agents defined via `.opencode/agent/` config still take precedence.
 
 ### explore agent
 
@@ -201,7 +292,7 @@ the main agent's delegation to explore has been tuned to prevent context bloat (
 - the main agent uses Read directly when it already knows file paths, instead of wasting an explore agent on file reading
 - explore agents are always given a thoroughness level and starting-point directories
 
-our setup uses Claude Opus 4.7 as the primary model with the explore agent specifically running on Gemini 3.1 Pro Preview. to use this, add the following to your `opencode.json`:
+my setup uses Claude Opus 4.7 as the primary model with the explore agent specifically running on Gemini 3.1 Pro Preview. to use this, add the following to your `opencode.json`:
 
 ```json
 {
@@ -237,7 +328,7 @@ a custom primary agent that produces ultra-terse output. about 75% fewer output 
 
 the system prompt is a 1:1 copy of `anthropic.txt` with caveman communication rules prepended. rules are sourced from the caveman skill's core SKILL.md (ultra mode: abbreviations, arrows, fragments) and the compress skill's SKILL.md (granular remove/preserve/structure spec). the TodoWrite examples are rewritten in caveman style for consistency.
 
-the `build` agent remains the default for normal conversational use. we use `caveman` when we want maximum speed and token efficiency and don't need verbose explanations.
+the `build` agent remains the default for normal conversational use. I use `caveman` when I want maximum speed and token efficiency and don't need verbose explanations.
 
 both the general and explore subagent prompts also have caveman output rules, tailored to each agent's role:
 
@@ -264,13 +355,13 @@ cp custom_agents/docs.md custom_agents/plan_structured.md custom_agents/wave_pla
 
 two artifacts that emerged from the campaigns and have outsized value going forward.
 
-[`GOTCHAS.md`](./GOTCHAS.md) is the sharp-edges knowledge base. each entry is one painful debugging session distilled to a fix pattern. progressive disclosure: load the indexes first (`Read GOTCHAS.md limit=200` for about 4 KB), then jump to specific entries by slug with offset reads. covers Effect v4 renames, Bus and InstanceState lifetime traps, opentui render antipatterns, Bun coverage quirks, PTY origin gating, perf bench methodology, permission routing. read before doing the matching kind of work; you'll save the same hours we did.
+[`GOTCHAS.md`](./GOTCHAS.md) is the sharp-edges knowledge base. each entry is one painful debugging session distilled to a fix pattern. progressive disclosure: load the indexes first (`Read GOTCHAS.md limit=200` for about 4 KB), then jump to specific entries by slug with offset reads. covers Effect v4 renames, Bus and InstanceState lifetime traps, opentui render antipatterns, Bun coverage quirks, PTY origin gating, perf bench methodology, permission routing, the D5 extractor's terse-follow-up-status-line edge case, the D11 ABORT parser's last-line-only anchor. read before doing the matching kind of work; you'll save the same hours I did.
 
-`INTEGRATION_INVARIANTS.md` (per-campaign, lives in each campaign's archive under `.wave/campaigns/<id>/plan/`) plus the test harness at `packages/opencode/test/integration/` is the discipline. each invariant names a scenario the system must hold. each `it.instance` walks the scenario and asserts what a user would observe. coverage is necessary; the harness is sufficient. the structural bugs that survived 100% line coverage in the codex-parity campaign (multi-chat collision, wait_agent never waking, agent_type not validated) are the empirical proof. future work touching multi-agent or tool-surface code must add at least one invariant before its production code lands.
+`INTEGRATION_INVARIANTS.md` (per-campaign, lives in each campaign's archive under `.wave/campaigns/<id>/plan/`) plus the test harness at `packages/opencode/test/integration/` is the discipline. each invariant names a scenario the system must hold. each `it.instance` walks the scenario and asserts what a user would observe. coverage is necessary; the harness is sufficient. the structural bugs that survived 100% line coverage in the codex-parity campaign (multi-chat collision, wait_agent never waking, agent_type not validated) and the actor-discipline campaign (silent delivery failure when subagent emits text + close_agent in the same turn, sibling deadlock when peers wait on broadcasts that don't exist) are the empirical proof. the harness now holds 45 invariants — 17 pre-existing scoping/lifecycle plus 28 D-series covering delivery contract, sibling coordination, ask pattern, ABORT protocol, supervision, pools, links, bounded mailboxes, behavior contracts, observability. future work touching multi-agent or tool-surface code must add at least one invariant before its production code lands.
 
 ## if you ever fork this
 
-the prompts contain our identity. if you happen to be using this, fork it, change the identity in these files first:
+the prompts contain my identity. if you happen to be using this, fork it, change the identity in these files first:
 
 - `packages/opencode/src/session/prompt/anthropic.txt`. name, org, and identity in the Anthropic system prompt.
 - `packages/opencode/src/session/prompt/qwen.txt`. same for the default prompt (GLM, Qwen, and other non-specifically-matched models).
