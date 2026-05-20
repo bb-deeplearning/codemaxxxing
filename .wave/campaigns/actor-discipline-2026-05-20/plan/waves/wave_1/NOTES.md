@@ -1,7 +1,7 @@
 ## Attempt 1 — WAVE COMPLETE
 
 **Session:** ses_1bb62be9dffe9x2YUajNk80YsK
-**Commit:** TBD (set after settle commit)
+**Commit:** 1278d48be (settle commit; full sequence below in "Commit shas")
 **Date:** 2026-05-20
 **Decision on entry:** first attempt
 **Orchestration:** planner + per-task gen+eval pairs (6 tasks), pivot count: 1 (T5 negotiation stall → respawn)
@@ -48,6 +48,6 @@ Wave-settle verification (orchestrator-run):
 - f2cf4c807 — T6: add INV-D-06 + INV-D-08
 - 56576a1a2 — T5 (respawn): add prose grep harness
 - c78b4a61a — T5 (respawn): mark all 10 criteria passed
-- TBD — wave 1 settle: aggregate CONTRACT.json, STATE.md, NOTES.md
+- 1278d48be — wave 1 settle: aggregate CONTRACT.json, polish prose harness, STATE.md, NOTES.md
 
 ---
