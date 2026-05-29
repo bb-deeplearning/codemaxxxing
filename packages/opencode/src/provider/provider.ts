@@ -152,6 +152,10 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
           // (see anthropic-prepare-tools.ts). Anthropic now rejects this beta — Structured
           // Outputs went GA on 2026-01-29 with a renamed `output_config.format` parameter —
           // so strip it before the request leaves.
+          //
+          // Same deal for `effort-2025-11-24`: the SDK injects it for Opus 4.7 / Sonnet 4.7
+          // whenever `reasoning_effort` is set, but Anthropic rejects the header. Strip it
+          // too — the `reasoning_effort` body field is accepted without the beta flag.
           fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
             const headers = new Headers(init?.headers)
             const beta = headers.get("anthropic-beta")
@@ -159,7 +163,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
               const filtered = beta
                 .split(",")
                 .map((v) => v.trim())
-                .filter((v) => v !== "" && v !== "structured-outputs-2025-11-13")
+                .filter((v) => v !== "" && v !== "structured-outputs-2025-11-13" && v !== "effort-2025-11-24")
                 .join(",")
               if (filtered) headers.set("anthropic-beta", filtered)
               else headers.delete("anthropic-beta")
