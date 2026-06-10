@@ -2498,6 +2498,26 @@ describe("ProviderTransform.variants", () => {
       expect(Object.keys(result)).toEqual(["low", "medium", "high", "xhigh", "max"])
     })
 
+    test("anthropic fable 5 models return adaptive thinking options with xhigh", () => {
+      const model = createMockModel({
+        id: "anthropic/claude-fable-5",
+        providerID: "gateway",
+        api: {
+          id: "anthropic/claude-fable-5",
+          url: "https://gateway.ai",
+          npm: "@ai-sdk/gateway",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high", "xhigh", "max"])
+      expect(result.xhigh).toEqual({
+        thinking: {
+          type: "adaptive",
+        },
+        effort: "xhigh",
+      })
+    })
+
     test("anthropic models return anthropic thinking options", () => {
       const model = createMockModel({
         id: "anthropic/claude-sonnet-4",
@@ -2917,6 +2937,12 @@ describe("ProviderTransform.variants", () => {
         efforts: ["low", "medium", "high", "xhigh", "max"],
         expectedHigh: { thinking: { type: "adaptive", display: "summarized" }, effort: "high" },
       },
+      {
+        name: "fable 5",
+        apiIds: ["claude-fable-5", "claude-fable-5-20260201"],
+        efforts: ["low", "medium", "high", "xhigh", "max"],
+        expectedHigh: { thinking: { type: "adaptive", display: "summarized" }, effort: "high" },
+      },
     ]) {
       for (const apiId of testCase.apiIds) {
         test(`${testCase.name} ${apiId} returns supported reasoning efforts`, () => {
@@ -2943,6 +2969,28 @@ describe("ProviderTransform.variants", () => {
         providerID: "github-copilot",
         api: {
           id: "claude-opus-4.7",
+          url: "https://api.githubcopilot.com/v1",
+          npm: "@ai-sdk/anthropic",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(result).toEqual({
+        medium: {
+          thinking: {
+            type: "adaptive",
+            display: "summarized",
+          },
+          effort: "medium",
+        },
+      })
+    })
+
+    test("github copilot fable 5 returns only medium reasoning effort", () => {
+      const model = createMockModel({
+        id: "claude-fable-5",
+        providerID: "github-copilot",
+        api: {
+          id: "claude-fable-5",
           url: "https://api.githubcopilot.com/v1",
           npm: "@ai-sdk/anthropic",
         },
@@ -3042,6 +3090,28 @@ describe("ProviderTransform.variants", () => {
           providerID: "bedrock",
           api: {
             id: "anthropic.claude-opus-4.8",
+            url: "https://bedrock.amazonaws.com",
+            npm: "@ai-sdk/amazon-bedrock",
+          },
+        }),
+      )
+      expect(Object.keys(result)).toEqual(["low", "medium", "high", "xhigh", "max"])
+      expect(result.high).toEqual({
+        reasoningConfig: {
+          type: "adaptive",
+          maxReasoningEffort: "high",
+          display: "summarized",
+        },
+      })
+    })
+
+    test("anthropic fable 5 returns adaptive reasoning options with xhigh", () => {
+      const result = ProviderTransform.variants(
+        createMockModel({
+          id: "bedrock/anthropic-claude-fable-5",
+          providerID: "bedrock",
+          api: {
+            id: "anthropic.claude-fable-5",
             url: "https://bedrock.amazonaws.com",
             npm: "@ai-sdk/amazon-bedrock",
           },

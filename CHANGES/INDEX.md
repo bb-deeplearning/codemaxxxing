@@ -39,6 +39,15 @@ Injected by `SystemPrompt.capabilityHints(agent)` at session bootstrap based on 
 | `packages/opencode/src/project/bootstrap.ts`    | Modified | [wave-system](2026-05-06-wave-system-and-tui-overhaul.md)                                                                                                                                                                     |
 | `packages/opencode/src/config/keybinds.ts`      | Modified | [flush-queued](2026-05-18-flush-queued.md): `session_flush_queued`                                                                                                                                                            |
 
+## Source code: provider
+
+Model-gated transforms layered on upstream's provider transform logic. Fork-only model support.
+
+| File                                                | Status   | Changes file                                                                                                            |
+| --------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------- |
+| `packages/opencode/src/provider/transform.ts`       | Modified | [fable-5-support](2026-06-10-fable-5-support.md): `claude-fable-5` gated into `anthropicOpus47OrLater` + the github-copilot effort clamp (Opus 4.7+ parity) |
+| `packages/opencode/test/provider/transform.test.ts` | Modified | [fable-5-support](2026-06-10-fable-5-support.md): Fable 5 coverage across anthropic/gateway/bedrock/github-copilot branches |
+
 ## Source code: multi-agent v2 (NEW subsystem)
 
 Per-root agent registry, per-session bounded mailboxes, completion watchers, supervision strategies, link cascades, behavior contracts, and the ten concurrent-interactive subagent tools.
@@ -161,7 +170,7 @@ Full engineering references for each campaign.
 
 | File          | Status    | Changes file                                                                                                                                                  |
 | ------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `README.md`   | Rewritten | [initial-fork](2026-02-15-initial-fork.md), [wave-system](2026-05-06-wave-system-and-tui-overhaul.md), [multi-agent-and-tool-overhaul](2026-05-13-multi-agent-and-tool-overhaul.md), [actor-discipline](2026-05-20-actor-discipline.md) (intro reframed, 10-tool surface, orchestrated waves subsection, observability + behavior contracts) |
+| `README.md`   | Rewritten | [initial-fork](2026-02-15-initial-fork.md), [wave-system](2026-05-06-wave-system-and-tui-overhaul.md), [multi-agent-and-tool-overhaul](2026-05-13-multi-agent-and-tool-overhaul.md), [actor-discipline](2026-05-20-actor-discipline.md) (intro reframed, 10-tool surface, orchestrated waves subsection, observability + behavior contracts), [fable-5-support](2026-06-10-fable-5-support.md) (default-setup line: Fable 5 primary) |
 | `.gitignore`  | Modified  | [initial-fork](2026-02-15-initial-fork.md)                                                                                                                    |
 | `WAVES.md`    | Rewritten | [initial-fork](2026-02-15-initial-fork.md), [wave-system](2026-05-06-wave-system-and-tui-overhaul.md)                                                         |
 | `GOTCHAS.md`  | New + Extended | [multi-agent-and-tool-overhaul](2026-05-13-multi-agent-and-tool-overhaul.md). About 1300 lines progressive-disclosure knowledge base; [actor-discipline](2026-05-20-actor-discipline.md) added 2 entries: `agentcontrol-d5-extractor-needs-two-pass-walk-for-terse-followup-status-line` + `agentcontrol-d11-abort-line-parser-last-line-only`. |

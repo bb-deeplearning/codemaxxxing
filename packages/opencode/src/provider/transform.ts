@@ -428,6 +428,11 @@ const WIDELY_SUPPORTED_EFFORTS = ["low", "medium", "high"]
 const OPENAI_EFFORTS = ["none", "minimal", ...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
 
 export function anthropicOpus47OrLater(apiId: string) {
+  // claude-fable-5 gets the same adaptive-reasoning treatment as Opus 4.7+
+  // (xhigh/max efforts + summarized thinking display). Matches bare, dotted,
+  // and date-suffixed ids (claude-fable-5, .../claude-fable-5-20260201) but
+  // not future unrelated ids like fable-50.
+  if (/fable-5(?:[.-]|$)/i.test(apiId)) return true
   const version = /opus-(\d+)[.-](\d+)(?:[.-]|$)/i.exec(apiId)
   if (!version) return false
   const major = Number(version[1])
@@ -642,7 +647,7 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
       if (adaptiveEfforts) {
         let efforts = [...adaptiveEfforts]
         if (model.providerID === "github-copilot") {
-          if (model.api.id.includes("opus-4.7")) {
+          if (model.api.id.includes("opus-4.7") || model.api.id.includes("fable-5")) {
             efforts = ["medium"]
           }
           // Efforts currently supported are: low, medium, high

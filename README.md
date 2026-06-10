@@ -292,7 +292,7 @@ the main agent's delegation to explore has been tuned to prevent context bloat (
 - the main agent uses Read directly when it already knows file paths, instead of wasting an explore agent on file reading
 - explore agents are always given a thoroughness level and starting-point directories
 
-my setup uses Claude Opus 4.7 as the primary model with the explore agent specifically running on Gemini 3.1 Pro Preview. to use this, add the following to your `opencode.json`:
+my setup uses Claude Fable 5 as the primary model with the explore agent specifically running on Gemini 3.1 Pro Preview. to use this, add the following to your `opencode.json`:
 
 ```json
 {
