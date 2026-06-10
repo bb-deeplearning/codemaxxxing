@@ -427,7 +427,7 @@ export function topK(model: Provider.Model) {
 const WIDELY_SUPPORTED_EFFORTS = ["low", "medium", "high"]
 const OPENAI_EFFORTS = ["none", "minimal", ...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
 
-function anthropicOpus47OrLater(apiId: string) {
+export function anthropicOpus47OrLater(apiId: string) {
   const version = /opus-(\d+)[.-](\d+)(?:[.-]|$)/i.exec(apiId)
   if (!version) return false
   const major = Number(version[1])

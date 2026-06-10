@@ -1,5 +1,6 @@
 import { z } from "zod"
 import type { Model } from "@opencode-ai/sdk/v2"
+import { anthropicOpus47OrLater } from "../../provider/transform"
 
 export const schema = z.object({
   data: z.array(
@@ -125,7 +126,7 @@ function build(key: string, remote: Item, url: string, prev?: Model): Model {
         variants[effort] = {
           thinking: {
             type: "adaptive",
-            ...(model.api.id.includes("opus-4.7") ? { display: "summarized" } : {}),
+            ...(anthropicOpus47OrLater(model.api.id) ? { display: "summarized" } : {}),
           },
           effort,
         }
