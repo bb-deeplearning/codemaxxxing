@@ -1708,6 +1708,11 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[] }) {
   // Memoized error-display predicate. Was inline in the JSX → re-evaluated
   // the error name on every reactive read.
   const hasUserError = createMemo(() => !!props.message.error && props.message.error.name !== "MessageAbortedError")
+  // A turn that finished with `content-filter` produces only step-start /
+  // step-finish parts (no text/tool/reasoning) and carries no error, so nothing
+  // visible renders and the turn looks like a silent "no response". Surface it
+  // explicitly instead. (`finish` is a free-form string in the schema.)
+  const blocked = createMemo(() => props.message.finish === "content-filter")
 
   // Combined render array — parts plus the trailing slots (task hint,
   // user error, closing summary). Rendered as a single <For> in the
@@ -1721,6 +1726,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[] }) {
     | { kind: "part"; part: Part; last: boolean }
     | { kind: "task" }
     | { kind: "error" }
+    | { kind: "blocked" }
     | { kind: "summary" }
   const renderable = createMemo<RenderItem[]>(() => {
     const items: RenderItem[] = []
@@ -1730,6 +1736,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[] }) {
     }
     if (hasTaskTool()) items.push({ kind: "task" })
     if (hasUserError()) items.push({ kind: "error" })
+    if (blocked()) items.push({ kind: "blocked" })
     if (final() || aborted()) items.push({ kind: "summary" })
     return items
   })
@@ -1846,6 +1853,16 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[] }) {
               return (
                 <box paddingTop={1} flexShrink={0}>
                   <text fg={theme.error}>{props.message.error?.data.message}</text>
+                </box>
+              )
+            if (item.kind === "blocked")
+              return (
+                <box paddingTop={1} flexShrink={0}>
+                  <text fg={theme.warning}>
+                    {
+                      "△ Response blocked by the model's content filter (finish: content-filter). You may still be billed for context processing — try another model or rephrase."
+                    }
+                  </text>
                 </box>
               )
             // item.kind === "summary"
