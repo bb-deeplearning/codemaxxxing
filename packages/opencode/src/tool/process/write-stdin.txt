@@ -5,10 +5,12 @@ Send input to a process spawned by `exec_command` and return its recent output. 
 
 # Parameters
 
-- `session_id` (required) — the number returned by an earlier `exec_command` call. If the process has since exited or been pruned by the LRU pool, you'll get `Unknown process id N`; re-spawn.
+- `session_id` (required) — the number returned by an earlier `exec_command` call. Exited sessions remain valid (their buffer stays readable) until the LRU pool prunes them; `Unknown process id N` means pruned, restarted, or a typo — re-spawn.
 - `chars` (default `""`) — bytes to write. Empty = pure poll. Non-empty = write then poll.
-- `yield_time_ms` (default `250`) — how long to wait for output before returning.
-- `max_output_tokens` — cap returned output length. Excess truncates head+tail.
+- `yield_time_ms` (default `250`) — the output-collection window: output accumulates until it elapses or the process exits.
+- `max_output_tokens` — cap returned output length. Excess truncates head+tail with an explicit `…[elided ~N bytes]…` marker; `omitted_bytes` lands in metadata.
+- `since_cursor` — non-destructive range re-read: return retained buffer bytes from this cursor immediately (no wait, no clamp floor, live cursor untouched). Use `cursor_start`/`cursor_end` from earlier calls' metadata to target elided output.
+- `strip_ansi` (default `false`) — strip ANSI escapes from the captured output; raw bytes stay in the buffer.
 
 # Yield-time rules
 
@@ -25,34 +27,38 @@ Same as `exec_command`:
 
 ```
 {
-  output: string                    // bytes emitted between previous call's cursor and now
+  output: string                    // bytes emitted between the read cursor and now
   wall_time_seconds: number         // elapsed wait time
-  session_id?: number               // present iff process is still alive
-  exit_code?: number                // present iff process exited during this call
-  chunk_id?: string
+  session_id: number                // always present — alive OR exited-but-drainable
+  exit_code?: number                // present iff the process has exited
   original_token_count?: number
+  omitted_bytes?: number            // present iff truncation dropped bytes
+  cursor_start: number              // where this read began
+  cursor_end: number                // where it ended — reusable as since_cursor
 }
 ```
 
-`session_id` returns iff the process is still alive after this call. If the process exited (`q\n` to a REPL, hit a fatal error, segfaulted), `session_id` drops and `exit_code` appears.
+`exit_code` presence means the process has exited (`q\n` to a REPL, fatal error, segfault — or it was already dead). The session stays readable after exit: repeat polls idempotently return the exit_code plus any bytes past your cursor, and `since_cursor` range reads work until the pruner reclaims the slot.
 
 # Operational discipline
 
-- **`tty: true` is required for non-empty `chars`.** If you spawn with `tty: false` or default tty, `write_stdin` with non-empty input returns `stdin is closed for this session; rerun exec_command with tty=true to keep stdin open`. Pure polls work either way. Plan TTY at spawn time.
-- **`session_id` survives until the process exits or the LRU pool prunes it.** Across `opencode` restart, all session_ids die. After spawning >64 concurrent processes, the oldest non-recent ones get reclaimed.
+- **`tty: true` is required for non-empty `chars`.** If you spawn with `tty: false` or default tty, `write_stdin` with non-empty input to a LIVE process returns `stdin is closed for this session; rerun exec_command with tty=true to keep stdin open`. If the process has already exited, you instead get `Input not delivered: process had already exited.` plus a drain of remaining output and the exit_code — a dead process is not a tty problem. Pure polls work either way. Plan TTY at spawn time.
+- **`session_id` survives process exit; it dies with pruning or restart.** Across `opencode` restart, all session_ids die. After spawning >64 concurrent processes, the oldest non-recent ones get reclaimed (exited entries first).
 - **No re-approval after the first spawn.** `exec_command`'s "always" approval registers `pid:<session_id>` so subsequent `write_stdin` evaluates as already-allowed. You don't pay another permission prompt for the same process.
-- **Output is incremental.** Each call returns bytes emitted since the previous call's cursor. You won't see the same byte twice across consecutive `write_stdin`s on the same `session_id`. The internal cursor advances per call.
+- **Output is incremental, except range reads.** Normal calls return bytes since the previous call's cursor and advance it. `since_cursor` calls re-read any retained range WITHOUT advancing the live cursor — they can see the same bytes twice, by design.
 - **Don't poll a process you don't need.** Each pure poll burns at minimum 5 seconds of model wall-time and tokens for whatever output came back. If you spawned a watcher and got the diagnostic you needed, move on; the watcher self-prunes via LRU eventually.
 
 # Failure modes
 
-- Unknown `session_id` → process either never existed (typo / wrong number), exited and the result was already returned in a prior call, or got pruned by the LRU pool. Re-spawn.
-- `stdin is closed for this session` → you spawned with `tty: false`. Re-spawn the same command with `tty: true` if you need to send input.
-- Process exits during the call → response includes `exit_code`, drops `session_id`. Final output buffered before exit is included.
+- Unknown `session_id` → never existed (typo), pruned by the LRU pool, or the instance restarted. Re-spawn. (A previously-reported exit does NOT invalidate the id anymore.)
+- `stdin is closed for this session` → the process is alive but you spawned with `tty: false`. Re-spawn with `tty: true` if you need to send input.
+- `Input not delivered: process had already exited.` → you wrote to a dead process; the response includes the exit_code and any remaining output.
+- Process exits during the call → response includes `exit_code`; `session_id` remains valid for drains and range reads.
 
 # Patterns
 
 - **REPL turn**: `write_stdin {session_id, chars: "command\n", yield_time_ms: 1000}` → read response → repeat.
 - **Watcher poll**: `write_stdin {session_id, chars: "", yield_time_ms: 5000}` once after edits land in the file you're watching.
+- **Recover elided output**: previous response showed `…[elided ~N bytes]…` → `write_stdin {session_id, since_cursor: <cursor_start of that call>, max_output_tokens: <bigger>}` — returns instantly from the retained buffer, cursor untouched. Walk the range in slices by advancing since_cursor.
 - **Graceful shutdown**: `write_stdin {session_id, chars: "exit\n"}` or `q\n` depending on the program's contract; check the returned `exit_code` to confirm clean termination.
 - **Force kill**: there is no kill tool. Send `exit\n`, or rely on session expiry (LRU prune, opencode restart). `ctx.abort` (user Cmd-C) terminates the active call, not the underlying process.

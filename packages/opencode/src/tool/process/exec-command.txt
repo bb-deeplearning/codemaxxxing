@@ -8,7 +8,7 @@ Use this tool for processes that hold state between interactions or run indefini
 - ssh / docker exec / interactive db shells — anything where the connection setup is expensive and you'll send multiple commands.
 - Long-running observables — `tail -f`, `kubectl logs -f`, `journalctl -f`.
 
-For one-shot commands that exit on their own (`ls`, `git status`, `npm install`, scripts), set `yield_time_ms` long enough for the process to exit and the call returns the full output with `exit_code` populated. No persistence overhead is incurred when the process terminates inside the yield window.
+For one-shot commands that exit on their own (`ls`, `git status`, `npm install`, scripts), the call returns as soon as the process exits (plus a ~100ms trailing-output grace so the final bytes flush), with `exit_code` populated and the complete output in one response. Set `yield_time_ms` to an upper bound you're willing to wait; exit ends the call early.
 
 IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead:
 - File search: Use Glob (NOT find or ls)
@@ -24,29 +24,31 @@ IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO N
 - `workdir` — directory to run in. Defaults to the turn's cwd. Pass an absolute path or a path relative to the turn cwd.
 - `shell` — override the shell binary. Defaults to your configured shell. Most use cases shouldn't touch this.
 - `tty` (default `false`) — allocate a TTY. **Required if you intend to send stdin later via `write_stdin`.** Without `tty: true`, the connection is one-way: you can poll for output but cannot write input. REPLs need `tty: true`. Dev servers usually do too (some emit colored TTY output). File watchers usually don't.
-- `yield_time_ms` (default `10000`) — how long to wait for output before returning. The call returns either when this elapses or when the process exits, whichever first. Clamped to [250, 30000]. For REPL prompts, 1000-3000 is responsive. For dev server cold-start, 5000-10000. For one-shot commands you expect to finish, 30000.
-- `max_output_tokens` — cap returned output length. Excess truncates head+tail (you see prologue and tail with the middle elided). Default budget is set by the configured truncation policy; raise this if you specifically need more context.
+- `yield_time_ms` (default `10000`) — the output-collection window. The call collects output until this elapses or the process exits, whichever first — output accumulates across the whole window (it does NOT return on the first chunk). Clamped to [250, 30000]. For REPL prompts, 1000-3000 is responsive. For dev servers, prefer a SHORT window (1000-3000): the call holds the full window while the server keeps running, so grab the early logs and poll for more later.
+- `max_output_tokens` — cap returned output length. Excess truncates head+tail with an explicit `…[elided ~N bytes]…` marker between them; `omitted_bytes` appears in metadata. Recover the elided middle via `write_stdin` with `since_cursor`.
+- `strip_ansi` (default `false`) — strip ANSI escape sequences (colors, spinners, cursor control) from the captured output. Raw bytes stay in the session buffer.
 
 # Return shape
 
 ```
 {
-  output: string                    // command output, possibly head/tail-truncated
+  output: string                    // command output, possibly head/tail-truncated with an elision marker
   wall_time_seconds: number         // elapsed wait time
-  session_id?: number               // present iff process is still running
+  session_id: number                // always present — alive OR exited-but-drainable
   exit_code?: number                // present iff process exited during this call
-  chunk_id?: string                 // present iff partial output (still running)
   original_token_count?: number     // approx tokens before truncation
+  omitted_bytes?: number            // present iff truncation dropped bytes
 }
 ```
 
-`session_id` is the discriminator: present means the process is alive and you can call `write_stdin` against it. Absent means the process exited (check `exit_code`). Either field is present per call, never both.
+`exit_code` is the discriminator: present means the process exited (the response says "exited"); absent means it's still running. `session_id` is always returned — after exit the session's buffer stays readable (`write_stdin` with `since_cursor`, or empty polls, which repeat the exit_code idempotently) until the LRU pruner reclaims the slot.
 
 # Operational discipline
 
 - **`session_id` is per-instance and per-spawn.** It does NOT survive `opencode` restart. If you previously had a session and `opencode` was restarted, that `session_id` is gone — re-spawn with a fresh `exec_command`. Same for sessions that hit the LRU cap (64 concurrent processes; oldest non-recent ones get pruned).
 - **First spawn requires permission. Subsequent `write_stdin` against the same `session_id` does not.** When you approve "always" for the first `exec_command`, the per-PID pattern `pid:<session_id>` registers as allowed; `write_stdin` finds it and skips the prompt. This holds for the life of the process, not the session_id string.
-- **Output is head/tail-truncated, not tail-only.** If the process emits more bytes than `max_output_tokens` allows, you see a prefix (the prologue, often the most informative for "did it start cleanly") and a suffix (the tail, with the most recent activity). The middle is dropped. When interpreting long output, remember the gap is real.
+- **Output is head/tail-truncated with an explicit marker.** If the process emits more bytes than `max_output_tokens` allows, you see the prologue, then `…[elided ~N bytes of output; re-read with since_cursor to recover]…`, then the most recent tail. The gap is real and recoverable: the session buffer retains up to 1 MiB (head/tail) — use `write_stdin` `since_cursor` range reads to fetch the middle instead of re-running the command.
+- **Backgrounded children die with the shell.** A plain `cmd &` child is killed (kernel SIGHUP to the foreground process group) the moment the session's shell exits — "started fine, dead next session" is this. `nohup` only helps if the shell outlives its setup (~1s). To daemonize reliably: spawn a `tty: true` shell session, start the job, `disown` it, and keep or exit the session afterwards — disowned children survive even opencode restarts (note: they then become YOUR responsibility to kill).
 - **Pool cap is 64.** When you spawn the 65th, the LRU pruner kills the oldest non-recent one. The 8 most-recently-used are protected; among the rest, exited entries die first, then alive ones in LRU order. If you run a lot of `exec_command` with quick exit, those exited shells get reaped first — you don't have to manage them.
 - **A 60-process warning fires when you cross that threshold.** Treat it as a signal to consolidate or close work, not a hard limit. The 64-cap pruning happens silently.
 - **`ctx.abort` (user Cmd-C) terminates the spawned process** and surfaces "User aborted the command" in metadata. Output collected so far still returns.
@@ -55,7 +57,7 @@ IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO N
 
 - Permission denied → the call returns an error and the spawned process is torn down before output collection.
 - Spawn failure (binary not found, cwd doesn't exist) → error message names the cause; no `session_id` returned.
-- Process exits during initial yield → `exit_code` returned, no `session_id`. Treat as a one-shot result.
+- Process exits during the collection window → `exit_code` returned alongside `session_id` (the buffer stays drainable). Treat as a one-shot result.
 - `cwd` resolves outside the workspace → permission system asks for `external_directory` (separate prompt) before spawning.
 
 # Cost model

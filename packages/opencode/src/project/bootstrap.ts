@@ -8,6 +8,7 @@ import * as Vcs from "./vcs"
 import { Bus } from "../bus"
 import { InstanceState } from "@/effect/instance-state"
 import { FileWatcher } from "@/file/watcher"
+import { Global } from "@opencode-ai/core/global"
 import { ShareNext } from "@/share/share-next"
 import { WaveLoop } from "@/wave/loop"
 import { Effect, Layer } from "effect"
@@ -49,6 +50,41 @@ export const layer = Layer.effect(
         (s) => s.init().pipe(Effect.catchCause((cause) => Effect.logWarning("init failed", { cause }))),
         { concurrency: "unbounded", discard: true },
       ).pipe(Effect.withSpan("InstanceBootstrap.init"))
+
+      // B4-3 (2026-07-18) — detached-process journal reconcile. Every
+      // `exec_command { detach: true }` spawn records its pid in a global
+      // journal; on startup we drop entries whose pid is gone and report
+      // the survivors for THIS project so force-quit no longer produces
+      // invisible orphan daemons (the ps-hunt from the 2026-07-17 report).
+      yield* Effect.promise(async () => {
+        const path = await import("node:path")
+        const journalPath = path.join(Global.Path.data, "detached-processes.json")
+        const journal = (await Bun.file(journalPath)
+          .json()
+          .catch(() => [])) as Array<{ pid: number; cmd: string; dir: string; started_at: number; log: string }>
+        if (journal.length === 0) return []
+        const alive = journal.filter((entry) => {
+          try {
+            process.kill(entry.pid, 0)
+            return true
+          } catch {
+            return false
+          }
+        })
+        if (alive.length !== journal.length) {
+          await Bun.write(journalPath, JSON.stringify(alive, null, 2))
+        }
+        return alive.filter((entry) => entry.dir === ctx.directory)
+      }).pipe(
+        Effect.flatMap((orphans) =>
+          orphans.length === 0
+            ? Effect.void
+            : Effect.logWarning("detached processes from a previous instance still alive", {
+                orphans: orphans.map((o) => `pid ${o.pid}: ${o.cmd} (log: ${o.log})`),
+              }),
+        ),
+        Effect.catchCause((cause) => Effect.logWarning("detached journal reconcile failed", { cause })),
+      )
     }).pipe(Effect.withSpan("InstanceBootstrap"))
 
     return Service.of({ run })

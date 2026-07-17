@@ -629,10 +629,12 @@ describe("AgentControl.closeAgent", () => {
         yield* control.closeAgent(a.thread_id)
 
         const live = yield* control.listAgents(ROOT, root.id)
-        const remaining = live.map((l) => l.agent_name)
-        expect(remaining.includes("/root/a")).toBe(false)
-        expect(remaining.includes("/root/a/b")).toBe(false)
-        expect(remaining.includes("/root/a/c")).toBe(false)
+        const status = (n: string) => live.find((l) => l.agent_name === n)?.agent_status
+        // B3 (2026-07-18): closed agents remain listed as tombstones with
+        // status "shutdown" and a cause — they no longer vanish.
+        expect(status("/root/a")).toBe("shutdown")
+        expect(status("/root/a/b")).toBe("shutdown")
+        expect(status("/root/a/c")).toBe("shutdown")
         // Sanity — b and c are released too, registry no longer reports them.
         expect(yield* control.getAgentMetadata(b.thread_id)).toBeUndefined()
         expect(yield* control.getAgentMetadata(c.thread_id)).toBeUndefined()

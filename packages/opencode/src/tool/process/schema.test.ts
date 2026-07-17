@@ -19,6 +19,8 @@ import {
   approxTokenCount,
   clampEmptyPollYieldTime,
   clampWriteYieldTime,
+  stripAnsi,
+  truncateHeadTail,
 } from "./constants"
 
 const accepts = (schema: Schema.Decoder<unknown>, input: unknown): boolean =>
@@ -47,7 +49,7 @@ describe("exec_command parameters", () => {
 
   test("each parameter has a description annotation", () => {
     const json = toJsonSchema(ExecCommandParameters) as { properties: Record<string, { description?: string }> }
-    for (const key of ["cmd", "workdir", "shell", "tty", "yield_time_ms", "max_output_tokens"]) {
+    for (const key of ["cmd", "workdir", "shell", "tty", "yield_time_ms", "max_output_tokens", "strip_ansi"]) {
       expect(typeof json.properties[key]?.description).toBe("string")
       expect(json.properties[key]?.description?.length ?? 0).toBeGreaterThan(0)
     }
@@ -94,7 +96,7 @@ describe("write_stdin parameters", () => {
 
   test("each parameter has a description annotation", () => {
     const json = toJsonSchema(WriteStdinParameters) as { properties: Record<string, { description?: string }> }
-    for (const key of ["session_id", "chars", "yield_time_ms", "max_output_tokens"]) {
+    for (const key of ["session_id", "chars", "yield_time_ms", "max_output_tokens", "since_cursor", "strip_ansi"]) {
       expect(typeof json.properties[key]?.description).toBe("string")
       expect(json.properties[key]?.description?.length ?? 0).toBeGreaterThan(0)
     }
@@ -267,6 +269,43 @@ describe("constants module", () => {
     test("custom cap parameter is honoured (test-only injection)", () => {
       expect(clampEmptyPollYieldTime(20_000, 10_000)).toBe(10_000)
       expect(clampEmptyPollYieldTime(7_000, 10_000)).toBe(7_000)
+    })
+  })
+})
+
+describe("output shaping helpers", () => {
+  describe("truncateHeadTail", () => {
+    test("returns text unchanged when under the byte budget", () => {
+      const r = truncateHeadTail("short output", 100)
+      expect(r.text).toBe("short output")
+      expect(r.omittedBytes).toBe(0)
+    })
+    test("keeps head and tail halves with an explicit marker and omitted count", () => {
+      const text = "A".repeat(1_000) + "MIDDLE" + "B".repeat(1_000)
+      const r = truncateHeadTail(text, 100) // budget = 400 bytes
+      expect(r.omittedBytes).toBe(2_006 - 400)
+      expect(r.text).toContain("…[elided ~1606 bytes")
+      expect(r.text.startsWith("A".repeat(200))).toBe(true)
+      expect(r.text.endsWith("B".repeat(200))).toBe(true)
+      expect(r.text).not.toContain("MIDDLE")
+    })
+    test("exact-budget output is not truncated", () => {
+      const text = "C".repeat(400)
+      const r = truncateHeadTail(text, 100)
+      expect(r.text).toBe(text)
+      expect(r.omittedBytes).toBe(0)
+    })
+  })
+  describe("stripAnsi", () => {
+    test("removes SGR color runs and cursor-control CSI sequences", () => {
+      expect(stripAnsi("\u001b[2K\u001b[1G\u001b[31mred\u001b[0m plain \u001b[?25l\u001b[?25h")).toBe("red plain ")
+    })
+    test("removes OSC title sequences (BEL and ST terminated)", () => {
+      expect(stripAnsi("\u001b]0;my title\u0007text")).toBe("text")
+      expect(stripAnsi("\u001b]8;;https://x\u001b\\link\u001b]8;;\u001b\\")).toBe("link")
+    })
+    test("leaves plain text, newlines, and carriage returns intact", () => {
+      expect(stripAnsi("line1\r\nline2\n")).toBe("line1\r\nline2\n")
     })
   })
 })

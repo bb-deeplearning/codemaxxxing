@@ -168,7 +168,7 @@ describe("tool.write_stdin", () => {
     30_000,
   )
 
-  it.instance("write_stdin returns exit_code and drops session_id when process exits during the call", () =>
+  it.instance("write_stdin returns exit_code and keeps session_id drainable when process exits during the call", () =>
     Effect.gen(function* () {
       if (process.platform === "win32") return
       const exec = yield* initExec()
@@ -178,12 +178,67 @@ describe("tool.write_stdin", () => {
       const writeDef = yield* initWrite()
       const result = yield* writeDef.execute({ session_id: sid, chars: "q\n", yield_time_ms: 2000 }, ctx)
       expect(result.metadata.exit_code).toBe(0)
-      expect(result.metadata.session_id).toBeUndefined()
+      // The session survives exit for range re-reads; exit_code presence is
+      // the aliveness discriminator now, not session_id absence.
+      expect(result.metadata.session_id).toBe(sid)
       // Codex parity: the model-visible output must surface the exit code
       // (not just the metadata side-channel) so the model can see the
       // process is gone without inspecting structured fields.
       expect(result.output).toContain("Process exited with code 0")
       expect(result.output).not.toContain("Process running with session ID")
+      // Idempotent repeat: polling the dead session again re-reports the
+      // exit instead of "Unknown process id".
+      const again = yield* writeDef.execute({ session_id: sid, since_cursor: 0 }, ctx)
+      expect(again.metadata.exit_code).toBe(0)
+      expect(again.output).not.toContain("Unknown process id")
+      const pty = yield* Pty.Service
+      yield* pty.terminateAll()
+    }),
+  )
+
+  it.instance("since_cursor range re-read returns retained bytes immediately without advancing the live cursor", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return
+      const exec = yield* initExec()
+      const { ctx } = makeCtx()
+      const spawn = yield* exec.execute({ cmd: makeEchoCmd(), tty: true, yield_time_ms: 250 }, ctx)
+      const sid = spawn.metadata.session_id as number
+      const writeDef = yield* initWrite()
+      yield* writeDef.execute({ session_id: sid, chars: "ping\n", yield_time_ms: 500 }, ctx)
+      const sessions = yield* ProcessSessions.Service
+      const liveBefore = (yield* sessions.get(sid))!.cursor
+      const start = Date.now()
+      const range = yield* writeDef.execute({ session_id: sid, since_cursor: 0 }, ctx)
+      const elapsed = Date.now() - start
+      // No collect window, no empty-poll floor: retained bytes come back
+      // immediately even though the process is alive and quiet.
+      expect(elapsed).toBeLessThan(1_000)
+      expect(range.metadata.range_read).toBe(true)
+      expect(range.metadata.cursor_start).toBe(0)
+      expect(range.output).toContain("got:ping")
+      // The live cursor is untouched — range reads are non-destructive.
+      expect((yield* sessions.get(sid))!.cursor).toBe(liveBefore)
+      const pty = yield* Pty.Service
+      yield* pty.terminateAll()
+    }),
+  )
+
+  it.instance("input to an exited process reports the exit, not a tty problem", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return
+      const exec = yield* initExec()
+      const { ctx } = makeCtx()
+      const spawn = yield* exec.execute({ cmd: makeEchoCmd(), tty: true, yield_time_ms: 250 }, ctx)
+      const sid = spawn.metadata.session_id as number
+      const writeDef = yield* initWrite()
+      yield* writeDef.execute({ session_id: sid, chars: "q\n", yield_time_ms: 2000 }, ctx)
+      // Process is dead. The old contract answered "stdin is closed; rerun
+      // with tty=true" — wrong diagnosis AND wrong remedy.
+      const result = yield* writeDef.execute({ session_id: sid, chars: "more\n", yield_time_ms: 250 }, ctx)
+      expect(result.metadata.input_not_delivered).toBe(true)
+      expect(result.metadata.exit_code).toBe(0)
+      expect(result.output).toContain("Input not delivered: process had already exited.")
+      expect(result.output).not.toContain("stdin is closed")
       const pty = yield* Pty.Service
       yield* pty.terminateAll()
     }),

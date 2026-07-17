@@ -246,6 +246,32 @@ export const AgentWaitForReplyTool = Tool.define(
           )
           if (already) return formatReplyResult(already, timeoutMs, params.correlation_id)
 
+          // B4-5 (2026-07-18) — drain-race fix. A reply that landed BEFORE
+          // this call was drained into the current turn's context at the
+          // turn boundary; the live-mailbox scan above can never see it and
+          // the old behavior was a guaranteed false timeout (live-confirmed
+          // with probe-cid-42, 2026-07-17). Answer truthfully instead.
+          const drained = yield* control.wasCorrelationDrained(ctx.sessionID, params.correlation_id)
+          if (drained) {
+            return {
+              title: `wait_for_reply ${params.correlation_id}`,
+              metadata: {
+                correlation_id: params.correlation_id,
+                timeout_ms: timeoutMs,
+                timed_out: false,
+                matched: true,
+                already_delivered: true,
+              },
+              output: JSON.stringify({
+                already_delivered: true,
+                timed_out: false,
+                correlation_id: params.correlation_id,
+                message:
+                  "Reply already delivered: it was drained into your context at the start of this turn — check the [from ...] messages above.",
+              }),
+            }
+          }
+
           // Subscribe to seq changes. AgentNotFoundError → root with no
           // mailbox → fall through to timeout (same shape as wait_agent).
           const seqRef = yield* Effect.result(

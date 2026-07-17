@@ -17,14 +17,17 @@ import { ProcessSessions } from "./sessions"
 import { PermissionKey, WriteStdinID, pidPattern } from "./id"
 import { WRITE_STDIN_PROMPT } from "./prompt"
 import {
+  DEFAULT_MAX_OUTPUT_TOKENS,
   DEFAULT_WRITE_STDIN_YIELD_TIME_MS,
   POST_WRITE_STDIN_SLEEP_MS,
   approxTokenCount,
   clampEmptyPollYieldTime,
   clampWriteYieldTime,
   formatExecResponse,
+  stripAnsi,
+  truncateHeadTail,
 } from "./constants"
-import { PositiveInt } from "@/util/schema"
+import { NonNegativeInt, PositiveInt } from "@/util/schema"
 
 export const Parameters = Schema.Struct({
   session_id: PositiveInt.annotate({
@@ -40,7 +43,15 @@ export const Parameters = Schema.Struct({
       "How long to wait (ms) for output before returning. For non-empty chars: clamped to [250, 30000]. For empty polls: clamped to [5000, 300000] — pure polls have a 5-second floor that prevents spam-polling.",
   }),
   max_output_tokens: Schema.optional(PositiveInt).annotate({
-    description: "Cap returned output length. Excess truncates head+tail.",
+    description: "Cap returned output length. Excess truncates head+tail with an explicit elision marker.",
+  }),
+  since_cursor: Schema.optional(NonNegativeInt).annotate({
+    description:
+      "Non-destructive range re-read: return retained buffer bytes from this cursor instead of the session's live cursor, immediately (no yield wait), without advancing the live cursor. Use the cursor_start/cursor_end metadata from earlier calls to target elided output.",
+  }),
+  strip_ansi: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "Strip ANSI escape sequences (colors, spinners, cursor control) from the captured output. Raw bytes stay in the session buffer. Defaults to false.",
   }),
 })
 
@@ -85,6 +96,7 @@ export const WriteStdinTool = Tool.define(
 
               const chars = params.chars ?? ""
               const requestedYield = params.yield_time_ms ?? DEFAULT_WRITE_STDIN_YIELD_TIME_MS
+              const processExited = ptyInfo.status === "exited"
 
               // Re-evaluate permission. The pid-pattern registered by the
               // initial exec_command's `always` will satisfy this without
@@ -101,12 +113,20 @@ export const WriteStdinTool = Tool.define(
                 },
               })
 
-              // Non-empty input requires a TTY (codex parity:
-              // process_manager.rs:619-621 returns StdinClosed). Pure polls
-              // work either way — the model can still drain output from a
-              // non-tty session.
               const start = Date.now()
-              if (chars.length > 0) {
+              let note: string | undefined
+              if (chars.length > 0 && processExited) {
+                // Truthfulness: the old path answered "stdin is closed;
+                // rerun with tty=true" for processes that were simply dead —
+                // wrong diagnosis AND wrong remedy. Skip the write, fall
+                // through to a drain, and report the exit honestly.
+                note = "Input not delivered: process had already exited."
+              }
+              if (chars.length > 0 && !processExited) {
+                // Non-empty input requires a TTY (codex parity:
+                // process_manager.rs:619-621 returns StdinClosed). Pure polls
+                // work either way — the model can still drain output from a
+                // non-tty session.
                 if (!session.tty) {
                   return {
                     title: `write_stdin ${params.session_id}`,
@@ -122,9 +142,17 @@ export const WriteStdinTool = Tool.define(
                 yield* Effect.sleep(`${POST_WRITE_STDIN_SLEEP_MS} millis`)
               }
 
-              const yieldTimeMs =
-                chars.length === 0 ? clampEmptyPollYieldTime(requestedYield) : clampWriteYieldTime(requestedYield)
-              const read = yield* pty.read(session.ptyId, session.cursor, yieldTimeMs, 1024 * 1024)
+              // Range re-reads return already-retained bytes: no collect
+              // window, no clamp floor, no cursor advance. Live polls keep
+              // the clamped collect-until-deadline semantics.
+              const rangeRead = params.since_cursor !== undefined
+              const startCursor = params.since_cursor ?? session.cursor
+              const yieldTimeMs = rangeRead
+                ? 0
+                : chars.length === 0
+                  ? clampEmptyPollYieldTime(requestedYield)
+                  : clampWriteYieldTime(requestedYield)
+              const read = yield* pty.read(session.ptyId, startCursor, yieldTimeMs, 1024 * 1024)
               const wallMs = Date.now() - start
 
               if (!read) {
@@ -140,18 +168,28 @@ export const WriteStdinTool = Tool.define(
                 }
               }
 
-              yield* sessions.setCursor(params.session_id, read.cursor)
-              const decoded = new TextDecoder().decode(read.output)
+              if (!rangeRead) yield* sessions.setCursor(params.session_id, read.cursor)
+              const decodedRaw = new TextDecoder().decode(read.output)
+              const decoded = params.strip_ansi ? stripAnsi(decodedRaw) : decodedRaw
               const exited = read.exited
-              if (exited) yield* sessions.remove(params.session_id)
+              // Exited sessions are NOT removed here: the entry stays for
+              // since_cursor range re-reads until the LRU pruner (or the
+              // Pty.Event.Deleted subscription in sessions.ts) reclaims it.
+              // Repeat polls of a dead session are idempotent — exit_code
+              // plus whatever remains past the cursor.
 
               const original_token_count = approxTokenCount(decoded)
+              const capped = truncateHeadTail(decoded, params.max_output_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS)
               const metadata: Record<string, unknown> = {
                 wall_time_seconds: wallMs / 1000,
                 original_token_count,
-                ...(exited && read.exitCode !== undefined
-                  ? { exit_code: read.exitCode }
-                  : { session_id: params.session_id }),
+                session_id: params.session_id,
+                cursor_start: startCursor,
+                cursor_end: read.cursor,
+                ...(rangeRead ? { range_read: true } : {}),
+                ...(capped.omittedBytes > 0 ? { omitted_bytes: capped.omittedBytes } : {}),
+                ...(note ? { input_not_delivered: true } : {}),
+                ...(exited && read.exitCode !== undefined ? { exit_code: read.exitCode } : {}),
               }
 
               return {
@@ -159,10 +197,11 @@ export const WriteStdinTool = Tool.define(
                 metadata,
                 output: formatExecResponse({
                   wallMs,
-                  output: decoded,
+                  output: capped.text,
                   originalTokenCount: original_token_count,
                   exitCode: exited && read.exitCode !== undefined ? read.exitCode : undefined,
-                  sessionId: !exited ? params.session_id : undefined,
+                  sessionId: params.session_id,
+                  note,
                 }),
               }
             }),

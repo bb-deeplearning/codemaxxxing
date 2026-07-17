@@ -302,7 +302,32 @@ export interface ListedAgent {
   readonly agent_name: string
   readonly agent_status: AgentStatus
   readonly last_task_message?: string
+  // B3 forensics (2026-07-18) — present only on tombstone entries. `cause`
+  // answers "where did my agent go": user abort, explicit close, or a
+  // linked-death cascade. `previous_status` is what the agent was doing
+  // when it died (running = killed mid-flight; completed = closed after
+  // finishing cleanly).
+  readonly cause?: TombstoneCause
+  readonly previous_status?: AgentStatus
 }
+
+// B3 (2026-07-18) — terminal-entry retention. Pre-fix, shutdownOne deleted
+// the registry entry outright, so killed/closed agents VANISHED from
+// list_agents (the docs promised a `shutdown` status that could never be
+// observed). Tombstones retain the last TOMBSTONE_CAP dead agents per root
+// with the reason they died.
+export type TombstoneCause = "closed" | "killed_by_user_abort" | "linked_death"
+
+interface AgentTombstone {
+  readonly agent_path: AgentPath | undefined
+  readonly name: string
+  readonly cause: TombstoneCause
+  readonly previous_status: AgentStatus
+  readonly last_task_message?: string
+  readonly at: number
+}
+
+const TOMBSTONE_CAP = 32
 
 // D12 (actor-discipline-2026-05-20 Wave 5) — supervision-strategy enums.
 // `OnFailureStrategy` declares how the runtime reacts when a spawned
@@ -447,6 +472,10 @@ export interface Interface {
   ) => Effect.Effect<SubscriptionRef.SubscriptionRef<number>, AgentNotFoundError>
   readonly hasPendingMailboxItems: (id: SessionID) => Effect.Effect<boolean>
   readonly hasPendingTriggerTurn: (id: SessionID) => Effect.Effect<boolean>
+  readonly hasPendingMail: (id: SessionID) => Effect.Effect<boolean>
+  readonly registerRootWake: (
+    fn: (sessionID: SessionID) => Effect.Effect<unknown>,
+  ) => Effect.Effect<void>
   readonly drainMailbox: (id: SessionID) => Effect.Effect<readonly InterAgentCommunication[]>
   // D10 (actor-discipline-2026-05-20 Wave 3) — peek into the caller's
   // mailbox for the first message carrying the given correlation_id.
@@ -459,6 +488,8 @@ export interface Interface {
     correlation_id: string,
   ) => Effect.Effect<InterAgentCommunication | undefined>
   readonly cancelChildrenOf: (parentID: SessionID) => Effect.Effect<void>
+  readonly reportSurvivorsOf: (parentID: SessionID) => Effect.Effect<void>
+  readonly wasCorrelationDrained: (sessionID: SessionID, correlation_id: string) => Effect.Effect<boolean>
   // D9 (actor-discipline-2026-05-20) — has the path ever been registered
   // under the caller's root? Used by the close_agent tool to split the
   // failed-resolution error into `already_terminated` (path was once live,
@@ -635,6 +666,17 @@ interface PerRootData {
   // PerRootData map; cleared in the Session.Event.Deleted subscriber
   // AND the instance-disposal finalizer below.
   readonly behaviorOf: Map<SessionID, BehaviorContract>
+  // B3 (2026-07-18) — tombstones for released agents, keyed by the dead
+  // child's SessionID, insertion-ordered (FIFO eviction at TOMBSTONE_CAP).
+  // Written by shutdownOne; surfaced by listAgents; cleared with the rest
+  // of the slot on per-root teardown / instance disposal.
+  readonly tombstones: Map<SessionID, AgentTombstone>
+  // B4-5 (2026-07-18) — correlation ids drained from each session's mailbox
+  // (drain-race fix). A reply that arrives BEFORE wait_for_reply is called
+  // gets drained at the turn boundary and can never match the live-mailbox
+  // scan; the ring lets wait_for_reply answer "already delivered above"
+  // instead of a false timeout. Per-session, FIFO-capped at 64.
+  readonly drainedCorrelations: Map<SessionID, string[]>
 }
 
 interface InternalState {
@@ -655,6 +697,12 @@ export const layer = Layer.effect(
     // closure is instance-agnostic; SessionPrompt's layer init registers it
     // before any Instance is bound.
     const providerRef = yield* Ref.make<
+      ((sessionID: SessionID) => Effect.Effect<unknown>) | undefined
+    >(undefined)
+    // B4-2 (2026-07-18) — root auto-wake callback, registered by
+    // SessionPrompt alongside the run-loop provider. Layer scope for the
+    // same reason as providerRef (instance-agnostic function pointer).
+    const rootWakeRef = yield* Ref.make<
       ((sessionID: SessionID) => Effect.Effect<unknown>) | undefined
     >(undefined)
 
@@ -750,6 +798,8 @@ export const layer = Layer.effect(
           slot.links.clear()
           slot.linkedDeathOf.clear()
           slot.behaviorOf.clear()
+          slot.tombstones.clear()
+          slot.drainedCorrelations.clear()
           perRoot.delete(deletedID)
           for (const [sid, rid] of sessionToRoot.entries()) {
             if (rid === deletedID) sessionToRoot.delete(sid)
@@ -784,6 +834,8 @@ export const layer = Layer.effect(
               data.links.clear()
               data.linkedDeathOf.clear()
               data.behaviorOf.clear()
+              data.tombstones.clear()
+              data.drainedCorrelations.clear()
             }
             perRoot.clear()
             sessionToRoot.clear()
@@ -832,6 +884,8 @@ export const layer = Layer.effect(
           links: new Map(),
           linkedDeathOf: new Set(),
           behaviorOf: new Map(),
+          tombstones: new Map(),
+          drainedCorrelations: new Map(),
         }
         data.perRoot.set(id, slot)
         data.sessionToRoot.set(id, id)
@@ -850,6 +904,12 @@ export const layer = Layer.effect(
       fn: (sessionID: SessionID) => Effect.Effect<unknown>,
     ) {
       yield* Ref.set(providerRef, fn)
+    })
+
+    const registerRootWake = Effect.fn("AgentControl.registerRootWake")(function* (
+      fn: (sessionID: SessionID) => Effect.Effect<unknown>,
+    ) {
+      yield* Ref.set(rootWakeRef, fn)
     })
 
     const registerSessionRoot = Effect.fn("AgentControl.registerSessionRoot")(function* (
@@ -1231,7 +1291,13 @@ export const layer = Layer.effect(
                   const childDelivered = slot.outgoingToSpawner.has(child.id)
                   const needsWarning = !childDelivered && looksLikeMissingDeliverable(body)
                   const header = `Agent ${String(childPath)} reached status: ${label}`
-                  const content = buildNotificationBody(header, body, needsWarning)
+                  // B3 (2026-07-18) — audit tail. The child's Session (and
+                  // full transcript) survives termination; give the parent
+                  // the id so post-mortems don't rely on the child's own
+                  // self-reported summary. Appended AFTER the body so the
+                  // TUI's STATUS_HEADER_RE and the pool-collect filter
+                  // (both match on the header line) are unaffected.
+                  const content = `${buildNotificationBody(header, body, needsWarning)}\n\n[child session: ${child.id} — transcript retained on disk]`
                   // D11 (actor-discipline-2026-05-20 Wave 4) — parse the
                   // ABORT set-phrase from the LAST line of the extracted
                   // body. undefined when no ABORT line present (normal
@@ -1551,6 +1617,24 @@ export const layer = Layer.effect(
             }
           }
         }
+        // B4-2 (2026-07-18) — root auto-wake. Children revive via the
+        // trigger_turn branch above; root was deliberately excluded ("root
+        // never completes"), which meant deliverables sent to an IDLE root
+        // rotted in its mailbox until the user happened to type — the
+        // defensive-polling driver from the 2026-07-17 report. Any
+        // root-targeted message now attempts a wake through the callback
+        // SessionPrompt registers. The callback enters via ensureRunning,
+        // so a busy root is a clean no-op (BusyError swallowed there) and
+        // the message rides the in-flight turn's next drain instead.
+        if (targetID === slot.rootID) {
+          const wake = yield* Ref.get(rootWakeRef)
+          if (wake) {
+            yield* wake(targetID).pipe(
+              Effect.catchCause(() => Effect.void),
+              Effect.forkIn(data.scope),
+            )
+          }
+        }
         // Surface the inter-agent communication on the bus.
         const sourceID = (yield* lookupSessionForPath(slot, comm.author)) ?? targetID
         const eventData = {
@@ -1597,6 +1681,7 @@ export const layer = Layer.effect(
     const closeAgent = Effect.fn("AgentControl.closeAgent")(function* (
       id: SessionID,
       callerID?: SessionID,
+      cause: TombstoneCause = "closed",
     ) {
       const data = yield* InstanceState.get(state)
       const slot = slotFor(data, id)
@@ -1670,9 +1755,9 @@ export const layer = Layer.effect(
       }
 
       for (const desc of descendants) {
-        if (desc.agent_id) yield* shutdownOne(slot, desc.agent_id, desc.agent_path)
+        if (desc.agent_id) yield* shutdownOne(slot, desc.agent_id, desc.agent_path, cause)
       }
-      yield* shutdownOne(slot, id, targetPath)
+      yield* shutdownOne(slot, id, targetPath, cause)
 
       return { previous_status: previousStatus }
     })
@@ -1681,12 +1766,16 @@ export const layer = Layer.effect(
       slot: PerRootData,
       sessionId: SessionID,
       agentPath: AgentPath | undefined,
+      cause: TombstoneCause = "closed",
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
         const status = slot.statuses.get(sessionId)
         const previousStatus: AgentStatus = status
           ? yield* SubscriptionRef.get(status)
           : "not_found"
+        // Capture registry metadata BEFORE releaseSpawnedThread deletes it —
+        // the tombstone needs the path + last instruction for forensics.
+        const meta = yield* slot.registry.agentMetadataForThread(sessionId)
         if (status) yield* SubscriptionRef.set(status, "shutdown")
 
         const fiber = slot.fibers.get(sessionId)
@@ -1696,6 +1785,24 @@ export const layer = Layer.effect(
         }
         slot.mailboxes.delete(sessionId)
         yield* slot.registry.releaseSpawnedThread(sessionId)
+
+        // B3 (2026-07-18) — tombstone the released entry so list_agents can
+        // answer "where did my agent go" with a cause, instead of the agent
+        // vanishing without a trace. linkedDeathOf wins over the supplied
+        // cause: the cascade marks peers before closing them.
+        const path = agentPath ?? meta?.agent_path
+        slot.tombstones.set(sessionId, {
+          agent_path: path,
+          name: path ? String(path) : sessionId,
+          cause: slot.linkedDeathOf.has(sessionId) ? "linked_death" : cause,
+          previous_status: previousStatus,
+          last_task_message: meta?.last_task_message,
+          at: Date.now(),
+        })
+        if (slot.tombstones.size > TOMBSTONE_CAP) {
+          const oldest = slot.tombstones.keys().next().value
+          if (oldest !== undefined) slot.tombstones.delete(oldest)
+        }
 
         const eventData = {
           sessionID: sessionId,
@@ -1751,6 +1858,21 @@ export const layer = Layer.effect(
           agent_name: name,
           agent_status: status,
           last_task_message: m.last_task_message,
+        })
+      }
+
+      // B3 (2026-07-18) — tombstoned agents (closed / killed-by-abort /
+      // linked-death) surface with their cause and pre-death status instead
+      // of vanishing. The docs always claimed shutdown entries remain
+      // listed; now they actually do. Death order, appended after live.
+      for (const t of slot.tombstones.values()) {
+        if (resolvedPrefix && !agentMatchesPrefix(t.agent_path, resolvedPrefix)) continue
+        out.push({
+          agent_name: t.name,
+          agent_status: "shutdown",
+          last_task_message: t.last_task_message,
+          cause: t.cause,
+          previous_status: t.previous_status,
         })
       }
 
@@ -1834,13 +1956,36 @@ export const layer = Layer.effect(
       return yield* mailbox.hasPendingTriggerTurn()
     })
 
+    // B4-2 (2026-07-18) — ANY pending mail, trigger_turn or not. The
+    // runLoop's exit path consults this for ROOT sessions so a deliverable
+    // that lands on the turn's final step produces another step instead of
+    // rotting until the next user input.
+    const hasPendingMail = Effect.fn("AgentControl.hasPendingMail")(function* (id: SessionID) {
+      const data = yield* InstanceState.get(state)
+      const slot = slotFor(data, id)
+      if (!slot) return false
+      const mailbox = slot.mailboxes.get(id)
+      if (!mailbox) return false
+      return yield* mailbox.hasPending()
+    })
+
     const drainMailbox = Effect.fn("AgentControl.drainMailbox")(function* (id: SessionID) {
       const data = yield* InstanceState.get(state)
       const slot = slotFor(data, id)
       if (!slot) return [] as readonly InterAgentCommunication[]
       const mailbox = slot.mailboxes.get(id)
       if (!mailbox) return [] as readonly InterAgentCommunication[]
-      return yield* mailbox.drain()
+      const drained = yield* mailbox.drain()
+      // B4-5 (2026-07-18) — remember drained correlation ids so a
+      // wait_for_reply issued AFTER the turn-boundary drain reports
+      // "already delivered" instead of a false timeout.
+      const withCids = drained.filter((m) => m.correlation_id !== undefined)
+      if (withCids.length > 0) {
+        const ring = slot.drainedCorrelations.get(id) ?? []
+        for (const m of withCids) ring.push(m.correlation_id as string)
+        slot.drainedCorrelations.set(id, ring.slice(-64))
+      }
+      return drained
     })
 
     const findMailboxByCorrelationId = Effect.fn("AgentControl.findMailboxByCorrelationId")(
@@ -1852,6 +1997,18 @@ export const layer = Layer.effect(
         if (!mailbox) return undefined
         const snapshot = yield* mailbox.peek()
         return snapshot.find((m) => m.correlation_id === correlation_id)
+      },
+    )
+
+    // B4-5 (2026-07-18) — was a message with this correlation id already
+    // drained into the session's context at a turn boundary? Consulted by
+    // wait_for_reply before it commits to waiting (drain-race fix).
+    const wasCorrelationDrained = Effect.fn("AgentControl.wasCorrelationDrained")(
+      function* (id: SessionID, correlation_id: string) {
+        const data = yield* InstanceState.get(state)
+        const slot = slotFor(data, id)
+        if (!slot) return false
+        return (slot.drainedCorrelations.get(id) ?? []).includes(correlation_id)
       },
     )
 
@@ -1883,14 +2040,89 @@ export const layer = Layer.effect(
           ((a.agent_path as string) ?? "").split("/").length,
         )
 
+      const statusLabel = (s: AgentStatus): string =>
+        typeof s === "string" ? s : "completed" in s ? "completed" : "errored"
+      const killed: Array<{ path: string; was: string }> = []
       for (const child of descendants) {
         if (!child.agent_id) continue
+        const sub = slot.statuses.get(child.agent_id)
+        const st: AgentStatus = sub ? yield* SubscriptionRef.get(sub) : "not_found"
+        killed.push({ path: String(child.agent_path), was: statusLabel(st) })
         // Pass parentID so closeAgent's caller-aware skip rule recognises
         // this as an ancestor-driven cascade and suppresses the per-child
         // completion notifications — the parent is the one tearing them
         // down, so the notification would just race the cancel itself.
-        yield* closeAgent(child.agent_id, parentID).pipe(Effect.catch(() => Effect.void))
+        yield* closeAgent(child.agent_id, parentID, "killed_by_user_abort").pipe(
+          Effect.catch(() => Effect.void),
+        )
       }
+
+      // B3 (2026-07-18) — killed-mid-flight report. The per-child completion
+      // notifications are deliberately suppressed above, which pre-fix meant
+      // the user's abort killed children with NO trace: the next turn had to
+      // discover the corpses via list_agents. Post a single consolidated
+      // system note (bypasses the mailbox cap) so the parent's next turn
+      // starts with the casualty list.
+      if (killed.length > 0) {
+        const mailbox = slot.mailboxes.get(parentID)
+        if (mailbox) {
+          const lines = killed.map((k) => `- ${k.path} (was ${k.was})`)
+          yield* mailbox.sendSystem(
+            new InterAgentCommunication({
+              author: parentPath,
+              recipient: parentPath,
+              content: `⚠️ User abort killed ${killed.length} in-flight agent(s):\n${lines.join("\n")}\nTheir transcripts remain on disk; the entries stay in list_agents with cause "killed_by_user_abort".`,
+              trigger_turn: false,
+              sent_at: Date.now(),
+            }),
+          )
+        }
+      }
+    })
+
+    // B4-1 (2026-07-18) — the survivors report. User abort no longer
+    // cascades (SessionPrompt.cancel stopped calling cancelChildrenOf; the
+    // method above remains as the explicit kill-tree primitive). Instead
+    // the aborted parent's mailbox gets one system note naming every
+    // still-running descendant, so the next turn starts with live state
+    // instead of discovering it via list_agents.
+    const reportSurvivorsOf = Effect.fn("AgentControl.reportSurvivorsOf")(function* (
+      parentID: SessionID,
+    ) {
+      const data = yield* InstanceState.get(state)
+      const slot = slotFor(data, parentID)
+      if (!slot) return
+      const meta = yield* slot.registry.agentMetadataForThread(parentID)
+      const parentPath: AgentPath | undefined =
+        meta?.agent_path ?? (parentID === slot.rootID ? AgentPath.root() : undefined)
+      if (!parentPath) return
+
+      const prefix =
+        (parentPath as string) === "/root" ? "/root/" : (parentPath as string) + "/"
+      const statusLabel = (s: AgentStatus): string =>
+        typeof s === "string" ? s : "completed" in s ? "completed" : "errored"
+
+      const live = yield* slot.registry.liveAgents()
+      const survivors: string[] = []
+      for (const m of live) {
+        if (m.agent_id === undefined || m.agent_id === parentID) continue
+        if (m.agent_path === undefined || !(m.agent_path as string).startsWith(prefix)) continue
+        const sub = slot.statuses.get(m.agent_id)
+        const st: AgentStatus = sub ? yield* SubscriptionRef.get(sub) : "not_found"
+        survivors.push(`- ${String(m.agent_path)} (${statusLabel(st)})`)
+      }
+      if (survivors.length === 0) return
+      const mailbox = slot.mailboxes.get(parentID)
+      if (!mailbox) return
+      yield* mailbox.sendSystem(
+        new InterAgentCommunication({
+          author: parentPath,
+          recipient: parentPath,
+          content: `Turn aborted. ${survivors.length} agent(s) still running, unaffected by the abort:\n${survivors.join("\n")}\nThey deliver to your mailbox as usual; close_agent any you no longer need.`,
+          trigger_turn: false,
+          sent_at: Date.now(),
+        }),
+      )
     })
 
     // D9 (actor-discipline-2026-05-20) — has `path` ever been registered
@@ -2247,9 +2479,13 @@ export const layer = Layer.effect(
       subscribeMailboxSeq,
       hasPendingMailboxItems,
       hasPendingTriggerTurn,
+      hasPendingMail,
+      registerRootWake,
       drainMailbox,
       findMailboxByCorrelationId,
       cancelChildrenOf,
+      reportSurvivorsOf,
+      wasCorrelationDrained,
       wasKnownPath,
       emitWaitStarted,
       emitWaitEnded,

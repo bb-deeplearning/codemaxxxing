@@ -235,12 +235,17 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
       expect(drainA2[0]?.content).toBe("for A only")
       expect(drainB2).toHaveLength(0)
 
-      // Close rootA's worker — rootB's worker stays alive.
+      // Close rootA's worker — rootB's worker stays alive. B3 (2026-07-18):
+      // the closed worker remains listed as a tombstone (shutdown + cause)
+      // in rootA's view ONLY; rootB's identically-named worker is untouched
+      // — tombstones are per-root state like everything else in the slot.
       yield* control.closeAgent(childA.thread_id)
       const listAAfter = yield* control.listAgents(AgentPath.root(), rootA.id)
       const listBAfter = yield* control.listAgents(AgentPath.root(), rootB.id)
-      expect(listAAfter.find((l) => l.agent_name === "/root/worker_a")).toBeUndefined()
-      expect(listBAfter.find((l) => l.agent_name === "/root/worker_a")).toBeDefined()
+      const closedA = listAAfter.find((l) => l.agent_name === "/root/worker_a")
+      expect(closedA?.agent_status).toBe("shutdown")
+      expect(closedA?.cause).toBe("closed")
+      expect(listBAfter.find((l) => l.agent_name === "/root/worker_a")?.agent_status).not.toBe("shutdown")
     }),
   )
 
@@ -487,13 +492,14 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
       const second = yield* control.closeAgent(workerA.thread_id)
       expect(second.previous_status).toBe("shutdown")
 
-      // listAgents from root: workerA and workerB are gone (registry
-      // released them via shutdownOne → releaseSpawnedThread).
+      // listAgents from root: workerA and workerB are released from the
+      // registry (shutdownOne → releaseSpawnedThread) but B3 (2026-07-18)
+      // retains them as tombstones — status "shutdown", never vanished.
       const after = yield* control.listAgents(AgentPath.root(), root.id)
-      const afterNames = after.map((l) => l.agent_name)
-      expect(afterNames).not.toContain("/root/worker_a")
-      expect(afterNames).not.toContain("/root/worker_a/worker_b")
-      expect(afterNames).toContain("/root")
+      const statusOf = (n: string) => after.find((l) => l.agent_name === n)?.agent_status
+      expect(statusOf("/root/worker_a")).toBe("shutdown")
+      expect(statusOf("/root/worker_a/worker_b")).toBe("shutdown")
+      expect(after.map((l) => l.agent_name)).toContain("/root")
     }),
   )
 
@@ -1052,9 +1058,9 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
       const payload = JSON.parse(result.output)
       expect(payload.previous_status).toBeDefined()
 
-      // Child removed from the registry.
+      // Child released from the registry; retained as a tombstone (B3).
       const list = yield* control.listAgents(AgentPath.root(), root.id)
-      expect(list.find((l) => l.agent_name === "/root/abc")).toBeUndefined()
+      expect(list.find((l) => l.agent_name === "/root/abc")?.agent_status).toBe("shutdown")
     }),
   )
 
@@ -3092,6 +3098,257 @@ describe("INTEGRATION_INVARIANTS — multi-agent surfaces", () => {
         ),
       ).toBe(1)
       off()
+    }),
+  )
+
+  // INV-D-29 (batch-3 forensics, 2026-07-18) — user abort tombstones its
+  // victims AND reports them. The abort path (SessionPrompt.cancel →
+  // cancelChildrenOf) suppresses per-child completion notifications by
+  // design, which pre-fix meant killed children vanished from list_agents
+  // with NO trace — the next turn discovered corpses by absence. Post-fix:
+  // (a) every victim stays listed with status "shutdown", cause
+  // "killed_by_user_abort", and its pre-death status; (b) one consolidated
+  // system note lands in the parent's mailbox naming the casualties.
+  it.instance("INV-D-29-user-abort-tombstones-victims-and-reports-them", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "victim_a",
+        initial_message: "work a",
+      })
+      yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "victim_b",
+        initial_message: "work b",
+      })
+      yield* control.drainMailbox(root.id)
+
+      yield* control.cancelChildrenOf(root.id)
+
+      const list = yield* control.listAgents(AgentPath.root(), root.id)
+      const a = list.find((l) => l.agent_name === "/root/victim_a")
+      const b = list.find((l) => l.agent_name === "/root/victim_b")
+      expect(a?.agent_status).toBe("shutdown")
+      expect(b?.agent_status).toBe("shutdown")
+      expect(a?.cause).toBe("killed_by_user_abort")
+      expect(b?.cause).toBe("killed_by_user_abort")
+      // Pre-death status is preserved for forensics (running = killed
+      // mid-flight, not closed after completing).
+      expect(a?.previous_status).toBe("running")
+      // The victims' last instruction survives on the tombstone.
+      expect(a?.last_task_message).toBe("work a")
+
+      const drained = yield* control.drainMailbox(root.id)
+      const note = drained.find((m) => m.content.includes("User abort killed 2 in-flight agent(s)"))
+      expect(note).toBeDefined()
+      expect(note?.content).toContain("/root/victim_a (was running)")
+      expect(note?.content).toContain("/root/victim_b (was running)")
+    }),
+  )
+
+  // INV-D-30 (batch-3 forensics, 2026-07-18) — explicit close tombstones
+  // with cause "closed", distinguishable from abort kills. The tombstone
+  // cap keeps the map bounded (FIFO at 32) but a single close must always
+  // surface.
+  it.instance("INV-D-30-closed-agent-tombstones-with-cause-closed", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "closee",
+        initial_message: "work",
+      })
+
+      yield* control.closeAgent(child.thread_id, root.id)
+
+      const list = yield* control.listAgents(AgentPath.root(), root.id)
+      const entry = list.find((l) => l.agent_name === "/root/closee")
+      expect(entry?.agent_status).toBe("shutdown")
+      expect(entry?.cause).toBe("closed")
+      // Registry itself is still released — tombstones are list-layer
+      // forensics, not registry resurrection.
+      expect(yield* control.getAgentMetadata(child.thread_id)).toBeUndefined()
+    }),
+  )
+
+  // INV-D-31 (batch-3 forensics, 2026-07-18) — completion notifications
+  // carry the child's session id so the parent can audit the full
+  // transcript (which survives termination; close/abort never delete the
+  // child Session) instead of trusting the child's self-reported summary.
+  it.instance("INV-D-31-completion-notification-carries-child-session-id", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      // Run-loop that finishes immediately → child reaches a terminal
+      // status → completion watcher posts the parent notification.
+      yield* control.registerRunLoop(() => Effect.void)
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "auditee",
+        initial_message: "work",
+      })
+
+      // Wait for the completion notification to land (watcher is async).
+      const deadline = Date.now() + 5_000
+      let audit: InterAgentCommunication | undefined
+      while (Date.now() < deadline && !audit) {
+        const drained = yield* control.drainMailbox(root.id)
+        audit = drained.find((m) => m.content.includes("[child session: "))
+        if (!audit) yield* Effect.sleep(50)
+      }
+      expect(audit).toBeDefined()
+      expect(audit?.content).toContain(`[child session: ${child.thread_id} — transcript retained on disk]`)
+      // The header line is untouched — TUI STATUS_HEADER_RE and the pool
+      // collect filter both key on it. (toContain, not startsWith: the D5
+      // safety-net ⚠️ warning legitimately prefixes the content when a stub
+      // child exits without delivering.)
+      expect(audit?.content).toContain("Agent /root/auditee reached status: ")
+    }),
+  )
+
+  // INV-D-32 (batch-4, 2026-07-18) — user abort no longer cascades. The
+  // abort path (SessionPrompt.cancel) calls reportSurvivorsOf instead of
+  // cancelChildrenOf: children keep running, and the parent's mailbox gets
+  // one system note naming the survivors so the next turn starts with live
+  // state instead of discovering it via list_agents.
+  it.instance("INV-D-32-abort-leaves-children-running-and-reports-survivors", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "survivor",
+        initial_message: "long work",
+      })
+      yield* control.drainMailbox(root.id)
+
+      yield* control.reportSurvivorsOf(root.id)
+
+      const list = yield* control.listAgents(AgentPath.root(), root.id)
+      const survivor = list.find((l) => l.agent_name === "/root/survivor")
+      expect(survivor?.agent_status).toBe("running")
+      expect(yield* control.getAgentMetadata(child.thread_id)).toBeDefined()
+
+      const drained = yield* control.drainMailbox(root.id)
+      const note = drained.find((m) => m.content.includes("still running, unaffected by the abort"))
+      expect(note).toBeDefined()
+      expect(note?.content).toContain("- /root/survivor (running)")
+    }),
+  )
+
+  // INV-D-33 (batch-4, 2026-07-18) — root auto-wake. A root-targeted
+  // message invokes the callback SessionPrompt registers (which enters via
+  // ensureRunning and no-ops when busy); child-targeted messages do NOT —
+  // children keep the trigger_turn revival contract.
+  it.instance("INV-D-33-root-targeted-send-invokes-registered-root-wake", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const woken: SessionID[] = []
+      yield* control.registerRootWake((sid) => Effect.sync(() => woken.push(sid)))
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "deliverer",
+        initial_message: "go",
+      })
+
+      yield* control.sendInterAgentCommunication(
+        root.id,
+        new InterAgentCommunication({
+          author: child.metadata.agent_path ?? AgentPath.root(),
+          recipient: AgentPath.root(),
+          content: "deliverable",
+          trigger_turn: false,
+          sent_at: Date.now(),
+        }),
+        child.thread_id,
+      )
+      // The wake is forked into the instance scope; give it a beat.
+      yield* Effect.sleep(50)
+      expect(woken).toContain(root.id)
+
+      const before = woken.length
+      yield* control.sendInterAgentCommunication(
+        child.thread_id,
+        new InterAgentCommunication({
+          author: AgentPath.root(),
+          recipient: child.metadata.agent_path ?? AgentPath.root(),
+          content: "fyi",
+          trigger_turn: false,
+          sent_at: Date.now(),
+        }),
+        root.id,
+      )
+      yield* Effect.sleep(50)
+      expect(woken.length).toBe(before)
+    }),
+  )
+
+  // INV-D-34 (batch-4, 2026-07-18) — wait_for_reply drain-race fix. A
+  // correlated reply that was drained at a turn boundary BEFORE the wait
+  // was issued used to guarantee a false timeout (live-confirmed with
+  // probe-cid-42, 2026-07-17). The tool now consults the drained-cid ring
+  // and answers already_delivered immediately.
+  it.instance("INV-D-34-wait-for-reply-reports-already-delivered-after-drain", () =>
+    Effect.gen(function* () {
+      yield* installNeverLoop
+      const sessions = yield* Session.Service
+      const control = yield* AgentControl.Service
+      const root = yield* sessions.create({ title: "parent" })
+      yield* control.registerSessionRoot(root.id)
+      const child = yield* control.spawnAgent({
+        parentID: root.id,
+        parentPath: AgentPath.root(),
+        task_name: "replier",
+        initial_message: "go",
+      })
+      yield* control.sendInterAgentCommunication(
+        root.id,
+        new InterAgentCommunication({
+          author: child.metadata.agent_path ?? AgentPath.root(),
+          recipient: AgentPath.root(),
+          content: "the answer",
+          trigger_turn: false,
+          sent_at: Date.now(),
+          correlation_id: "cid-drain-race",
+        }),
+        child.thread_id,
+      )
+      // Turn boundary: the reply drains into context.
+      yield* control.drainMailbox(root.id)
+      expect(yield* control.wasCorrelationDrained(root.id, "cid-drain-race")).toBe(true)
+
+      const def = yield* initWaitForReplyTool
+      const result = yield* def.execute(
+        { correlation_id: "cid-drain-race", timeout_ms: 1500 },
+        makeCtx(root.id),
+      )
+      expect(result.metadata.already_delivered).toBe(true)
+      expect(result.metadata.timed_out).toBe(false)
+      expect(result.output).toContain("already delivered")
     }),
   )
 })

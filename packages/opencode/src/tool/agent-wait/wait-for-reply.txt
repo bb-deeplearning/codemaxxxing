@@ -16,6 +16,7 @@ The return value is a JSON object with the matched message body and metadata whe
 ## Behavior
 
 - If the mailbox already contains a message with the matching `correlation_id`, returns immediately with that message.
+- If the matching reply was ALREADY drained into your context at a turn boundary (it arrived before you called), returns immediately with `already_delivered: true` — the reply is in the `[from ...]` messages above; re-read them instead of re-asking.
 - Otherwise races a mailbox-seq watch against the timeout. On each new mailbox message, re-scans for the matching `correlation_id`; non-matching messages do NOT wake the call.
 - The matched message stays in the mailbox — the turn-boundary drain delivers it to the model as the next user-message prefix.
 

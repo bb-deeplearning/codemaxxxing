@@ -94,7 +94,9 @@ describe("integration: process tools (exec_command + write_stdin via registry)",
         ctx,
       )
       expect(exitResult.metadata.exit_code).toBe(0)
-      expect(exitResult.metadata.session_id).toBeUndefined()
+      // B1/B2 (2026-07-18): session_id is retained after exit — the buffer
+      // stays drainable for since_cursor range re-reads until pruned.
+      expect(exitResult.metadata.session_id).toBe(sid)
     }),
   )
 

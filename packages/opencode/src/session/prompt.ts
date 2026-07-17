@@ -40,6 +40,7 @@ import { Tool } from "@/tool/tool"
 import { Permission } from "@/permission"
 import { SessionStatus } from "./status"
 import { LLM } from "./llm"
+import { Metric } from "@/wave/metric"
 import { Shell } from "@/shell/shell"
 import { ShellID } from "@/tool/shell/id"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
@@ -151,12 +152,14 @@ export const layer = Layer.effect(
     const cancel = Effect.fn("SessionPrompt.cancel")(function* (sessionID: SessionID) {
       yield* elog.info("cancel", { sessionID })
       yield* state.cancel(sessionID)
-      // Cascade cancel: bring down every v2-spawned child whose canonical
-      // path sits beneath this session. Children are forked into
-      // AgentControl's instance scope and would otherwise outlive a
-      // user-initiated parent cancel. closeAgent shuts each child's fiber +
-      // releases its registry slot; idempotent on already-shutdown children.
-      yield* agentControl.cancelChildrenOf(sessionID)
+      // B4-1 (2026-07-18): user abort cancels the FOREGROUND turn only.
+      // Children live in AgentControl's instance scope and keep running —
+      // they die with the instance, via explicit close_agent, or a future
+      // kill-tree command. Pre-fix this called cancelChildrenOf, which
+      // killed every in-flight descendant on ANY esc (five unrelated agents
+      // died to one interrupt in the 2026-07-17 diagnostic session). The
+      // survivors report tells the next turn what's still in flight.
+      yield* agentControl.reportSurvivorsOf(sessionID)
     })
 
     const resolvePromptParts = Effect.fn("SessionPrompt.resolvePromptParts")(function* (template: string) {
@@ -1512,6 +1515,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const slog = elog.with({ sessionID })
         let structured: unknown | undefined
         let step = 0
+        // B4-6 (2026-07-18) — reasoning-only-turn recovery attempts THIS
+        // runLoop invocation. A runLoop is one user-initiated turn's worth
+        // of stepping, so a loop-local counter resets naturally per real
+        // user turn. Cap is 1: one synthetic recovery, and if the recovery
+        // turn ALSO comes back reasoning-only we surface the stall instead
+        // of looping.
+        let reasoningRecoveryAttempts = 0
         const session = yield* sessions.get(sessionID)
 
         while (true) {
@@ -1570,6 +1580,100 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             if (yield* agentControl.hasPendingTriggerTurn(sessionID)) {
               yield* slog.info("trigger_turn pending, continuing loop")
               continue
+            }
+            // B4-2 (2026-07-18): for ROOT sessions ANY pending mail defers
+            // the exit — a deliverable arriving on this turn's final step
+            // must produce another step (drain → model call), not rot until
+            // the next user input. Child sessions keep the trigger_turn-only
+            // contract: FYIs wait for their next natural turn.
+            if (
+              session.parentID === undefined &&
+              process.env["OPENCODE_ROOT_WAKE"] !== "0" &&
+              (yield* agentControl.hasPendingMail(sessionID))
+            ) {
+              yield* slog.info("root mail pending, continuing loop")
+              continue
+            }
+            // B4-6 (2026-07-18) — reasoning-only-turn guard. The
+            // 2026-07-17 diagnostic session twice saw the model emit a
+            // reasoning segment and then end the turn with no visible text
+            // and no tool calls ("returned thinking and it died") — the
+            // runLoop accepted it as a clean turn end (no log ERROR, normal
+            // token accounting), leaving pending work untouched. Treat a
+            // finished turn that produced reasoning but nothing actionable
+            // as a stream fault: inject one synthetic recovery turn. If the
+            // recovery turn ALSO comes back empty, surface it visibly
+            // rather than looping.
+            const hasVisibleText =
+              lastAssistantMsg?.parts.some(
+                (p) => p.type === "text" && !p.synthetic && p.text.trim().length > 0,
+              ) ?? false
+            const hasReasoning = lastAssistantMsg?.parts.some((p) => p.type === "reasoning") ?? false
+            if (!hasVisibleText && !hasToolCalls && hasReasoning && !structured) {
+              if (reasoningRecoveryAttempts < 1) {
+                reasoningRecoveryAttempts++
+                yield* slog.warn("reasoning-only turn detected; injecting recovery", {
+                  attempt: reasoningRecoveryAttempts,
+                })
+                yield* bus
+                  .publish(Metric.Event.ReasoningOnlyTurn, {
+                    sessionID,
+                    timestamp: Date.now(),
+                    recovered: true,
+                    attempt: reasoningRecoveryAttempts,
+                  })
+                  .pipe(Effect.ignore)
+                const lastToolPart = msgs
+                  .flatMap((m) => m.parts)
+                  .findLast((p) => p.type === "tool")
+                const anchor =
+                  lastToolPart && "tool" in lastToolPart
+                    ? `Last tool call: ${lastToolPart.tool}.`
+                    : "No tool calls landed in the prior turn."
+                const recoveryUser: MessageV2.User = {
+                  id: MessageID.ascending(),
+                  sessionID,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: lastUser.agent,
+                  model: lastUser.model,
+                }
+                yield* sessions.updateMessage(recoveryUser)
+                yield* sessions.updatePart({
+                  id: PartID.ascending(),
+                  messageID: recoveryUser.id,
+                  sessionID,
+                  type: "text",
+                  text:
+                    "[system recovery] Your previous turn ended after internal reasoning with no visible output and no tool calls — treat it as a stream fault, not a decision you made. None of that reasoning was preserved. Re-derive briefly if needed, then take the next concrete action (a tool call or user-facing text). Do not apologize or recap. " +
+                    anchor,
+                  synthetic: true,
+                  metadata: { reasoning_recovery: true },
+                } satisfies MessageV2.TextPart)
+                continue
+              }
+              // Cap spent: a second consecutive empty turn. Attach a visible
+              // notice to the dead assistant message and stop.
+              yield* bus
+                .publish(Metric.Event.ReasoningOnlyTurn, {
+                  sessionID,
+                  timestamp: Date.now(),
+                  recovered: false,
+                  attempt: reasoningRecoveryAttempts + 1,
+                })
+                .pipe(Effect.ignore)
+              if (lastAssistantMsg) {
+                yield* sessions.updatePart({
+                  id: PartID.ascending(),
+                  messageID: lastAssistantMsg.info.id,
+                  sessionID,
+                  type: "text",
+                  text: "⚠️ The model returned reasoning with no output twice in a row — this is a stream fault, not a completed answer. Stopping to avoid a loop. Resend or rephrase your last message.",
+                  synthetic: true,
+                } satisfies MessageV2.TextPart)
+              }
+              yield* slog.warn("reasoning-only turn recovery cap reached; surfacing stall")
+              break
             }
             yield* slog.info("exiting loop")
             break
@@ -1844,6 +1948,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     // layer never names SessionPrompt as a dep — it just receives the
     // function pointer and calls it. See wave_7/ADR.md for the full design.
     yield* agentControl.registerRunLoop((sid) => loop({ sessionID: sid }))
+
+    // B4-2 (2026-07-18): root auto-wake callback. AgentControl invokes this
+    // (forked, fire-and-forget) whenever a message lands in a ROOT
+    // session's mailbox — deliverables and completion notifications must
+    // start a turn on an idle root instead of rotting until the user
+    // types. `loop` enters via ensureRunning, which throws BusyError when a
+    // turn is already in flight — swallowed here; the in-flight turn's
+    // per-step drain (plus the root-pending recheck at turn end) picks the
+    // message up instead. Escape hatch: OPENCODE_ROOT_WAKE=0.
+    yield* agentControl.registerRootWake((sid) =>
+      process.env["OPENCODE_ROOT_WAKE"] === "0"
+        ? Effect.void
+        : loop({ sessionID: sid }).pipe(Effect.catchCause(() => Effect.void)),
+    )
 
     const shell: (input: ShellInput) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.shell")(
       function* (input: ShellInput) {

@@ -94,7 +94,10 @@ describe("close_agent tool", () => {
         expect(payload.previous_status).toBeDefined()
 
         const list = yield* control.listAgents(AgentPath.root(), root.id)
-        expect(list.find((a) => a.agent_name === "/root/worker")).toBeUndefined()
+        const worker = list.find((a) => a.agent_name === "/root/worker")
+        // B3 (2026-07-18): tombstoned with a cause, not vanished.
+        expect(worker?.agent_status).toBe("shutdown")
+        expect(worker?.cause).toBe("closed")
       }),
     ),
   )
@@ -119,7 +122,9 @@ describe("close_agent tool", () => {
         expect(payload.previous_status).toBeDefined()
 
         const list = yield* control.listAgents(AgentPath.root(), root.id)
-        expect(list.find((a) => a.agent_name === "/root/abs")).toBeUndefined()
+        const abs = list.find((a) => a.agent_name === "/root/abs")
+        expect(abs?.agent_status).toBe("shutdown")
+        expect(abs?.cause).toBe("closed")
       }),
     ),
   )
@@ -151,9 +156,11 @@ describe("close_agent tool", () => {
         expect(payload.previous_status).toBeDefined()
 
         const list = yield* control.listAgents(AgentPath.root(), root.id)
-        expect(list.find((a2) => a2.agent_name === "/root/a/b")).toBeUndefined()
+        const closed = list.find((a2) => a2.agent_name === "/root/a/b")
+        expect(closed?.agent_status).toBe("shutdown")
+        expect(closed?.cause).toBe("closed")
         // Sibling "a" still alive.
-        expect(list.find((a2) => a2.agent_name === "/root/a")).toBeDefined()
+        expect(list.find((a2) => a2.agent_name === "/root/a")?.agent_status).not.toBe("shutdown")
       }),
     ),
   )
@@ -188,10 +195,10 @@ describe("close_agent tool", () => {
         yield* def.execute({ target: "a" }, ctx)
 
         const list = yield* control.listAgents(AgentPath.root(), root.id)
-        const names = list.map((l) => l.agent_name)
-        expect(names.includes("/root/a")).toBe(false)
-        expect(names.includes("/root/a/b")).toBe(false)
-        expect(names.includes("/root/a/b/c")).toBe(false)
+        const status = (n: string) => list.find((l) => l.agent_name === n)?.agent_status
+        expect(status("/root/a")).toBe("shutdown")
+        expect(status("/root/a/b")).toBe("shutdown")
+        expect(status("/root/a/b/c")).toBe("shutdown")
       }),
     ),
   )
@@ -343,7 +350,9 @@ describe("close_agent tool", () => {
         expect(payload.previous_status).toBeDefined()
 
         const list = yield* control.listAgents(AgentPath.root(), root.id)
-        expect(list.find((a) => a.agent_name === "/root/selfcloser")).toBeUndefined()
+        const closed = list.find((a) => a.agent_name === "/root/selfcloser")
+        expect(closed?.agent_status).toBe("shutdown")
+        expect(closed?.cause).toBe("closed")
       }),
     ),
   )
@@ -367,7 +376,8 @@ describe("close_agent tool", () => {
         const payload = JSON.parse(result.output)
         expect(payload.previous_status).toBeDefined()
         const list = yield* control.listAgents(AgentPath.root(), root.id)
-        expect(list.find((a) => a.agent_name === "/root/explicit_undef")).toBeUndefined()
+        const closed = list.find((a) => a.agent_name === "/root/explicit_undef")
+        expect(closed?.agent_status).toBe("shutdown")
       }),
     ),
   )

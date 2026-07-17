@@ -136,6 +136,27 @@ export const Event = {
       error_kind: Schema.String,
     }),
   ),
+
+  /**
+   * B4-6 (2026-07-18) — emitted when a turn ends with reasoning parts but
+   * no visible text and no tool calls (a "reasoning-only" stall — the
+   * "returned thinking and it died" shape from the 2026-07-17 diagnostic
+   * session). `recovered=true` means the runLoop injected a synthetic
+   * recovery turn and continued; `recovered=false` means the per-turn
+   * recovery cap (1) was already spent and the loop surfaced the stall
+   * to the user instead of looping. A non-zero rate is a canary that a
+   * provider/stream is dropping the final visible-output segment after
+   * the reasoning segment.
+   */
+  ReasoningOnlyTurn: BusEvent.define(
+    "agent.metric.reasoning_only_turn",
+    Schema.Struct({
+      sessionID: SessionID,
+      timestamp: NonNegativeInt,
+      recovered: Schema.Boolean,
+      attempt: NonNegativeInt,
+    }),
+  ),
 }
 
 // ============================================================================

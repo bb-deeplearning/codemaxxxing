@@ -11,9 +11,12 @@
 
 import { Agent } from "@/agent/agent"
 import { AgentControl } from "@/agent/control"
+import { InstanceState } from "@/effect/instance-state"
 import { Effect, Schema } from "effect"
+import path from "path"
 import * as Tool from "../tool"
 import { AgentToolContext } from "../agents/current-path"
+import { truncateHeadTail } from "../process/constants"
 import DESCRIPTION from "./agent-spawn.txt"
 
 export const ID = "spawn_agent" as const
@@ -48,6 +51,10 @@ export const Parameters = Schema.Struct({
   fork_turns: Schema.optional(Schema.String).annotate({
     description:
       "How much of your conversation history the child inherits. `all` (default) forks the full history; `none` starts the child fresh with only the initial message; a positive integer string like `3` forks the last N turns. Use `none` for self-contained tasks; `all` when the child needs your full context.",
+  }),
+  files: Schema.optional(Schema.Array(Schema.String)).annotate({
+    description:
+      "Paths (absolute, or relative to the project root) whose contents are injected into the child's first message as attached-file blocks. Combine with fork_turns: 'none' to hand a self-contained child exactly the context it needs — no full-history cost, no hand-pasting file contents into the message. Oversized files are head/tail-elided.",
   }),
   model: Schema.optional(Schema.String).annotate({
     description:
@@ -186,6 +193,38 @@ export const AgentSpawnTool = Tool.define(
 
               const parentPath = yield* AgentToolContext.currentAgentPath(control, ctx.sessionID)
 
+              // B4-4 (2026-07-18) — file attachments. Read at spawn time,
+              // appended to the initial message as fenced blocks. Fail
+              // fast on unreadable paths: silently spawning a child
+              // WITHOUT the context it was promised produces confidently
+              // wrong work, which is worse than no spawn.
+              let initialMessage = params.message
+              if (params.files !== undefined && params.files.length > 0) {
+                const instanceCtx = yield* InstanceState.context
+                const sections: string[] = []
+                const failures: string[] = []
+                for (const f of params.files) {
+                  const abs = path.isAbsolute(f) ? f : path.resolve(instanceCtx.directory, f)
+                  const text = yield* Effect.promise(() => Bun.file(abs).text()).pipe(
+                    Effect.catchCause(() => Effect.succeed(undefined)),
+                  )
+                  if (text === undefined) {
+                    failures.push(f)
+                    continue
+                  }
+                  const capped = truncateHeadTail(text, 8_000)
+                  sections.push(`[attached file: ${f}]\n\`\`\`\n${capped.text}\n\`\`\``)
+                }
+                if (failures.length > 0) {
+                  return errorOutput(
+                    params.task_name,
+                    "files_unreadable",
+                    `Could not read attached file(s): ${failures.join(", ")}. Fix the paths or drop them from files.`,
+                  )
+                }
+                initialMessage = `${params.message}\n\n${sections.join("\n\n")}`
+              }
+
               yield* ctx.ask({
                 permission: PermissionKey,
                 patterns: [params.task_name],
@@ -203,7 +242,7 @@ export const AgentSpawnTool = Tool.define(
                   parentPath,
                   task_name: params.task_name,
                   agent_type: params.agent_type,
-                  initial_message: params.message,
+                  initial_message: initialMessage,
                   options: { fork_turns: fork.value },
                   on_failure: params.on_failure,
                   pool_strategy: params.pool_strategy,

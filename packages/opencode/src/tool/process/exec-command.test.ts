@@ -72,7 +72,7 @@ const initTool = Effect.fn("ExecCommandToolTest.init")(function* () {
 })
 
 describe("tool.exec_command", () => {
-  it.instance("short-running command returns exit_code, no session_id", () =>
+  it.instance("short-running command returns exit_code and keeps session_id drainable", () =>
     Effect.gen(function* () {
       if (process.platform === "win32") return
       const def = yield* initTool()
@@ -84,7 +84,55 @@ describe("tool.exec_command", () => {
       expect(record.asks.length).toBe(1)
       expect(record.asks[0].permission).toBe("bash")
       expect(result.metadata.exit_code).toBe(0)
-      expect(result.metadata.session_id).toBeUndefined()
+      // Post-exit the session stays registered for since_cursor range
+      // re-reads (the old contract dropped it, making "exit reported" and
+      // "buffer gone" the same event).
+      expect(typeof result.metadata.session_id).toBe("number")
+      expect(result.output).toContain("Process exited with code 0")
+      expect(result.output).not.toContain("Process running with session ID")
+    }),
+  )
+
+  it.instance("max_output_tokens truncates head/tail with an explicit elision marker", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return
+      const def = yield* initTool()
+      const { ctx } = makeCtx()
+      const result = yield* def.execute(
+        {
+          cmd: `${process.execPath} -e "process.stdout.write('A'.repeat(20000) + 'NEEDLE-MIDDLE' + 'B'.repeat(20000)); process.exit(0)"`,
+          yield_time_ms: 10000,
+          max_output_tokens: 100,
+        },
+        ctx,
+      )
+      expect(result.metadata.exit_code).toBe(0)
+      expect(result.output).toContain("…[elided ~")
+      expect(result.output).not.toContain("NEEDLE-MIDDLE")
+      expect(result.metadata.omitted_bytes as number).toBeGreaterThan(30_000)
+      expect(result.metadata.original_token_count as number).toBeGreaterThan(100)
+      // Head (A-run) and tail (B-run) both survive the elision.
+      expect(result.output).toContain("AAAA")
+      expect(result.output).toContain("BBBB")
+    }),
+  )
+
+  it.instance("strip_ansi removes escape sequences from the captured output", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return
+      const def = yield* initTool()
+      const { ctx } = makeCtx()
+      const result = yield* def.execute(
+        {
+          cmd: `${process.execPath} -e "process.stdout.write('\\u001b[2K\\u001b[1G\\u001b[31mRED\\u001b[0m plain'); process.exit(0)"`,
+          yield_time_ms: 5000,
+          strip_ansi: true,
+        },
+        ctx,
+      )
+      expect(result.metadata.exit_code).toBe(0)
+      expect(result.output).toContain("RED plain")
+      expect(result.output).not.toContain("\u001b[")
     }),
   )
 

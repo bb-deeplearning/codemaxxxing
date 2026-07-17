@@ -186,11 +186,14 @@ describe("integration: multi-agent v2 tools (spawn/send/list/wait/followup/close
         expect(rootRecord.asks.at(-1)?.permission).toBe("task") // Wave 3: was "close_agent"
         const closePayload = JSON.parse(closeRes.output)
         expect(closePayload.previous_status).toBeDefined()
-        // After close, listAgents no longer reports the child.
+        // After close, listAgents reports the child as a tombstone (B3
+        // 2026-07-18): status "shutdown" + cause, instead of vanishing.
         const rootMeta = yield* control.getAgentMetadata(root.id)
         const rootPath = rootMeta?.agent_path ?? AgentPath.root()
         const finalList = yield* control.listAgents(rootPath, root.id)
-        expect(finalList.find((a) => a.agent_name === "/root/worker_a")).toBeUndefined()
+        const closed = finalList.find((a) => a.agent_name === "/root/worker_a")
+        expect(closed?.agent_status).toBe("shutdown")
+        expect(closed?.cause).toBe("closed")
       }),
     20_000,
   )

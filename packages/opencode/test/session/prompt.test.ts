@@ -2456,7 +2456,7 @@ it.live("mailbox drain on an empty mailbox is a no-op (no synthetic user message
 )
 
 it.live(
-  "cancel propagates: cancelling the parent interrupts every v2 child fiber",
+  "cancel leaves v2 children running and posts a survivors report (B4-1)",
   () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
@@ -2466,7 +2466,7 @@ it.live(
         const chat = yield* sessions.create({ title: "cancel-cascade" })
 
         // Pin the child run loops on the LLM hang gate so each child stays
-        // running until interrupted.
+        // running across the cancel.
         yield* llm.hang
 
         // Spawn 3 v2 children directly via AgentControl. The seed
@@ -2499,36 +2499,35 @@ it.live(
         // Wait for all three children to actually start their model calls so
         // we know the runLoop is in flight (not in the early init phase).
         yield* llm.wait(3)
+        yield* control.drainMailbox(chat.id)
 
-        // Cancel the parent — every child fiber must die.
+        // B4-1 (2026-07-18): user abort cancels the FOREGROUND turn only.
+        // Pre-fix this cascaded through cancelChildrenOf and killed every
+        // in-flight child (five unrelated agents died to one esc in the
+        // 2026-07-17 diagnostic session).
         yield* prompt.cancel(chat.id)
 
-        // After cancel, each child's status reaches a final state ("shutdown"
-        // for cancellation). Poll inside the Effect scope so InstanceState
-        // resolution stays valid; bare `Effect.runPromise` here would lose
-        // the test's tmpdir Instance binding and crash with "No context
-        // found for instance".
-        yield* Effect.gen(function* () {
-          const deadline = Date.now() + 3_000
-          while (Date.now() < deadline) {
-            const list = yield* control.listAgents(ROOT_PATH, chat.id)
-            const stillLive = list
-              .filter((entry) => entry.agent_name !== String(ROOT_PATH))
-              .filter(
-                (entry) => entry.agent_status !== "shutdown" && entry.agent_status !== "not_found",
-              )
-            if (stillLive.length === 0) return
-            yield* Effect.sleep(30)
-          }
-          throw new Error("timed out waiting for v2 children to interrupt")
-        })
-
-        // Sanity: explicit closeAgent on each child no longer finds them in
-        // the live registry (they've been removed by cancelChildrenOf →
-        // closeAgent → shutdownOne → registry.releaseSpawnedThread).
+        // Children remain live and registered.
+        const afterNames = yield* liveAgentNamesUnder(control, chat.id)
+        expect(afterNames.sort()).toEqual(["/root/a", "/root/b", "/root/c"])
         for (const live of [a, b, c]) {
-          const meta = yield* control.getAgentMetadata(live.thread_id)
-          expect(meta).toBeUndefined()
+          expect(yield* control.getAgentMetadata(live.thread_id)).toBeDefined()
+        }
+
+        // The survivors report landed in the parent's mailbox (sendSystem —
+        // deliberately NOT the root-wake path: an abort must not immediately
+        // spin up a fresh turn).
+        const drained = yield* control.drainMailbox(chat.id)
+        const note = drained.find((m) => m.content.includes("still running, unaffected by the abort"))
+        expect(note).toBeDefined()
+        expect(note?.content).toContain("- /root/a")
+        expect(note?.content).toContain("- /root/c")
+
+        // Cleanup — the kill-tree primitive still exists for explicit
+        // teardown; it is just no longer wired to esc.
+        yield* control.cancelChildrenOf(chat.id)
+        for (const live of [a, b, c]) {
+          expect(yield* control.getAgentMetadata(live.thread_id)).toBeUndefined()
         }
       }),
       { git: true, config: providerCfg },

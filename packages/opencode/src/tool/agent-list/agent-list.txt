@@ -15,11 +15,18 @@ Status values:
 - `{ completed: ... }` — finished; can still be reused via `followup_task`
   (their context stays warm).
 - `{ errored: ... }` — failed; inspect with `wait_agent` for details.
-- `shutdown` / `not_found` — gone.
+- `shutdown` — dead, retained as a tombstone. Tombstone entries carry two
+  extra fields: `cause` (`closed` — explicit close_agent; `killed_by_user_abort`
+  — a user interrupt cascaded to in-flight children; `linked_death` — a
+  link partner died) and `previous_status` (what the agent was doing when
+  it died: `running` means killed mid-flight, `{ completed }` means closed
+  after finishing cleanly). The last 32 dead agents per session are
+  retained; their transcripts survive on disk regardless.
 
 `last_task_message` is the most recent user or inter-agent message the agent
 saw. Useful for "did I already ask this?" — if the message you were about to
-send matches the recorded one, the agent already has it.
+send matches the recorded one, the agent already has it. Tombstones keep it
+too, so you can tell WHAT a killed agent was working on.
 
 Cheap to call (no LLM inference, no PTY work). Reach for it whenever you
 need to decide between `wait_agent`, `followup_task`, or starting fresh.

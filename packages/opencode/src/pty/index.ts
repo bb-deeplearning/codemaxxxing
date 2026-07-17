@@ -68,6 +68,10 @@ type Active = {
   exitDeferred: Deferred.Deferred<{ exitCode: number }>
   exited: boolean
   exitCode?: number
+  // Wall-clock timestamp of the onExit observation. Read's trailing-output
+  // grace only applies when the exit is fresher than TRAILING_OUTPUT_GRACE_MS
+  // — polling a long-dead session stays instant.
+  exitedAt?: number
   lastUsed: number
 }
 
@@ -428,6 +432,7 @@ export const layer = Layer.effect(
         session.info.status = "exited"
         session.exited = true
         session.exitCode = exitCode
+        session.exitedAt = Date.now()
         bridge.fork(Deferred.succeed(exitDeferred, { exitCode }))
         bridge.fork(bus.publish(Event.Exited, { id, exitCode }))
         // Legacy TUI/desktop callers expect the session to vanish from
@@ -496,30 +501,37 @@ export const layer = Layer.effect(
 
       session.lastUsed = tickLastUsed()
 
-      // Fast path: already past the requested cursor or process exited.
-      // Mirrors codex collect_output_until_deadline's drain-first loop entry
-      // at process_manager.rs:1093-1100.
-      if (session.byteCursor > sinceCursor || session.exited) {
-        return drainSince(session, sinceCursor, maxBytes)
+      // Collect-until-deadline. Codex's loop at process_manager.rs:1093-1143:
+      // drain, then wait on cursor-advance / idle-deadline / process-exit and
+      // repeat. The pre-loop implementation returned on the FIRST byte past
+      // `sinceCursor`, which misreported fast-exiting commands as still
+      // running (no exit_code, forcing a follow-up poll per one-shot command)
+      // and truncated bursts mid-stream. Now: data arrival keeps collecting;
+      // only the deadline or exit ends the read. Exit wins immediately after
+      // a trailing-output grace (onExit can land before the final onData
+      // chunks flush through the fd), so fast commands return complete output
+      // AND their exit code in a single call. `idleMs <= 0` degrades to a
+      // pure drain of whatever is retained — used for cursor range re-reads.
+      const deadline = Date.now() + idleMs
+      while (true) {
+        if (session.exited) {
+          const grace = TRAILING_OUTPUT_GRACE_MS - (Date.now() - (session.exitedAt ?? 0))
+          if (grace > 0) yield* Effect.sleep(`${grace} millis`)
+          return drainSince(session, sinceCursor, maxBytes)
+        }
+        const remainingMs = deadline - Date.now()
+        if (remainingMs <= 0) return drainSince(session, sinceCursor, maxBytes)
+        const cursorNow = session.byteCursor
+        yield* Effect.raceAll([
+          SubscriptionRef.changes(session.notify).pipe(
+            Stream.dropWhile((c) => c <= cursorNow),
+            Stream.take(1),
+            Stream.runDrain,
+          ),
+          Effect.sleep(`${remainingMs} millis`),
+          Deferred.await(session.exitDeferred).pipe(Effect.asVoid),
+        ])
       }
-
-      // Race three wakeup sources. Codex's loop equivalent at
-      // process_manager.rs:1125-1143: cursor-advance via `output_notify`,
-      // idle-deadline via `tokio::time::sleep`, and process-exit via the
-      // cancellation token. We collapse to a single race rather than the
-      // loop because a single read() returns whatever's available now;
-      // multi-call collection lives at the tool layer (Wave 3).
-      yield* Effect.raceAll([
-        SubscriptionRef.changes(session.notify).pipe(
-          Stream.dropWhile((c) => c <= sinceCursor),
-          Stream.take(1),
-          Stream.runDrain,
-        ),
-        Effect.sleep(`${idleMs} millis`),
-        Deferred.await(session.exitDeferred).pipe(Effect.asVoid),
-      ])
-
-      return drainSince(session, sinceCursor, maxBytes)
     })
 
     const terminateAll = Effect.fn("Pty.terminateAll")(function* () {

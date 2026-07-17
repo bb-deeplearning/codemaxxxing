@@ -111,6 +111,17 @@ Controls how much of your conversation history the child inherits.
 - A positive integer string (e.g. `"3"`): the most recent N turns. Use
   when only recent context matters.
 
+## files
+
+Attach specific files to the child's first message. Each path (absolute,
+or relative to the project root) is read at spawn time and appended as an
+`[attached file: ...]` fenced block. This is the middle ground the fork
+options lack: `fork_turns: "none"` + `files: [...]` hands a self-contained
+child exactly the artifacts it needs — no full-history token cost, no
+hand-pasting file contents into the message string. Oversized files are
+head/tail-elided with an explicit marker. Unreadable paths fail the spawn
+(`files_unreadable`) rather than silently spawning an under-informed child.
+
 ## Supervision strategies (D12)
 
 Two optional parameters control how the runtime supervises this child
