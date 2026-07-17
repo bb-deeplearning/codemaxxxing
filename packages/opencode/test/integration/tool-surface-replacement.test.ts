@@ -1120,6 +1120,24 @@ describe("INTEGRATION_INVARIANTS — tool surface replacement", () => {
       ])
       const REMOVED = new Set(["bash", "task"])
 
+      // Tools deliberately shipped AFTER the frozen Wave-4 baseline. The
+      // frozen core above must stay identical to the baseline snapshot; any
+      // live tool outside core ∪ additions fails the test — that is the
+      // "tool leaked in" case this snapshot exists to catch. When a new
+      // builtin ships deliberately, extend this set with a dated comment
+      // instead of re-freezing the campaign artifact.
+      const POST_BASELINE_ADDITIONS = new Set([
+        // actor-discipline-2026-05-20 (D10/D13/D14): targeted reply wait,
+        // declarative fan-out, link primitives.
+        "wait_for_reply",
+        "spawn_pool",
+        "link_agents",
+        "unlink_agents",
+        // github workflow tools (post-actor-discipline).
+        "github-pr-search",
+        "github-triage",
+      ])
+
       for (const agentName of agentNames) {
         const baselinePath = path.resolve(
           import.meta.dir,
@@ -1157,10 +1175,17 @@ describe("INTEGRATION_INVARIANTS — tool surface replacement", () => {
           agent,
         })
         const currentIds = tools.map((t) => t.id).sort()
-        // Asymmetric: do NOT filter `current` by STANDARD_BUILTIN_IDS.
-        // Pre-Wave-4 `current` contains `bash` + `task` and won't match
-        // the filtered-baseline; post-Wave-4 it matches.
-        expect(currentIds).toEqual(baselineFiltered)
+        // Two-sided check: (1) the frozen core of the surface must match the
+        // baseline exactly — no core tool dropped or renamed; (2) everything
+        // outside the core must be a declared post-baseline addition. The
+        // old single asymmetric toEqual conflated "deliberate new tool" with
+        // "tool leaked in" and went red on every legitimate addition.
+        const currentCore = currentIds.filter((id) => STANDARD_BUILTIN_IDS.has(id))
+        expect(currentCore).toEqual(baselineFiltered)
+        const undeclared = currentIds.filter(
+          (id) => !STANDARD_BUILTIN_IDS.has(id) && !POST_BASELINE_ADDITIONS.has(id),
+        )
+        expect(undeclared).toEqual([])
       }
     }),
   )
