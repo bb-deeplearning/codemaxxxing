@@ -427,34 +427,48 @@ export function topK(model: Provider.Model) {
 const WIDELY_SUPPORTED_EFFORTS = ["low", "medium", "high"]
 const OPENAI_EFFORTS = ["none", "minimal", ...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
 
-export function anthropicOpus47OrLater(apiId: string) {
-  // claude-fable-5 gets the same adaptive-reasoning treatment as Opus 4.7+
-  // (xhigh/max efforts + summarized thinking display). Matches bare, dotted,
-  // and date-suffixed ids (claude-fable-5, .../claude-fable-5-20260201) but
-  // not future unrelated ids like fable-50.
-  if (/fable-5(?:[.-]|$)/i.test(apiId)) return true
-  const version = /opus-(\d+)[.-](\d+)(?:[.-]|$)/i.exec(apiId)
+function anthropicOpus47OrLater(apiId: string) {
+  // Matches "opus-4.7" (Anthropic/Bedrock/Vertex) and "claude-4.7-opus" (SAP AI Core inverted).
+  // Greedy \d+ correctly extends to multi-digit majors (e.g. "claude-10.0-opus") for forward compatibility.
+  const version = /opus-(\d+)[.-](\d+)(?:[.@-]|$)|claude-(\d+)[.-](\d+)-opus(?:[.@-]|$)/i.exec(apiId)
   if (!version) return false
-  const major = Number(version[1])
-  const minor = Number(version[2])
+  const major = Number(version[1] ?? version[3])
+  const minor = Number(version[2] ?? version[4])
   return major > 4 || (major === 4 && minor >= 7)
 }
 
+function anthropicSonnet5OrLater(apiId: string) {
+  const version = /sonnet-(\d+)(?:[.@-]|$)|claude-(\d+)-sonnet(?:[.@-]|$)/i.exec(apiId)
+  if (!version) return false
+  return Number(version[1] ?? version[2]) >= 5
+}
+
 function anthropicAdaptiveEfforts(apiId: string): string[] | null {
-  if (anthropicOpus47OrLater(apiId)) {
+  if (anthropicOpus47OrLater(apiId) || anthropicSonnet5OrLater(apiId) || apiId.includes("fable-5")) {
     return ["low", "medium", "high", "xhigh", "max"]
   }
-  if (["opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6"].some((v) => apiId.includes(v))) {
+  if (
+    ["opus-4-6", "opus-4.6", "4-6-opus", "4.6-opus", "sonnet-4-6", "sonnet-4.6", "4-6-sonnet", "4.6-sonnet"].some((v) =>
+      apiId.includes(v),
+    )
+  ) {
     return ["low", "medium", "high", "max"]
   }
   return null
+}
+
+// Newer adaptive-only models (Opus 4.7+, Sonnet 5+, Fable 5) default thinking
+// `display` to "omitted", which returns empty thinking blocks. Callers force
+// "summarized" for these so summaries survive.
+export function anthropicOmitsThinking(apiId: string) {
+  return anthropicOpus47OrLater(apiId) || anthropicSonnet5OrLater(apiId) || apiId.includes("fable-5")
 }
 
 export function variants(model: Provider.Model): Record<string, Record<string, any>> {
   if (!model.capabilities.reasoning) return {}
 
   const id = model.id.toLowerCase()
-  const adaptiveOpus = anthropicOpus47OrLater(model.api.id)
+  const adaptiveThinkingOmitted = anthropicOmitsThinking(model.api.id)
   const adaptiveEfforts = anthropicAdaptiveEfforts(model.api.id)
   if (
     id.includes("deepseek-chat") ||
@@ -499,6 +513,10 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
               {
                 thinking: {
                   type: "adaptive",
+                  // Newer adaptive-only models default `display` to "omitted", which
+                  // returns empty thinking blocks. Force "summarized" so summaries
+                  // survive (4.6/Sonnet 4.6 already default to "summarized").
+                  ...(adaptiveThinkingOmitted ? { display: "summarized" } : {}),
                 },
                 effort,
               },
@@ -659,7 +677,7 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
             {
               thinking: {
                 type: "adaptive",
-                ...(adaptiveOpus ? { display: "summarized" } : {}),
+                ...(adaptiveThinkingOmitted ? { display: "summarized" } : {}),
               },
               effort,
             },
@@ -696,7 +714,7 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
               reasoningConfig: {
                 type: "adaptive",
                 maxReasoningEffort: effort,
-                ...(adaptiveOpus ? { display: "summarized" } : {}),
+                ...(adaptiveThinkingOmitted ? { display: "summarized" } : {}),
               },
             },
           ]),
@@ -811,6 +829,7 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
               {
                 thinking: {
                   type: "adaptive",
+                  ...(adaptiveThinkingOmitted ? { display: "summarized" } : {}),
                 },
                 effort,
               },

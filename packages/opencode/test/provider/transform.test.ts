@@ -2473,12 +2473,14 @@ describe("ProviderTransform.variants", () => {
       expect(result.xhigh).toEqual({
         thinking: {
           type: "adaptive",
+          display: "summarized",
         },
         effort: "xhigh",
       })
       expect(result.max).toEqual({
         thinking: {
           type: "adaptive",
+          display: "summarized",
         },
         effort: "max",
       })
@@ -2513,8 +2515,30 @@ describe("ProviderTransform.variants", () => {
       expect(result.xhigh).toEqual({
         thinking: {
           type: "adaptive",
+          display: "summarized",
         },
         effort: "xhigh",
+      })
+    })
+
+    test("anthropic sonnet 5 returns adaptive thinking options with xhigh", () => {
+      const model = createMockModel({
+        id: "anthropic/claude-sonnet-5",
+        providerID: "gateway",
+        api: {
+          id: "anthropic/claude-sonnet-5",
+          url: "https://gateway.ai",
+          npm: "@ai-sdk/gateway",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high", "xhigh", "max"])
+      expect(result.high).toEqual({
+        thinking: {
+          type: "adaptive",
+          display: "summarized",
+        },
+        effort: "high",
       })
     })
 
@@ -2938,6 +2962,12 @@ describe("ProviderTransform.variants", () => {
         expectedHigh: { thinking: { type: "adaptive", display: "summarized" }, effort: "high" },
       },
       {
+        name: "sonnet 5",
+        apiIds: ["claude-sonnet-5", "claude-sonnet-5-20260630"],
+        efforts: ["low", "medium", "high", "xhigh", "max"],
+        expectedHigh: { thinking: { type: "adaptive", display: "summarized" }, effort: "high" },
+      },
+      {
         name: "fable 5",
         apiIds: ["claude-fable-5", "claude-fable-5-20260201"],
         efforts: ["low", "medium", "high", "xhigh", "max"],
@@ -3004,6 +3034,28 @@ describe("ProviderTransform.variants", () => {
           },
           effort: "medium",
         },
+      })
+    })
+
+    test("sonnet 5 uses adaptive reasoning for Vertex model IDs", () => {
+      const result = ProviderTransform.variants(
+        createMockModel({
+          id: "google-vertex-anthropic/claude-sonnet-5@default",
+          providerID: "google-vertex-anthropic",
+          api: {
+            id: "claude-sonnet-5@default",
+            url: "https://us-central1-aiplatform.googleapis.com",
+            npm: "@ai-sdk/google-vertex/anthropic",
+          },
+        }),
+      )
+      expect(Object.keys(result)).toEqual(["low", "medium", "high", "xhigh", "max"])
+      expect(result.high).toEqual({
+        thinking: {
+          type: "adaptive",
+          display: "summarized",
+        },
+        effort: "high",
       })
     })
 
@@ -3112,6 +3164,28 @@ describe("ProviderTransform.variants", () => {
           providerID: "bedrock",
           api: {
             id: "anthropic.claude-fable-5",
+            url: "https://bedrock.amazonaws.com",
+            npm: "@ai-sdk/amazon-bedrock",
+          },
+        }),
+      )
+      expect(Object.keys(result)).toEqual(["low", "medium", "high", "xhigh", "max"])
+      expect(result.high).toEqual({
+        reasoningConfig: {
+          type: "adaptive",
+          maxReasoningEffort: "high",
+          display: "summarized",
+        },
+      })
+    })
+
+    test("anthropic sonnet 5 returns adaptive reasoning options with xhigh", () => {
+      const result = ProviderTransform.variants(
+        createMockModel({
+          id: "bedrock/anthropic-claude-sonnet-5",
+          providerID: "bedrock",
+          api: {
+            id: "anthropic.claude-sonnet-5",
             url: "https://bedrock.amazonaws.com",
             npm: "@ai-sdk/amazon-bedrock",
           },
@@ -3338,6 +3412,29 @@ describe("ProviderTransform.variants", () => {
         effort: "max",
       })
     })
+
+    for (const apiId of ["anthropic--claude-sonnet-5", "anthropic--claude-5-sonnet", "anthropic--claude-fable-5"]) {
+      test(`${apiId} returns adaptive thinking variants with summarized display`, () => {
+        const model = createMockModel({
+          id: `sap-ai-core/${apiId}`,
+          providerID: "sap-ai-core",
+          api: {
+            id: apiId,
+            url: "https://api.ai.sap",
+            npm: "@jerome-benoit/sap-ai-provider-v2",
+          },
+        })
+        const result = ProviderTransform.variants(model)
+        expect(Object.keys(result)).toEqual(["low", "medium", "high", "xhigh", "max"])
+        expect(result.high).toEqual({
+          thinking: {
+            type: "adaptive",
+            display: "summarized",
+          },
+          effort: "high",
+        })
+      })
+    }
 
     test("gemini 2.5 models return thinkingConfig variants", () => {
       const model = createMockModel({
