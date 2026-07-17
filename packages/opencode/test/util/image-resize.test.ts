@@ -156,3 +156,33 @@ describe("image-resize.resizeIfOversized", () => {
     expect(result.bytes).toBeDefined()
   })
 })
+
+describe("image-resize png signature validation", () => {
+  // Regression (2026-07-18): readPngDimensions skipped signature + IHDR
+  // validation — the only reader of the four that did. Arbitrary bytes
+  // labeled image/png produced garbage dimensions in the billions, so
+  // checkDataUrlOversized "oversized"-stripped valid history entries and
+  // compaction's tail-media budget saw a tiny placeholder instead of the
+  // real attachment (the "falls back to full summary when retained tail
+  // media exceeds preserve token budget" failure).
+  test("readDimensions returns undefined for garbage bytes labeled image/png", () => {
+    const garbage = Buffer.from("a".repeat(4_000), "base64")
+    expect(garbage.length).toBeGreaterThan(24)
+    expect(readDimensions(garbage, "image/png")).toBeUndefined()
+  })
+
+  test("readDimensions returns undefined when the IHDR chunk type is corrupted", () => {
+    const bytes = makePng(100, 100)
+    bytes[12] = 0x58
+    expect(readDimensions(bytes, "image/png")).toBeUndefined()
+  })
+
+  test("checkDataUrlOversized lets garbage png data urls through", () => {
+    const url = `data:image/png;base64,${"a".repeat(4_000)}`
+    expect(checkDataUrlOversized(url, MAX_DIMENSION_DEFAULT)).toBeUndefined()
+  })
+
+  test("valid png header still parses after validation tightening", () => {
+    expect(readDimensions(makePng(1234, 567), "image/png")).toEqual({ width: 1234, height: 567 })
+  })
+})

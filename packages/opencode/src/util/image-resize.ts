@@ -44,8 +44,16 @@ export function readDimensions(bytes: Uint8Array, mime: string): Dimensions | un
 }
 
 function readPngDimensions(bytes: Uint8Array): Dimensions | undefined {
-  // PNG: 8-byte signature, then IHDR chunk: 4 length, 4 type, 4 width, 4 height
+  // PNG: 8-byte signature, then IHDR chunk: 4 length, 4 type, 4 width, 4 height.
+  // Validate the signature AND the IHDR chunk type before trusting the offsets —
+  // this reader used to skip both checks (the only one of the four that did),
+  // so arbitrary bytes labeled image/png produced garbage dimensions in the
+  // billions and checkDataUrlOversized "oversized"-stripped valid history.
   if (bytes.length < 24) return undefined
+  const SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+  for (let i = 0; i < SIG.length; i++) if (bytes[i] !== SIG[i]) return undefined
+  // "IHDR" at offset 12.
+  if (bytes[12] !== 0x49 || bytes[13] !== 0x48 || bytes[14] !== 0x44 || bytes[15] !== 0x52) return undefined
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   return { width: view.getUint32(16), height: view.getUint32(20) }
 }
