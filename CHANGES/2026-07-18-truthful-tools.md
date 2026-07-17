@@ -6,6 +6,12 @@ Field-driven fix batch. A primary-source bug report from a long dogfooding sessi
 
 Three batches landed. Batch 4 (design-level: abort blast radius, root-wake, `detach`, spawn attachments, `wait_for_reply` drain race, reasoning-only-turn guard) is deliberately deferred pending design discussion.
 
+## Same-day follow-up: the two pre-existing failures + compaction prompt
+
+- **`readPngDimensions` signature validation** (`src/util/image-resize.ts`). The PNG reader — alone among the four format readers — read width/height at fixed offsets without validating the 8-byte signature or IHDR chunk type. Arbitrary bytes labeled `image/png` produced garbage dimensions in the billions, so `checkDataUrlOversized` "oversized"-stripped valid history entries. This was the actual root cause of the failing `compaction.test.ts` media-budget test: the stripped placeholder weighed ~20 tokens, the tail fit the preserve budget, and the full-summary fallback never fired. Regression tests in `test/util/image-resize.test.ts`.
+- **Tool-list snapshot test redesigned** (`test/integration/tool-surface-replacement.test.ts`). The old asymmetric `toEqual` rejected ANY builtin added after the May-15 freeze (red since actor-discipline added `wait_for_reply`/`spawn_pool`/`link_agents`/`unlink_agents`; the github tools made it worse). Now two-sided: the frozen core must match the baseline exactly AND everything outside it must appear in a dated `POST_BASELINE_ADDITIONS` allowlist — deliberate additions are declared, leaked tools still fail.
+- **Deliberate compaction prompt** (`src/agent/prompt/compaction.txt` + `SUMMARY_TEMPLATE` in `session/compaction.ts`). The old prompt was 9 generic lines. The new one states the stakes (the summary REPLACES memory; distortions become trusted facts) and the non-negotiables: verbatim identifiers (paths:lines, ids, pids, SHAs, error strings), fact-vs-hypothesis marking, negative results (ruled-out approaches), the user's own rulings, and live state (running processes, spawned agents, detached daemons, uncommitted changes). Template gains `## Ruled Out` and `## Live State` sections — the two categories whose loss makes a fresh context window repeat dead ends or orphan running work.
+
 ## Batch 4 — harness flow redesign (landed same day after design discussion)
 
 All six Batch 4 items were greenlit and shipped:

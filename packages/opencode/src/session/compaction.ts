@@ -46,26 +46,32 @@ const SUMMARY_TEMPLATE = `Output exactly the Markdown structure shown inside <te
 - [single-sentence task summary]
 
 ## Constraints & Preferences
-- [user constraints, preferences, specs, or "(none)"]
+- [user constraints, preferences, specs, exact rulings — or "(none)"]
 
 ## Progress
 ### Done
-- [completed work or "(none)"]
+- [completed work, with file paths — or "(none)"]
 
 ### In Progress
-- [current work or "(none)"]
+- [current work and its exact state — or "(none)"]
 
 ### Blocked
-- [blockers or "(none)"]
+- [blockers, with exact error strings — or "(none)"]
 
 ## Key Decisions
-- [decision and why, or "(none)"]
+- [decision and why — or "(none)"]
+
+## Ruled Out
+- [approach tried or considered and rejected, and why — or "(none)"]
+
+## Live State
+- [running processes/servers (session ids, pids, ports), spawned agents still working, detached daemons, uncommitted changes, questions awaiting the user — or "(none)"]
 
 ## Next Steps
-- [ordered next actions or "(none)"]
+- [ordered next actions — or "(none)"]
 
 ## Critical Context
-- [important technical facts, errors, open questions, or "(none)"]
+- [technical facts, exact error strings, discovered gotchas, open questions — or "(none)"]
 
 ## Relevant Files
 - [file or directory path: why it matters, or "(none)"]
@@ -74,7 +80,8 @@ const SUMMARY_TEMPLATE = `Output exactly the Markdown structure shown inside <te
 Rules:
 - Keep every section, even when empty.
 - Use terse bullets, not prose paragraphs.
-- Preserve exact file paths, commands, error strings, and identifiers when known.
+- Preserve exact file paths, commands, error strings, ids, and identifiers when known; never paraphrase an identifier.
+- Mark unverified assumptions with "(hypothesis)".
 - Do not mention the summary process or that context was compacted.`
 type Turn = {
   start: number
