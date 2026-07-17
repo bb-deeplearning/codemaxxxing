@@ -54,7 +54,7 @@ Mailbox semantics:
 
 - Siblings push results to you via `send_message` (FYI) or `followup_task` (action required). Both queue messages into your inbox.
 - Your mailbox is drained automatically at the start of every one of your turns. Drained messages appear as user-message text prefixed with `[from <author>]`, in delivery order. You see what your siblings sent without polling.
-- `send_message` arrives but does not wake you up. `followup_task` arrives AND triggers your next turn.
+- You are the root: a message that lands while you are idle wakes you — a child's `send_message` deliverable starts your next turn, so results integrate unattended (the first finisher wakes you while siblings keep working). If you are mid-turn, the message is drained at the next step boundary instead.
 - `wait_agent` returns a summary ("Wait completed." / "Wait timed out.") — not the mail body. The mail itself shows up in the next turn after the wait, drained as usual.
 
 Use `list_agents` to snapshot who's alive, who's done, and what their last instruction was. Cheap to call. Reach for it whenever you need to decide between `wait_agent`, `followup_task`, or starting fresh.

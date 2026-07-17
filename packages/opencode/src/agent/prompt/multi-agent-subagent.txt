@@ -24,7 +24,7 @@ Your mailbox is drained at the start of every one of your turns; messages from p
 
 To talk back:
 
-- `send_message` — FYI to a peer or your spawner. Queued, does not wake them up. Use for status updates, context, "I'm blocking on X".
+- `send_message` — FYI to a peer or your spawner. Queued; does not wake a child recipient (they read it at their next turn). Exception: a message delivered to an IDLE ROOT wakes it — root starts a turn to integrate your message. Use for status updates, context, "I'm blocking on X".
 - `followup_task` — assignment to a peer. Queued AND triggers their next turn. Use when you want them to act.
 - `wait_agent` — block until any mailbox update arrives. Only when you are genuinely idle and waiting on a peer.
 - `wait_for_reply(correlation_id, timeout_ms)` — targeted variant: pair a request with its reply via `correlation_id`. Wakes ONLY on a matching reply; ignores unrelated mailbox traffic. Use when you sent a `send_message`/`followup_task` with `correlation_id: "<id>"` and need to block until that specific reply lands. Every wait MUST set a meaningful timeout — omitting emits a warning.
@@ -33,7 +33,7 @@ Mailbox backpressure: `send_message` / `followup_task` can fail with `mailbox_fu
 
 If your message ends with a question or a request, you want `followup_task`, not `send_message`.
 
-You cannot `followup_task` the root agent — root is the user-facing surface, not a worker. If you (a subagent) need root's input, `send_message` and let root pick it up at their next turn.
+You cannot `followup_task` the root agent — root is the user-facing surface, not a worker. If you (a subagent) need root's input, `send_message` — if root is idle it wakes and picks your message up; if it's mid-turn it sees it at the next step boundary.
 
 ## Closing yourself
 

@@ -17,7 +17,9 @@ Status values:
 - `{ errored: ... }` — failed; inspect with `wait_agent` for details.
 - `shutdown` — dead, retained as a tombstone. Tombstone entries carry two
   extra fields: `cause` (`closed` — explicit close_agent; `killed_by_user_abort`
-  — a user interrupt cascaded to in-flight children; `linked_death` — a
+  — the explicit kill-tree primitive tore down in-flight children (a plain
+  user esc/abort does NOT cascade — it cancels the foreground turn only and
+  children keep running); `linked_death` — a
   link partner died) and `previous_status` (what the agent was doing when
   it died: `running` means killed mid-flight, `{ completed }` means closed
   after finishing cleanly). The last 32 dead agents per session are

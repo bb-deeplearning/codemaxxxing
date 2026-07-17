@@ -15,9 +15,10 @@ work. If the target is idle, the message wakes them now.
 ## Difference from send_message
 
 Same delivery path, different intent. send_message is FYI: it queues a
-message but does NOT trigger a turn — the recipient sees it whenever they
-next run. followup_task means "here's your next assignment" — it queues AND
-triggers, so the recipient picks it up immediately.
+message but does NOT trigger a turn for a child recipient — they see it
+whenever they next run (an idle ROOT is the exception: root wakes on any
+inbound message). followup_task means "here's your next assignment" — it
+queues AND triggers, so the recipient picks it up immediately.
 
 If your message is a request or instruction the recipient should act on,
 use followup_task. If it's a status update, context, or note the recipient

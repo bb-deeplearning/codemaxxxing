@@ -31,4 +31,4 @@ Two related tools live alongside `bash`. Pick the right surface for the work —
 
 ## Cost
 
-Each persistent process holds a slot in the 64-cap pool, a real PTY, and a 1 MiB head/tail output buffer. Cheap enough to spawn liberally; expensive enough to not fire-and-forget thousands. There is no explicit close — the LRU pruner reclaims slots as you spawn more, and everything dies with the project instance.
+Each persistent process holds a slot in the 64-cap pool, a real PTY, and a 1 MiB head/tail output buffer. Cheap enough to spawn liberally; expensive enough to not fire-and-forget thousands. There is no explicit close — the LRU pruner reclaims slots as you spawn more, and PTY sessions die with the project instance. The exception is `exec_command` with `detach: true`: detached daemons deliberately outlive the instance (own session, no PTY, no `session_id` — output goes to a log file, the pid is journaled, and survivors are reported on the next startup). You own killing those.

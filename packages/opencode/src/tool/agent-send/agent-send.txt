@@ -1,7 +1,9 @@
 Queue a plain-text message into another agent's mailbox. Fire-and-forget: the
-message lands in the recipient's inbox immediately, but the recipient does NOT
-wake up. They will see your message at the start of their next natural turn,
-when they drain their entire mailbox in delivery order.
+message lands in the recipient's inbox immediately. A child recipient does NOT
+wake up — they see your message at the start of their next natural turn, when
+they drain their entire mailbox in delivery order. Exception: a message
+targeted at an IDLE ROOT wakes it — root starts a turn to integrate the
+message (a mid-turn root picks it up at the next step boundary instead).
 
 Use send_message for context updates, FYI notes, and status that the recipient
 should know about but does not need to act on right now. Examples: "I finished
