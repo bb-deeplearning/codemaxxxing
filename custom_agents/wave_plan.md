@@ -11,62 +11,7 @@ permission:
     ".wave/**": allow
     ".gitignore": allow
   bash:
-    "*": ask
-    "rm *": deny
-    "rmdir *": deny
-    "mv *": deny
-    "cp *": deny
-    "chmod *": deny
-    "chown *": deny
-    "sudo *": deny
-    "git add *": deny
-    "git commit *": deny
-    "git push *": deny
-    "git reset *": deny
-    "git checkout *": deny
-    "git merge *": deny
-    "git rebase *": deny
-    "git stash *": deny
-    "git clean *": deny
-    "npm install *": deny
-    "npm run *": deny
-    "yarn *": deny
-    "pnpm *": deny
-    "bun install *": deny
-    "pip install *": deny
-    "brew *": deny
-    "wget *": deny
-    "mkdir *": allow
-    "ls *": allow
-    "find *": allow
-    "cat *": allow
-    "head *": allow
-    "tail *": allow
-    "wc *": allow
-    "file *": allow
-    "stat *": allow
-    "du *": allow
-    "tree *": allow
-    "diff *": allow
-    "sort *": allow
-    "uniq *": allow
-    "cut *": allow
-    "which *": allow
-    "echo *": allow
-    "pwd": allow
-    "realpath *": allow
-    "basename *": allow
-    "dirname *": allow
-    "git log *": allow
-    "git diff *": allow
-    "git show *": allow
-    "git blame *": allow
-    "git status *": allow
-    "git branch *": allow
-    "git rev-parse *": allow
-    "git ls-files *": allow
-    "git ls-tree *": allow
-    "git config *": allow
+    "*": allow
   task: allow
   read: allow
   glob: allow
