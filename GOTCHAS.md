@@ -61,6 +61,12 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | Cleaning up resources in tools when permission is rejected | `tool-context-ask-typed-as-void` |
 | Writing a standalone Bun script with `ManagedRuntime` | `managed-runtime-script-needs-process-exit` |
 | Capturing `ctx.ask` payloads from a multi-ask tool flow | `multi-ask-capture-needs-counter` |
+| Backgrounding a process from a PTY session (`cmd &`, nohup, daemons) | `pty-leader-exit-sighup-vs-nohup-race` |
+| Writing timing tests / benches against `Pty.read` or the process tools | `pty-read-collect-until-deadline-holds-full-window`, `pty-bench-baseline-vs-new-work` |
+| Shipping a new model-visible builtin tool | `tool-list-snapshot-needs-post-baseline-allowlist-entry` |
+| Reconstructing an `edit` oldString from memory instead of a fresh read | `edit-tool-fuzzy-match-can-apply-nonexistent-oldstring` |
+| Parsing binary headers at fixed offsets (image sniffing) | `image-header-parsers-must-validate-magic-bytes` |
+| Scripting `bun test` with explicit file paths | `bun-test-nonexistent-path-exits-zero` |
 
 ## By category — slugs with one-line summaries and line offsets
 
@@ -75,6 +81,8 @@ Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offs
 - L299 `bun-coverage-aggregation-flake` — `bun test --coverage <dir>/` can drop hits that single-file runs cover.
 - L355 `bun-test-coverage-source-file-arg-runs-zero-tests` — passing a source path silently runs zero tests, exit 0.
 - L378 `bun-test-test-dir-runs-baseline-orchestrator` — `bun test test/` reruns and overwrites frozen baseline JSON.
+- L1385 `bun-test-nonexistent-path-exits-zero` — a non-matching test path runs zero tests, exit 0; filtered output reads as green.
+- L1440 `tool-list-snapshot-needs-post-baseline-allowlist-entry` — new builtins must be declared in POST_BASELINE_ADDITIONS, never re-freeze the baseline.
 
 ### Effect v4 specifics
 - L517 `effect-v4-either-renamed-to-result` — `Either` → `Result`; `Effect.either` → `Effect.result`; `right`/`left` → `success`/`failure`.
@@ -109,6 +117,8 @@ Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offs
 - L748 `pty-create-term-override-tui-only` — `Pty.create`'s `TERM=xterm-256color` overlay must gate on `origin === "tui"`.
 - L731 `pty-bench-baseline-vs-new-work` — combining new work into an existing baseline metric is apples-to-oranges; split metrics.
 - L1013 `tty-line-discipline-echo-defeats-clamp-timing-tests` — TTY echo wakes `Pty.read` early; verify clamps at the unit level.
+- L1418 `pty-leader-exit-sighup-vs-nohup-race` — `&` children die at leader exit; nohup races its own signal setup; use `detach: true`.
+- L1429 `pty-read-collect-until-deadline-holds-full-window` — data-present reads hold the full window since 2026-07-18; idleMs <= 0 drains instantly.
 
 ### Bench methodology
 - L663 `opentui-render-bench-noise-needs-best-of-n` — opentui `renderOnce` benches need best-of-3 to suppress noise.
@@ -139,6 +149,12 @@ Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offs
 
 ### Cross-codebase porting
 - L452 `codex-role-vocabulary-imported-verbatim` — when porting concepts from a reference codebase, map them to host primitives; never invent new vocabulary that conflicts. Tests must assert real behavior, not just propagation.
+
+### Edit tool discipline
+- L1396 `edit-tool-fuzzy-match-can-apply-nonexistent-oldstring` — a reconstructed oldString can partial-match and leave orphaned stale code; re-read after every non-copied edit.
+
+### Binary parsing
+- L1407 `image-header-parsers-must-validate-magic-bytes` — fixed-offset header reads without signature checks turn garbage into billion-pixel dimensions.
 
 ### Scripts / runtime lifecycle
 - L587 `managed-runtime-script-needs-process-exit` — Bun scripts using `ManagedRuntime` hang after `dispose()`; explicit `process.exit(0)` required.
@@ -1363,5 +1379,71 @@ permission: Permission.merge(
 - **Per-call `ctx.ask` payloads**: change the literal `permission:` field once (in the tool's `PermissionKey` constant); `Permission.disabled` already routes through the group key; `Permission.ask` evaluates with the same key the ctx.ask carries, so the per-call ask resolves consistently.
 
 **See:** `packages/opencode/src/agent/agent.ts` (Wave 3 of replace-bash-task-2026-05-15) — plan and explore agents both dual-write per-friend + group-key rules. Related: `permission-fixture-order-rule-must-precede-specific-via-findlast` (the `findLast` semantics that shape both disabled() and evaluate()).
+
+---
+
+### `bun-test-nonexistent-path-exits-zero`
+
+**Severity:** DX-trap
+**When:** Running `bun test <path>` where the path matches no test files (typo, renamed file — e.g. `compaction-media.test.ts` vs the real `compaction.test.ts`).
+**Symptom:** Zero tests run, exit code 0. Piped through `grep fail`, the empty output reads as "no failures" — a broken path masquerades as a green suite and a diagnosis proceeds on phantom evidence.
+**Fix:** Treat "no tests ran" as failure: require a non-zero `N pass` count in the output before drawing conclusions, or `ls` the path first when scripting.
+**Why:** bun's runner treats a non-matching path argument as an empty filter, not an error. Same family as the `--coverage` source-path variant.
+**See:** 2026-07-18 diagnostic session (compaction investigation nearly stalled on a phantom green run). Related: [bun-test-coverage-source-file-arg-runs-zero-tests].
+
+---
+
+### `edit-tool-fuzzy-match-can-apply-nonexistent-oldstring`
+
+**Severity:** correctness-bug
+**When:** Calling the `edit` tool with a hand-reconstructed `oldString` (from memory or a stale read) instead of content copied from a fresh read.
+**Symptom:** The edit reports success even though the `oldString` never existed verbatim. The file ends up with `newString` applied at a partial-match site PLUS an orphaned stale block of old code left dangling after it (unbalanced braces, duplicated logic).
+**Fix:** Re-read the edited region immediately after any edit whose `oldString` was reconstructed rather than copied. Treat "Edit applied successfully" as unverified until the follow-up read confirms the shape. Root fix (open follow-up): enforce exact-match in the edit pipeline or echo a diff of what was actually replaced.
+**Why:** The edit pipeline falls back to lenient matching when the exact string is absent; a close-enough prefix anchors the replacement mid-structure and the unmatched suffix of the intended `oldString` survives as orphaned code.
+**See:** `packages/opencode/src/tool/process/write-stdin.ts` corruption on 2026-07-18 — duplicated tail excised in the same session only because of an immediate re-read.
+
+---
+
+### `image-header-parsers-must-validate-magic-bytes`
+
+**Severity:** correctness-bug
+**When:** Writing or extending binary header parsers that read fields at fixed offsets (image dimension sniffing, file-type detection).
+**Symptom:** Arbitrary bytes "parse" into wild field values. Concrete case: `readPngDimensions` skipped the PNG signature check — base64 garbage labeled `image/png` parsed to ~1.7 BILLION px, `checkDataUrlOversized` flagged it oversized, and valid attachments were silently stripped from model history. Surfaced indirectly as the compaction media-budget test failing on `tail_start_id` (the stripped placeholder weighed ~20 tokens, so the tail fit the preserve budget and the full-summary fallback never fired).
+**Fix:** Validate the format's magic bytes AND the relevant chunk/segment type before trusting offsets; return `undefined` for anything else (caller contract: unknown → let it through).
+**Why:** Fixed-offset reads have no inherent validity signal — every 24+ byte buffer "has" a width at offset 16. Of the four readers in `image-resize.ts`, only PNG lacked the check; JPEG/GIF/WebP validated signatures and never misfired.
+**See:** `packages/opencode/src/util/image-resize.ts` (fixed 2026-07-18); regressions in `test/util/image-resize.test.ts`.
+
+---
+
+### `pty-leader-exit-sighup-vs-nohup-race`
+
+**Severity:** API-quirk (correctness for anything backgrounding processes)
+**When:** Backgrounding processes from `exec_command`/PTY sessions (`cmd &`, `nohup cmd &`), or writing tests that assert daemon survival.
+**Symptom:** Plain `&` children die the moment the session's shell exits — kernel SIGHUP to the foreground process group at session-leader exit. `nohup` is a RACE, not a guarantee: it only protects after installing SIG_IGN, so with a fast-exiting leader (`sh -c 'nohup x & echo done'`, leader alive ~20ms) the HUP wins and the child dies anyway; with the leader alive ≥~1s it survives. `disown` in a held tty session survives everything including instance restart — and becomes an untracked orphan. Bonus trap: `setsid(1)` does not exist on macOS, so shell-level setsid experiments silently test nothing.
+**Fix:** Use `exec_command { detach: true }` for anything that must survive (own session via detached spawn, no controlling terminal, pid journaled, orphans reported on next startup). In tests, never probe nohup semantics through a fast-exiting wrapper shell.
+**Why:** node-pty children are session leaders on their PTY; POSIX delivers SIGHUP to the foreground pgrp at leader exit, and non-job-control shells leave background children in that pgrp. Signal-setup latency vs leader lifetime decides nohup's fate — characterized empirically 2026-07-17/18 (child dead at ~20ms leader lifetime; alive at 1.8s).
+**See:** `CHANGES/2026-07-18-truthful-tools.md` (B4-3); `exec-command.txt` daemonization bullet.
+
+---
+
+### `pty-read-collect-until-deadline-holds-full-window`
+
+**Severity:** API-quirk (test timing + perf benches)
+**When:** Writing tests, benches, or tools against `Pty.read` / `exec_command` / `write_stdin` timing.
+**Symptom:** Since 2026-07-18, a read with pending data does NOT return on the first chunk — it collects until the idle deadline elapses or the process exits (plus ~100ms trailing grace on fresh exits). Timing assertions written for the old first-byte-return semantics fail; perf baselines frozen pre-change blow their budgets because data-present reads now hold the full window by design.
+**Fix:** For instant drains of already-retained bytes, pass `idleMs <= 0` (write_stdin does this for `since_cursor` range reads). For benches, split metrics against the frozen baseline per [pty-bench-baseline-vs-new-work] instead of waiving budgets. Expect one-shot commands to return AT exit (fast) and long-running spawns to hold the full window.
+**Why:** The old single-race first-byte return misreported fast-exiting commands as running (no exit_code, +1 poll per one-shot) and truncated bursts mid-stream. The collect loop is the documented codex contract, wired 2026-07-18.
+**See:** `packages/opencode/src/pty/index.ts` (`read`). Related: [tty-line-discipline-echo-defeats-clamp-timing-tests], [pty-bench-baseline-vs-new-work].
+
+---
+
+### `tool-list-snapshot-needs-post-baseline-allowlist-entry`
+
+**Severity:** DX-trap
+**When:** Shipping a new model-visible builtin tool (`registry.ts` builtin array).
+**Symptom:** `test/integration/tool-surface-replacement.test.ts › model-tool-list-snapshot-matches-post-Wave-4-shape` fails for every agent with your new tool id in the `undeclared` array.
+**Fix:** Add the id to `POST_BASELINE_ADDITIONS` in that test with a dated comment. Do NOT re-freeze the campaign baseline artifact and do NOT loosen the core comparison — forcing this declaration is the test's entire job.
+**Why:** The snapshot separates the frozen May-15 core (must match the baseline exactly) from declared additions; anything in neither set is treated as a leaked tool. Pre-2026-07-18 the test used a single asymmetric `toEqual` and had been silently red since actor-discipline added four tools.
+**See:** `test/integration/tool-surface-replacement.test.ts` (`POST_BASELINE_ADDITIONS`).
 
 ---
