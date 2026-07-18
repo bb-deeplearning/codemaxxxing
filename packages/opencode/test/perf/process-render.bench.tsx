@@ -36,7 +36,10 @@ import { bench, type BenchResult } from "../lib/perf"
 const FAKE_THEME: ProcessTheme = {
   text: RGBA.fromHex("#ffffff"),
   textMuted: RGBA.fromHex("#888888"),
-  accent: RGBA.fromHex("#00ff00"),
+  background: RGBA.fromHex("#101010"),
+  primary: RGBA.fromHex("#00ff00"),
+  success: RGBA.fromHex("#00cc66"),
+  warning: RGBA.fromHex("#ffcc00"),
   error: RGBA.fromHex("#ff0000"),
 }
 

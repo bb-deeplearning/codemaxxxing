@@ -1,21 +1,22 @@
 import { createStore } from "solid-js/store"
 import { createMemo, createSignal, For, Show } from "solid-js"
-import { useKeyboard } from "@opentui/solid"
+import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
 import { useKeybind } from "../../context/keybind"
 import { useTheme } from "../../context/theme"
 import type { QuestionAnswer, QuestionRequest } from "@opencode-ai/sdk/v2"
 import { useSDK } from "../../context/sdk"
-import { LabeledRule, Rule } from "../../component/border"
 import { useTextareaKeybindings } from "../../component/textarea-keybindings"
 import { useDialog } from "../../ui/dialog"
 import { inlineSafe } from "../../util/inline-safe"
+import { clampRule, fadeRule, RULE, sinkColor, Spans, type GlowSpan } from "@tui/ui/glow"
 
 export function QuestionPrompt(props: { request: QuestionRequest }) {
   const sdk = useSDK()
   const { theme } = useTheme()
   const keybind = useKeybind()
   const bindings = useTextareaKeybindings()
+  const dimensions = useTerminalDimensions()
 
   const questions = createMemo(() => props.request.questions)
   const single = createMemo(() => questions().length === 1 && questions()[0]?.multiple !== true)
@@ -252,247 +253,239 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
     }
   })
 
+  // the dissolving rule under the question title (asksD, glow.ts:146) —
+  // info heat, RULE.ask wide, clamped inside the route's 4 cols of padding.
+  const ruleSpans = createMemo(() => fadeRule(theme, theme.info, clampRule(RULE.ask, dimensions().width - 4)))
+
+  // one dim hint line: keys in text, labels dim. no rules, no glyphs.
+  const hintSpans = createMemo<GlowSpan[]>(() => {
+    const spans: GlowSpan[] = []
+    if (!confirm()) {
+      spans.push({ text: "1-9", fg: theme.text }, { text: " pick · ", fg: theme.textMuted })
+    }
+    spans.push(
+      { text: "enter", fg: theme.text },
+      { text: !confirm() && multi() ? " toggle · " : " confirm · ", fg: theme.textMuted },
+      { text: "esc", fg: theme.text },
+      { text: " dismiss", fg: theme.textMuted },
+    )
+    if (!single()) {
+      spans.push({ text: " · ", fg: theme.textMuted }, { text: "tab", fg: theme.text }, { text: " switch", fg: theme.textMuted })
+    }
+    return spans
+  })
+
   return (
     <box flexDirection="column" flexShrink={0}>
-      {/* top interruption rule */}
-      <Rule color={theme.accent} />
-      <box paddingTop={1} paddingLeft={1} paddingRight={1} gap={1}>
-        <Show when={!single()}>
-          <box flexDirection="row" gap={2}>
-            <For each={questions()}>
-              {(q, index) => {
-                const isActive = () => index() === store.tab
-                const isAnswered = () => (store.answers[index()]?.length ?? 0) > 0
-                const isHover = () => tabHover() === index()
-                const labelFg = () => {
-                  if (isActive()) return theme.accent
-                  if (isHover()) return theme.text
-                  if (isAnswered()) return theme.text
-                  return theme.textMuted
-                }
-                return (
-                  <box
-                    onMouseOver={() => setTabHover(index())}
-                    onMouseOut={() => setTabHover(null)}
-                    onMouseUp={() => selectTab(index())}
-                  >
-                    <text>
-                      <span style={{ fg: labelFg(), bold: isActive() }}>
-                        {isActive() ? "▸ " : "  "}
-                        {/* Sanitize via inlineSafe — header is LLM-supplied
-                            and lands inside a flex-row tab strip. Multi-
-                            line / multi-KB content would trip opentui's
-                            flex layout-budget freeze. See
-                            specs/tui-render-freeze.md. */}
-                        {inlineSafe(q.header, 60)}
-                      </span>
-                    </text>
-                  </box>
-                )
-              }}
-            </For>
-            <box
-              onMouseOver={() => setTabHover("confirm")}
-              onMouseOut={() => setTabHover(null)}
-              onMouseUp={() => selectTab(questions().length)}
-            >
-              <text>
-                <span
-                  style={{
-                    fg: confirm() ? theme.accent : tabHover() === "confirm" ? theme.text : theme.textMuted,
-                    bold: confirm(),
-                  }}
-                >
-                  {confirm() ? "▸ " : "  "}confirm
-                </span>
-              </text>
-            </box>
-          </box>
-        </Show>
-
-        <Show when={!confirm()}>
-          <box gap={1}>
-            <text fg={theme.text}>
-              {question()?.question}
-              {multi() ? (
-                <>
-                  <span style={{ fg: theme.textMuted }}> · select all that apply</span>
-                </>
-              ) : (
-                ""
-              )}
-            </text>
-            <box>
-              <For each={options()}>
-                {(opt, i) => {
-                  const active = () => i() === store.selected
-                  const picked = () => store.answers[store.tab]?.includes(opt.label) ?? false
-                  const hover = () => optionHover() === i()
-                  const numFg = () => (active() ? theme.secondary : hover() ? theme.text : theme.textMuted)
-                  const labelFg = () => {
-                    if (active()) return theme.secondary
-                    if (picked()) return theme.success
-                    return theme.text
-                  }
-                  return (
-                    <box
-                      flexDirection="row"
-                      onMouseOver={() => {
-                        setOptionHover(i())
-                        moveTo(i())
-                      }}
-                      onMouseOut={() => setOptionHover(null)}
-                      onMouseDown={() => moveTo(i())}
-                      onMouseUp={() => selectOption()}
-                    >
-                      <text flexShrink={0}>
-                        <span style={{ fg: active() ? theme.secondary : theme.textMuted, bold: active() }}>
-                          {active() ? "▸ " : "  "}
-                        </span>
-                        <span style={{ fg: numFg() }}>{i() + 1}.</span>{" "}
-                        <span style={{ fg: labelFg(), bold: active() }}>
-                          {/* Both label and description are LLM-supplied
-                              and land inside this flex-row option strip.
-                              Sanitize via inlineSafe to keep the row
-                              measurement bounded — see
-                              specs/tui-render-freeze.md. Cap is generous
-                              (200) because options are user-facing
-                              actionable text and short truncation hurts UX
-                              more than it costs to keep the layout stable. */}
-                          {multi() ? `[${picked() ? "✓" : " "}] ${inlineSafe(opt.label, 200)}` : inlineSafe(opt.label, 200)}
-                        </span>
-                        <Show when={!multi() && picked()}>
-                          <span style={{ fg: theme.success }}> ✓</span>
-                        </Show>
-                        <Show when={opt.description}>
-                          <span style={{ fg: theme.textMuted }}> · {inlineSafe(opt.description, 200)}</span>
-                        </Show>
-                      </text>
-                    </box>
-                  )
-                }}
-              </For>
-              <Show when={custom()}>
+      {/* air above the ask instead of a rule */}
+      <box height={1} flexShrink={0} />
+      <Show when={!single()}>
+        <box flexDirection="row" flexShrink={0}>
+          <For each={questions()}>
+            {(q, index) => {
+              const isActive = () => index() === store.tab
+              const isAnswered = () => (store.answers[index()]?.length ?? 0) > 0
+              const isHover = () => tabHover() === index()
+              const labelFg = () => {
+                if (isActive()) return theme.text
+                if (isHover()) return theme.text
+                if (isAnswered()) return theme.textMuted
+                return sinkColor(theme, 1)
+              }
+              return (
                 <box
+                  onMouseOver={() => setTabHover(index())}
+                  onMouseOut={() => setTabHover(null)}
+                  onMouseUp={() => selectTab(index())}
+                >
+                  <text wrapMode="none" flexShrink={0}>
+                    <Show when={index() > 0}>
+                      <span style={{ fg: theme.textMuted }}>{" · "}</span>
+                    </Show>
+                    {/* Sanitize via inlineSafe — header is LLM-supplied
+                        and lands inside a flex-row tab strip. Multi-
+                        line / multi-KB content would trip opentui's
+                        flex layout-budget freeze. See
+                        specs/tui-render-freeze.md. */}
+                    <span style={{ fg: labelFg(), bold: isActive() }}>{inlineSafe(q.header, 60)}</span>
+                  </text>
+                </box>
+              )
+            }}
+          </For>
+          <box
+            onMouseOver={() => setTabHover("confirm")}
+            onMouseOut={() => setTabHover(null)}
+            onMouseUp={() => selectTab(questions().length)}
+          >
+            <text wrapMode="none" flexShrink={0}>
+              <span style={{ fg: theme.textMuted }}>{" · "}</span>
+              <span
+                style={{
+                  fg: confirm() ? theme.text : tabHover() === "confirm" ? theme.text : sinkColor(theme, 1),
+                  bold: confirm(),
+                }}
+              >
+                confirm
+              </span>
+            </text>
+          </box>
+        </box>
+        <box height={1} flexShrink={0} />
+      </Show>
+
+      <Show when={!confirm()}>
+        <text flexShrink={0}>
+          <span style={{ fg: theme.text, bold: true }}>{inlineSafe(question()?.question)}</span>
+          <Show when={multi()}>
+            <span style={{ fg: theme.textMuted }}> · select all that apply</span>
+          </Show>
+        </text>
+        <text wrapMode="none" flexShrink={0} selectable={false}>
+          <Spans spans={ruleSpans()} />
+        </text>
+        <box paddingLeft={2}>
+          <For each={options()}>
+            {(opt, i) => {
+              const active = () => i() === store.selected
+              const picked = () => store.answers[store.tab]?.includes(opt.label) ?? false
+              const hover = () => optionHover() === i()
+              // the last visual row sinks into the dark; the custom row
+              // takes that role when it exists.
+              const isLast = () => !custom() && i() === options().length - 1
+              const labelFg = () => {
+                if (picked()) return theme.success
+                if (active()) return theme.text
+                if (hover()) return theme.text
+                if (isLast()) return sinkColor(theme, 1)
+                return theme.textMuted
+              }
+              const numFg = () => (active() ? theme.primary : labelFg())
+              return (
+                <box
+                  flexDirection="row"
                   onMouseOver={() => {
-                    setOptionHover(options().length)
-                    moveTo(options().length)
+                    setOptionHover(i())
+                    moveTo(i())
                   }}
                   onMouseOut={() => setOptionHover(null)}
-                  onMouseDown={() => moveTo(options().length)}
+                  onMouseDown={() => moveTo(i())}
                   onMouseUp={() => selectOption()}
                 >
+                  <text flexShrink={0}>
+                    <span style={{ fg: numFg(), bold: active() }}>{i() + 1} </span>
+                    <span style={{ fg: labelFg() }}>
+                      {/* Both label and description are LLM-supplied
+                          and land inside this flex-row option strip.
+                          Sanitize via inlineSafe to keep the row
+                          measurement bounded — see
+                          specs/tui-render-freeze.md. Cap is generous
+                          (200) because options are user-facing
+                          actionable text and short truncation hurts UX
+                          more than it costs to keep the layout stable. */}
+                      {inlineSafe(opt.label, 200)}
+                    </span>
+                    <Show when={multi() && picked()}>
+                      <span style={{ fg: theme.textMuted }}> · picked</span>
+                    </Show>
+                    <Show when={opt.description}>
+                      <span style={{ fg: theme.textMuted }}> · {inlineSafe(opt.description, 200)}</span>
+                    </Show>
+                  </text>
+                </box>
+              )
+            }}
+          </For>
+          <Show when={custom()}>
+            <box
+              onMouseOver={() => {
+                setOptionHover(options().length)
+                moveTo(options().length)
+              }}
+              onMouseOut={() => setOptionHover(null)}
+              onMouseDown={() => moveTo(options().length)}
+              onMouseUp={() => selectOption()}
+            >
+              {(() => {
+                const hover = () => optionHover() === options().length
+                const labelFg = () => {
+                  if (customPicked()) return theme.success
+                  if (other()) return theme.text
+                  if (hover()) return theme.text
+                  return sinkColor(theme, 1)
+                }
+                const numFg = () => (other() ? theme.primary : labelFg())
+                return (
                   <box flexDirection="row">
                     <text flexShrink={0}>
-                      <span style={{ fg: other() ? theme.secondary : theme.textMuted, bold: other() }}>
-                        {other() ? "▸ " : "  "}
-                      </span>
-                      <span
-                        style={{
-                          fg: other()
-                            ? theme.secondary
-                            : optionHover() === options().length
-                              ? theme.text
-                              : theme.textMuted,
-                        }}
-                      >
-                        {options().length + 1}.
-                      </span>{" "}
-                      <span
-                        style={{
-                          fg: other() ? theme.secondary : customPicked() ? theme.success : theme.text,
-                          bold: other(),
-                        }}
-                      >
-                        {multi() ? `[${customPicked() ? "✓" : " "}] type your own answer` : "type your own answer"}
-                      </span>
-                      <Show when={!multi() && customPicked()}>
-                        <span style={{ fg: theme.success }}> ✓</span>
+                      <span style={{ fg: numFg(), bold: other() }}>{options().length + 1} </span>
+                      <span style={{ fg: labelFg() }}>type your own answer</span>
+                      <Show when={multi() && customPicked()}>
+                        <span style={{ fg: theme.textMuted }}> · picked</span>
                       </Show>
                     </text>
                   </box>
-                  <Show when={store.editing}>
-                    <box paddingLeft={5}>
-                      <textarea
-                        ref={(val: TextareaRenderable) => {
-                          textarea = val
-                          val.traits = { status: "ANSWER" }
-                          queueMicrotask(() => {
-                            val.focus()
-                            val.gotoLineEnd()
-                          })
-                        }}
-                        initialValue={input()}
-                        placeholder="type your own answer"
-                        placeholderColor={theme.textMuted}
-                        minHeight={1}
-                        maxHeight={6}
-                        textColor={theme.text}
-                        focusedTextColor={theme.text}
-                        cursorColor={theme.primary}
-                        keyBindings={bindings()}
-                      />
-                    </box>
-                  </Show>
-                  <Show when={!store.editing && input()}>
-                    <box paddingLeft={5}>
-                      <text fg={theme.textMuted}>{input()}</text>
-                    </box>
-                  </Show>
+                )
+              })()}
+              <Show when={store.editing}>
+                <box paddingLeft={2}>
+                  <textarea
+                    ref={(val: TextareaRenderable) => {
+                      textarea = val
+                      val.traits = { status: "ANSWER" }
+                      queueMicrotask(() => {
+                        val.focus()
+                        val.gotoLineEnd()
+                      })
+                    }}
+                    initialValue={input()}
+                    placeholder="type your own answer"
+                    placeholderColor={theme.textMuted}
+                    minHeight={1}
+                    maxHeight={6}
+                    textColor={theme.text}
+                    focusedTextColor={theme.text}
+                    cursorColor={theme.primary}
+                    keyBindings={bindings()}
+                  />
+                </box>
+              </Show>
+              <Show when={!store.editing && input()}>
+                <box paddingLeft={2}>
+                  <text fg={theme.textMuted}>{input()}</text>
                 </box>
               </Show>
             </box>
-          </box>
-        </Show>
+          </Show>
+        </box>
+      </Show>
 
-        <Show when={confirm() && !single()}>
-          <text fg={theme.textMuted}>r e v i e w</text>
-          <Rule />
-          <box gap={0}>
-            <For each={questions()}>
-              {(q, index) => {
-                const value = () => store.answers[index()]?.join(", ") ?? ""
-                const answered = () => Boolean(value())
-                return (
-                  <text>
-                    <span style={{ fg: theme.textMuted }}>{q.header}</span>{" "}
-                    <span style={{ fg: answered() ? theme.text : theme.error }}>
-                      {answered() ? value() : "(not answered)"}
-                    </span>
-                  </text>
-                )
-              }}
-            </For>
-          </box>
-        </Show>
-      </box>
-      {/* bottom interruption rule + keybind hints */}
-      <LabeledRule
-        color={theme.accent}
-        right={
-          <box flexDirection="row" gap={2} flexShrink={0}>
-            <Show when={!single()}>
-              <text>
-                <span style={{ fg: theme.text }}>tab</span> <span style={{ fg: theme.textMuted }}>switch</span>
-              </text>
-            </Show>
-            <Show when={!confirm()}>
-              <text>
-                <span style={{ fg: theme.text }}>↑↓</span> <span style={{ fg: theme.textMuted }}>select</span>
-              </text>
-            </Show>
-            <text>
-              <span style={{ fg: theme.text }}>enter</span>{" "}
-              <span style={{ fg: theme.textMuted }}>
-                {confirm() ? "submit" : multi() ? "toggle" : single() ? "submit" : "confirm"}
-              </span>
-            </text>
-            <text>
-              <span style={{ fg: theme.text }}>esc</span> <span style={{ fg: theme.textMuted }}>dismiss</span>
-            </text>
-          </box>
-        }
-      />
+      <Show when={confirm() && !single()}>
+        <text fg={theme.textMuted}>review</text>
+        <box paddingLeft={2}>
+          <For each={questions()}>
+            {(q, index) => {
+              const value = () => store.answers[index()]?.join(", ") ?? ""
+              const answered = () => Boolean(value())
+              return (
+                <text>
+                  <span style={{ fg: theme.textMuted }}>{inlineSafe(q.header, 60)}</span>{" "}
+                  <span style={{ fg: answered() ? theme.text : theme.error }}>
+                    {answered() ? inlineSafe(value(), 200) : "(not answered)"}
+                  </span>
+                </text>
+              )
+            }}
+          </For>
+        </box>
+      </Show>
+
+      <text wrapMode="none" flexShrink={0}>
+        <Spans spans={hintSpans()} />
+      </text>
+      {/* air below the ask so the hint line never sits on the bottom
+          edge's rule — loud objects breathe (spec: air is structure). */}
+      <box height={1} flexShrink={0} />
     </box>
   )
 }

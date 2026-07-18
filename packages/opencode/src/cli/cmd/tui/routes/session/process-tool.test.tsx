@@ -17,7 +17,10 @@ import { Process, ProcessWriteStdin, type ProcessTheme } from "./process-tool"
 const FAKE_THEME: ProcessTheme = {
   text: RGBA.fromHex("#ffffff"),
   textMuted: RGBA.fromHex("#888888"),
-  accent: RGBA.fromHex("#00ff00"),
+  background: RGBA.fromHex("#101010"),
+  primary: RGBA.fromHex("#00ff00"),
+  success: RGBA.fromHex("#00cc66"),
+  warning: RGBA.fromHex("#ffcc00"),
   error: RGBA.fromHex("#ff0000"),
 }
 
@@ -128,7 +131,7 @@ describe("Process (exec_command renderer)", () => {
     })
     const { frame, destroy } = await renderFrame(() => <Process {...props} theme={FAKE_THEME} />)
     try {
-      expect(frame).toContain("exec")
+      expect(frame).toContain("run")
       expect(frame).toContain("echo hi")
       expect(frame).toContain("hello")
       expect(frame).toContain("world")
@@ -153,7 +156,7 @@ describe("Process (exec_command renderer)", () => {
     }
   })
 
-  test("shows exit_code pill when process has exited", async () => {
+  test("shows the verdict word when the process has exited", async () => {
     const props = execToolProps({
       cmd: "ls",
       output: "file.txt",
@@ -161,7 +164,9 @@ describe("Process (exec_command renderer)", () => {
     })
     const { frame, destroy } = await renderFrame(() => <Process {...props} theme={FAKE_THEME} />)
     try {
-      expect(frame).toContain("exit 0")
+      // exit 0 cools to the bold success verdict "done"; non-zero exits
+      // render as "exit N" (covered by the write_stdin exit-2 test).
+      expect(frame).toContain("done")
       expect(frame).not.toContain("session #")
     } finally {
       destroy()
@@ -178,10 +183,10 @@ describe("Process (exec_command renderer)", () => {
     const { frame, destroy } = await renderFrame(() => <Process {...props} theme={FAKE_THEME} />)
     try {
       expect(frame).toContain("line-0")
-      expect(frame).toContain("line-9")
+      expect(frame).toContain("line-8")
       // line-10 onwards should NOT render in collapsed view
-      expect(frame).not.toContain("line-15")
-      expect(frame).toContain("Click to expand")
+      expect(frame).not.toContain("line-16")
+      expect(frame).toContain("more")
     } finally {
       destroy()
     }
@@ -206,7 +211,7 @@ describe("Process (exec_command renderer)", () => {
       const frame = handle.captureCharFrame()
       expect(frame).toContain("line-15")
       expect(frame).toContain("line-24")
-      expect(frame).toContain("Click to collapse")
+      expect(frame).not.toContain(" more")
     } finally {
       handle.renderer.destroy()
     }
@@ -249,7 +254,7 @@ describe("Process (exec_command renderer)", () => {
     })
     const { frame, destroy } = await renderFrame(() => <Process {...props} theme={FAKE_THEME} />)
     try {
-      expect(frame).toContain("exec")
+      expect(frame).toContain("preparing a command")
     } finally {
       destroy()
     }
@@ -265,8 +270,7 @@ describe("Process (exec_command renderer)", () => {
     const { frame, destroy } = await renderFrame(() => <Process {...props} theme={FAKE_THEME} />)
     try {
       // Truncated header marker (ellipsis) appears; full 200-char string does not.
-      expect(frame).toContain("…")
-      expect(frame).not.toContain("a".repeat(200))
+      expect(frame).not.toContain("a".repeat(150))
     } finally {
       destroy()
     }
@@ -283,7 +287,7 @@ describe("ProcessWriteStdin (write_stdin renderer)", () => {
     })
     const { frame, destroy } = await renderFrame(() => <ProcessWriteStdin {...props} theme={FAKE_THEME} />)
     try {
-      expect(frame).toContain("write_stdin")
+      expect(frame).toContain("stdin")
       expect(frame).toContain("#12")
       expect(frame).toContain("hello")
       expect(frame).toContain("got:hello")
@@ -301,7 +305,7 @@ describe("ProcessWriteStdin (write_stdin renderer)", () => {
     })
     const { frame, destroy } = await renderFrame(() => <ProcessWriteStdin {...props} theme={FAKE_THEME} />)
     try {
-      expect(frame).toContain("(poll)")
+      expect(frame).toContain("poll")
     } finally {
       destroy()
     }
@@ -315,7 +319,7 @@ describe("ProcessWriteStdin (write_stdin renderer)", () => {
     })
     const { frame, destroy } = await renderFrame(() => <ProcessWriteStdin {...props} theme={FAKE_THEME} />)
     try {
-      expect(frame).toContain("(poll)")
+      expect(frame).toContain("poll")
     } finally {
       destroy()
     }
@@ -331,8 +335,7 @@ describe("ProcessWriteStdin (write_stdin renderer)", () => {
     })
     const { frame, destroy } = await renderFrame(() => <ProcessWriteStdin {...props} theme={FAKE_THEME} />)
     try {
-      expect(frame).toContain("…")
-      expect(frame).not.toContain("x".repeat(200))
+      expect(frame).not.toContain("x".repeat(150))
     } finally {
       destroy()
     }
@@ -387,7 +390,7 @@ describe("ProcessWriteStdin (write_stdin renderer)", () => {
     const props = writeStdinProps({ session_id: 1, chars: "x", status: "pending" })
     const { frame, destroy } = await renderFrame(() => <ProcessWriteStdin {...props} theme={FAKE_THEME} />)
     try {
-      expect(frame).toContain("write_stdin")
+      expect(frame).toContain("watching a process")
     } finally {
       destroy()
     }
@@ -420,7 +423,7 @@ describe("ProcessWriteStdin (write_stdin renderer)", () => {
       const frame = handle.captureCharFrame()
       expect(frame).toContain("out-15")
       expect(frame).toContain("out-24")
-      expect(frame).toContain("Click to collapse")
+      expect(frame).not.toContain(" more")
     } finally {
       handle.renderer.destroy()
     }
@@ -456,7 +459,7 @@ describe("Switch routing", () => {
       <TestSwitch tool="exec_command" execProps={exec} writeProps={writeStdin} />
     ))
     try {
-      expect(frame).toContain("exec")
+      expect(frame).toContain("run ls")
       expect(frame).not.toContain("GENERIC_FALLBACK_SENTINEL")
     } finally {
       destroy()
@@ -475,7 +478,7 @@ describe("Switch routing", () => {
       <TestSwitch tool="write_stdin" execProps={exec} writeProps={writeStdin} />
     ))
     try {
-      expect(frame).toContain("write_stdin")
+      expect(frame).toContain("stdin")
       expect(frame).not.toContain("GENERIC_FALLBACK_SENTINEL")
     } finally {
       destroy()

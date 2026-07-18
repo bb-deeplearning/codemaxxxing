@@ -164,9 +164,14 @@ export function CommandProvider(props: ParentProps) {
 
 function DialogCommand(props: { options: CommandOption[]; suggestedOptions: CommandOption[] }) {
   let ref: DialogSelectRef<string>
+  // command titles are chrome, and chrome is lowercase (afterglow
+  // typography) — display-only, the registry keeps its original strings.
+  const lower = (options: CommandOption[]) => options.map((o) => ({ ...o, title: o.title.toLowerCase() }))
   const list = () => {
-    if (ref?.filter) return props.options
-    return [...props.suggestedOptions, ...props.options]
+    if (ref?.filter) return lower(props.options)
+    return lower([...props.suggestedOptions, ...props.options])
   }
-  return <DialogSelect ref={(r) => (ref = r)} title="commands" options={list()} />
+  // presentation rides on DialogSelect (the afterglow list template); the
+  // palette's hint verb is "run" — commands execute, they aren't picked.
+  return <DialogSelect ref={(r) => (ref = r)} title="commands" options={list()} selectLabel="run" />
 }

@@ -6,6 +6,12 @@ import { useRoute } from "@tui/context/route"
 
 const id = "internal:home-footer"
 
+// afterglow footer: one dim lowercase sentence, no glyphs — status is
+// words-in-color (specs/tui-redesign.md typography). segments are short
+// single-line texts in a flex row with gap; each conditional segment
+// carries its own "· " separator span so the sentence stays coherent as
+// segments come and go.
+
 function Directory(props: { api: TuiPluginApi }) {
   const theme = () => props.api.theme.current
   const dir = createMemo(() => {
@@ -16,7 +22,11 @@ function Directory(props: { api: TuiPluginApi }) {
     return out
   })
 
-  return <text fg={theme().textMuted}>{dir()}</text>
+  return (
+    <text fg={theme().textMuted} wrapMode="none" flexShrink={1}>
+      {dir()}
+    </text>
+  )
 }
 
 function Mcp(props: { api: TuiPluginApi }) {
@@ -28,30 +38,20 @@ function Mcp(props: { api: TuiPluginApi }) {
 
   return (
     <Show when={has()}>
-      <box gap={1} flexDirection="row" flexShrink={0}>
-        <text fg={theme().text}>
-          <Switch>
-            <Match when={err()}>
-              <span style={{ fg: theme().error }}>⊙ </span>
-            </Match>
-            <Match when={true}>
-              <span style={{ fg: count() > 0 ? theme().success : theme().textMuted }}>⊙ </span>
-            </Match>
-          </Switch>
-          {count()} MCP
-        </text>
-        <text fg={theme().textMuted}>/status</text>
-      </box>
+      <text flexShrink={0}>
+        <span style={{ fg: theme().textMuted }}>· </span>
+        <span style={{ fg: err() ? theme().error : theme().textMuted }}>{count()} mcp</span>
+      </text>
     </Show>
   )
 }
 
-function WavePill(props: { api: TuiPluginApi }) {
+function Wave(props: { api: TuiPluginApi }) {
   const theme = () => props.api.theme.current
   const wave = useWave()
   const route = useRoute()
   // Engage the (otherwise inert) wave context only when the home footer
-  // is mounted and we want to show pill state. One discovery fetch +
+  // is mounted and we want to show wave state. One discovery fetch +
   // arms polling for live updates while home is open. release() on
   // cleanup stops polling when leaving home — sessions never need wave
   // traffic competing with streaming deltas.
@@ -67,42 +67,35 @@ function WavePill(props: { api: TuiPluginApi }) {
   return (
     <Show when={state()}>
       {(s) => (
-        <Switch>
-          <Match when={s().wave_status === "failed" || s().wave_status === "running"}>
-            <Switch>
-              <Match when={s().wave_status === "failed"}>
-                <text fg={theme().error} onMouseDown={onClick}>
-                  ✗ wave {s().current_wave} failed
-                </text>
-              </Match>
-              <Match when={s().loop_state === "paused"}>
-                <text fg={theme().warning} onMouseDown={onClick}>
-                  ⏸ wave {s().current_wave}
-                </text>
-              </Match>
-              <Match when={true}>
-                <text fg={theme().primary} onMouseDown={onClick}>
-                  ▸ wave {s().current_wave}/{s().total_waves}
-                </text>
-              </Match>
-            </Switch>
-          </Match>
-          <Match when={s().wave_status === "all_complete"}>
-            <text fg={theme().success} onMouseDown={onClick}>
-              ✓ all waves done
-            </text>
-          </Match>
-          <Match when={s().loop_state !== "idle"}>
-            <text fg={theme().textMuted} onMouseDown={onClick}>
-              ○ wave {s().current_wave}/{s().total_waves} {s().loop_state}
-            </text>
-          </Match>
-          <Match when={true}>
-            <text fg={theme().textMuted} onMouseDown={onClick}>
-              wave {s().current_wave}/{s().total_waves}
-            </text>
-          </Match>
-        </Switch>
+        <text flexShrink={0} onMouseDown={onClick}>
+          <span style={{ fg: theme().textMuted }}>· </span>
+          <Switch>
+            <Match when={s().wave_status === "failed"}>
+              <span style={{ fg: theme().error }}>wave {s().current_wave} failed</span>
+            </Match>
+            <Match when={s().wave_status === "running" && s().loop_state === "paused"}>
+              <span style={{ fg: theme().warning }}>wave {s().current_wave} paused</span>
+            </Match>
+            <Match when={s().wave_status === "running"}>
+              <span style={{ fg: theme().primary }}>
+                wave {s().current_wave}/{s().total_waves}
+              </span>
+            </Match>
+            <Match when={s().wave_status === "all_complete"}>
+              <span style={{ fg: theme().success }}>waves done</span>
+            </Match>
+            <Match when={s().loop_state !== "idle"}>
+              <span style={{ fg: theme().textMuted }}>
+                wave {s().current_wave}/{s().total_waves} {s().loop_state}
+              </span>
+            </Match>
+            <Match when={true}>
+              <span style={{ fg: theme().textMuted }}>
+                wave {s().current_wave}/{s().total_waves}
+              </span>
+            </Match>
+          </Switch>
+        </text>
       )}
     </Show>
   )
@@ -112,9 +105,9 @@ function Version(props: { api: TuiPluginApi }) {
   const theme = () => props.api.theme.current
 
   return (
-    <box flexShrink={0}>
-      <text fg={theme().textMuted}>by clauseo</text>
-    </box>
+    <text fg={theme().textMuted} flexShrink={0}>
+      · by clauseo
+    </text>
   )
 }
 
@@ -128,12 +121,11 @@ function View(props: { api: TuiPluginApi }) {
       paddingRight={2}
       flexDirection="row"
       flexShrink={0}
-      gap={2}
+      gap={1}
     >
       <Directory api={props.api} />
       <Mcp api={props.api} />
-      <WavePill api={props.api} />
-      <box flexGrow={1} />
+      <Wave api={props.api} />
       <Version api={props.api} />
     </box>
   )

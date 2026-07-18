@@ -1,10 +1,9 @@
-import { TextAttributes } from "@opentui/core"
+import { createMemo, For } from "solid-js"
 import { useTheme } from "../context/theme"
-import { useDialog, type DialogContext } from "./dialog"
+import { DialogHeader, useDialog, type DialogContext } from "./dialog"
 import { createStore } from "solid-js/store"
-import { For } from "solid-js"
 import { useKeyboard } from "@opentui/solid"
-import { Rule } from "../component/border"
+import { Spans, type GlowSpan } from "@tui/ui/glow"
 
 export type DialogConfirmProps = {
   title: string
@@ -16,6 +15,9 @@ export type DialogConfirmProps = {
 
 export type DialogConfirmResult = boolean | undefined
 
+// the afterglow confirm: warning-heat title rule (confirms guard decisions,
+// usually destructive ones), body at +2, and two action words at the right —
+// the armed one is bold, the other a muted whisper. no markers, no borders.
 export function DialogConfirm(props: DialogConfirmProps) {
   const dialog = useDialog()
   const { theme } = useTheme()
@@ -39,62 +41,61 @@ export function DialogConfirm(props: DialogConfirmProps) {
     }
   })
 
+  const hintSpans = createMemo<GlowSpan[]>(() => [
+    { text: "←→", fg: theme.text },
+    { text: " switch · ", fg: theme.textMuted },
+    { text: "enter", fg: theme.text },
+    { text: " choose · ", fg: theme.textMuted },
+    { text: "esc", fg: theme.text },
+    { text: " close", fg: theme.textMuted },
+  ])
+
   return (
-    <box>
-      {/* Header strip */}
-      <box flexDirection="row" justifyContent="space-between" paddingLeft={3} paddingRight={3} paddingTop={1}>
-        <text attributes={TextAttributes.BOLD} fg={theme.text}>
-          {props.title}
-        </text>
-        <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
-          esc
-        </text>
-      </box>
-      <box paddingTop={1}>
-        <Rule color={theme.borderActive} />
-      </box>
-      {/* Body */}
-      <box paddingLeft={3} paddingRight={3} paddingTop={1} paddingBottom={1}>
+    <box paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2}>
+      <DialogHeader title={props.title} color={theme.warning} />
+      <box height={1} flexShrink={0} />
+      <box paddingLeft={2}>
         <text fg={theme.text} wrapMode="word">
           {props.message}
         </text>
       </box>
-      <Rule color={theme.borderActive} />
-      {/* Footer: action buttons with ▸ marker */}
-      <box
-        paddingLeft={3}
-        paddingRight={3}
-        paddingTop={1}
-        paddingBottom={1}
-        flexDirection="row"
-        justifyContent="flex-end"
-        gap={3}
-      >
-        <For each={["cancel", "confirm"] as const}>
-          {(key) => {
-            const labelText = key === "cancel" ? (props.label ?? "cancel") : "confirm"
-            return (
-              <box
-                flexDirection="row"
-                gap={1}
-                onMouseUp={(_evt) => {
-                  if (key === "confirm") props.onConfirm?.()
-                  if (key === "cancel") props.onCancel?.()
-                  dialog.clear()
-                }}
-                onMouseOver={() => setStore("active", key)}
-              >
-                <text fg={key === store.active ? theme.text : theme.textMuted}>{key === store.active ? "▸" : " "}</text>
+      <box height={1} flexShrink={0} />
+      {/* keyed whisper at the left, the two action words at the right —
+          the armed word is bold (warning heat when it is the destructive
+          one), the other stays a muted whisper. hover arms, click fires. */}
+      <box flexDirection="row" justifyContent="space-between" gap={2} flexShrink={0}>
+        <text wrapMode="none" flexShrink={1}>
+          <Spans spans={hintSpans()} />
+        </text>
+        <box flexDirection="row" gap={2} flexShrink={0}>
+          <For each={["cancel", "confirm"] as const}>
+            {(key) => {
+              const labelText = () => (key === "cancel" ? (props.label ?? "cancel") : "confirm").toLowerCase()
+              const armed = () => key === store.active
+              return (
                 <text
-                  fg={key === store.active ? theme.text : theme.textMuted}
-                  attributes={key === store.active ? TextAttributes.BOLD : undefined}
+                  wrapMode="none"
+                  flexShrink={0}
+                  onMouseUp={() => {
+                    if (key === "confirm") props.onConfirm?.()
+                    if (key === "cancel") props.onCancel?.()
+                    dialog.clear()
+                  }}
+                  onMouseOver={() => setStore("active", key)}
                 >
-                  {labelText}
+                  <span
+                    style={{
+                      fg: armed() ? (key === "confirm" ? theme.warning : theme.text) : theme.textMuted,
+                      bold: armed(),
+                    }}
+                  >
+                    {labelText()}
+                  </span>
                 </text>
-              </box>
-            )
-          }}
-        </For>
+              )
+            }}
+          </For>
+        </box>
       </box>
     </box>
   )

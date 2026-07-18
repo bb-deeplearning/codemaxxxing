@@ -6,13 +6,13 @@ import { createStore } from "solid-js/store"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import * as fuzzysort from "fuzzysort"
 import { isDeepEqual } from "remeda"
-import { useDialog, type DialogContext } from "@tui/ui/dialog"
+import { DialogHeader, useDialog, type DialogContext } from "@tui/ui/dialog"
 import { useKeybind } from "@tui/context/keybind"
 import { Keybind } from "@/util/keybind"
 import { Locale } from "@/util/locale"
-import { Rule } from "@tui/component/border"
 import { getScrollAcceleration } from "../util/scroll"
 import { useTuiConfig } from "../context/tui-config"
+import { sinkColor, Spans, type GlowSpan } from "@tui/ui/glow"
 
 export interface DialogSelectProps<T> {
   title: string
@@ -32,6 +32,9 @@ export interface DialogSelectProps<T> {
     onTrigger: (option: DialogSelectOption<T>) => void
   }[]
   current?: T
+  // verb for the enter key in the hint whisper — "run" for the palette,
+  // "select" everywhere else. presentation only.
+  selectLabel?: string
 }
 
 export interface DialogSelectOption<T = any> {
@@ -51,11 +54,6 @@ export interface DialogSelectOption<T = any> {
 export type DialogSelectRef<T> = {
   filter: string
   filtered: DialogSelectOption<T>[]
-}
-
-// tracked small caps for grouped category headers, e.g. "session" -> "s e s s i o n"
-function spaceLetters(input: string): string {
-  return input.split("").join(" ")
 }
 
 export function DialogSelect<T>(props: DialogSelectProps<T>) {
@@ -136,11 +134,11 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   })
 
   const rows = createMemo(() => {
-    // Each non-empty category contributes: label row + rule row + optional spacer row.
+    // Each non-empty category contributes: label row (+ leading blank when
+    // not first). no rules inside the list — structure is air.
     const headers = grouped().reduce((acc, [category], i) => {
       if (!category) return acc
-      // label + rule (+ leading blank when not first)
-      return acc + (i > 0 ? 3 : 2)
+      return acc + (i > 0 ? 2 : 1)
     }, 0)
     return flat().length + headers
   })
@@ -247,22 +245,41 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   const left = createMemo(() => keybinds().filter((item) => item.side !== "right"))
   const right = createMemo(() => keybinds().filter((item) => item.side === "right"))
 
+  // the closing hint whisper: keys in theme.text, labels muted, " · "
+  // separators. arrows are keyboard words, not status glyphs. memoized —
+  // rebuilt only when the theme or the keybind set moves.
+  const hintSpans = createMemo<GlowSpan[]>(() => {
+    const spans: GlowSpan[] = [
+      { text: "↑↓", fg: theme.text },
+      { text: " move · ", fg: theme.textMuted },
+      { text: "enter", fg: theme.text },
+      { text: ` ${props.selectLabel ?? "select"} · `, fg: theme.textMuted },
+      { text: "esc", fg: theme.text },
+      { text: " close", fg: theme.textMuted },
+    ]
+    for (const item of left()) {
+      spans.push({ text: " · ", fg: theme.textMuted })
+      spans.push({ text: Keybind.toString(item.keybind!), fg: theme.text })
+      spans.push({ text: ` ${item.title.toLowerCase()}`, fg: theme.textMuted })
+    }
+    return spans
+  })
+  const rightHintSpans = createMemo<GlowSpan[]>(() =>
+    right().flatMap((item, i): GlowSpan[] => [
+      ...(i > 0 ? [{ text: " · ", fg: theme.textMuted }] : []),
+      { text: Keybind.toString(item.keybind!), fg: theme.text },
+      { text: ` ${item.title.toLowerCase()}`, fg: theme.textMuted },
+    ]),
+  )
+
   return (
-    <box>
-      {/* Header strip */}
-      <box flexDirection="row" justifyContent="space-between" paddingLeft={3} paddingRight={3} paddingTop={1}>
-        <text fg={theme.text} attributes={TextAttributes.BOLD}>
-          {props.title}
-        </text>
-        <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
-          esc
-        </text>
+    <box paddingTop={1} paddingBottom={1}>
+      {/* title block: bold lowercase title over a dissolving rule, search
+          input directly under — the head of the dialog. */}
+      <box paddingLeft={2} paddingRight={2} flexShrink={0}>
+        <DialogHeader title={props.title} />
       </box>
-      <box paddingTop={1}>
-        <Rule color={theme.borderActive} />
-      </box>
-      {/* Filter input */}
-      <box paddingLeft={3} paddingRight={3} paddingTop={1} paddingBottom={1}>
+      <box paddingLeft={2} paddingRight={2} flexShrink={0}>
         <input
           onInput={(e) => {
             batch(() => {
@@ -270,7 +287,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
               props.onFilter?.(e)
             })
           }}
-          cursorColor={theme.text}
+          cursorColor={theme.primary}
           textColor={theme.text}
           focusedTextColor={theme.text}
           ref={(r) => {
@@ -286,130 +303,117 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
           placeholderColor={theme.textMuted}
         />
       </box>
-      <Rule color={theme.border} />
+      {/* air between the head and the list */}
+      <box height={1} flexShrink={0} />
       <Show
         when={grouped().length > 0}
         fallback={
-          <box paddingLeft={3} paddingRight={3} paddingTop={1} paddingBottom={1}>
+          <box paddingLeft={4} paddingRight={2}>
             <text fg={theme.textMuted}>no results</text>
           </box>
         }
       >
-        <box paddingTop={1} paddingBottom={1}>
-          <scrollbox
-            scrollbarOptions={{ visible: false }}
-            scrollAcceleration={scrollAcceleration()}
-            ref={(r: ScrollBoxRenderable) => (scroll = r)}
-            maxHeight={height()}
-          >
-            <For each={grouped()}>
-              {([category, options], index) => (
-                <>
-                  <Show when={category}>
-                    <box paddingTop={index() > 0 ? 1 : 0} paddingLeft={3} paddingRight={3}>
-                      <Show
-                        when={options[0]?.categoryView}
-                        fallback={<text fg={theme.textMuted}>{spaceLetters(category.toLowerCase())}</text>}
-                      >
-                        {options[0]?.categoryView}
-                      </Show>
-                    </box>
-                    <box paddingLeft={3} paddingRight={3}>
-                      <Rule color={theme.border} />
-                    </box>
-                  </Show>
-                  <For each={options}>
-                    {(option) => {
-                      const active = createMemo(() => isDeepEqual(option.value, selected()?.value))
-                      const current = createMemo(() => isDeepEqual(option.value, props.current))
-                      return (
-                        <box
-                          id={JSON.stringify(option.value)}
-                          flexDirection="row"
-                          position="relative"
-                          onMouseMove={() => {
-                            setStore("input", "mouse")
-                          }}
-                          onMouseUp={() => {
-                            option.onSelect?.(dialog)
-                            props.onSelect?.(option)
-                          }}
-                          onMouseOver={() => {
-                            if (store.input !== "mouse") return
-                            const index = flat().findIndex((x) => isDeepEqual(x.value, option.value))
-                            if (index === -1) return
-                            moveTo(index)
-                          }}
-                          onMouseDown={() => {
-                            const index = flat().findIndex((x) => isDeepEqual(x.value, option.value))
-                            if (index === -1) return
-                            moveTo(index)
-                          }}
-                          // Active row gets a one-step bg lift so selection is unmistakeable
-                          // when scanning long lists. The ▸ marker + bold alone proved too
-                          // subtle in practice. We lift to backgroundElement (NOT primary)
-                          // to keep the surface readable and not loud.
-                          backgroundColor={active() ? (option.bg ?? theme.backgroundElement) : undefined}
-                          paddingLeft={2}
-                          paddingRight={3}
-                          gap={1}
-                        >
-                          <Show when={!current() && option.margin}>
-                            <box position="absolute" left={1} flexShrink={0}>
-                              {option.margin}
-                            </box>
-                          </Show>
-                          <Option
-                            title={option.title}
-                            footer={flatten() ? (option.category ?? option.footer) : option.footer}
-                            description={option.description !== category ? option.description : undefined}
-                            active={active()}
-                            current={current()}
-                            gutter={option.gutter}
-                          />
-                        </box>
-                      )
-                    }}
-                  </For>
-                </>
-              )}
-            </For>
-          </scrollbox>
-        </box>
-      </Show>
-      <Rule color={theme.border} />
-      <Show when={keybinds().length} fallback={<box flexShrink={0} paddingBottom={1} />}>
-        <box
-          paddingLeft={3}
-          paddingRight={3}
-          paddingTop={1}
-          paddingBottom={1}
-          flexDirection="row"
-          justifyContent="space-between"
-          flexShrink={0}
+        <scrollbox
+          scrollbarOptions={{ visible: false }}
+          scrollAcceleration={scrollAcceleration()}
+          ref={(r: ScrollBoxRenderable) => (scroll = r)}
+          maxHeight={height()}
         >
-          <box flexDirection="row" gap={2}>
-            <For each={left()}>
-              {(item) => (
-                <text>
-                  <span style={{ fg: theme.text, bold: true }}>{Keybind.toString(item.keybind)}</span>{" "}
-                  <span style={{ fg: theme.textMuted }}>{item.title}</span>
-                </text>
-              )}
-            </For>
-          </box>
-          <box flexDirection="row" gap={2}>
-            <For each={right()}>
-              {(item) => (
-                <text>
-                  <span style={{ fg: theme.text, bold: true }}>{Keybind.toString(item.keybind)}</span>{" "}
-                  <span style={{ fg: theme.textMuted }}>{item.title}</span>
-                </text>
-              )}
-            </For>
-          </box>
-        </box>
+          <For each={grouped()}>
+            {([category, options], index) => (
+              <>
+                <Show when={category}>
+                  <box paddingTop={index() > 0 ? 1 : 0} paddingLeft={2} paddingRight={2}>
+                    <Show
+                      when={options[0]?.categoryView}
+                      fallback={<text fg={sinkColor(theme, 1)}>{category.toLowerCase()}</text>}
+                    >
+                      {options[0]?.categoryView}
+                    </Show>
+                  </box>
+                </Show>
+                <For each={options}>
+                  {(option) => {
+                    const active = createMemo(() => isDeepEqual(option.value, selected()?.value))
+                    const current = createMemo(() => isDeepEqual(option.value, props.current))
+                    return (
+                      <box
+                        id={JSON.stringify(option.value)}
+                        flexDirection="row"
+                        position="relative"
+                        onMouseMove={() => {
+                          setStore("input", "mouse")
+                        }}
+                        onMouseUp={() => {
+                          option.onSelect?.(dialog)
+                          props.onSelect?.(option)
+                        }}
+                        onMouseOver={() => {
+                          if (store.input !== "mouse") return
+                          const index = flat().findIndex((x) => isDeepEqual(x.value, option.value))
+                          if (index === -1) return
+                          moveTo(index)
+                        }}
+                        onMouseDown={() => {
+                          const index = flat().findIndex((x) => isDeepEqual(x.value, option.value))
+                          if (index === -1) return
+                          moveTo(index)
+                        }}
+                        // selection without glyphs: the selected row is bold
+                        // theme.text on a backgroundElement lift when the theme
+                        // has one; transparent themes rely on bold alone.
+                        // option.bg (e.g. an armed delete) wins regardless —
+                        // failures burn.
+                        backgroundColor={
+                          active()
+                            ? (option.bg ?? (theme.backgroundElement.a > 0 ? theme.backgroundElement : undefined))
+                            : undefined
+                        }
+                        paddingLeft={4}
+                        paddingRight={2}
+                        gap={1}
+                      >
+                        <Show when={!current() && option.margin}>
+                          <box position="absolute" left={1} flexShrink={0}>
+                            {option.margin}
+                          </box>
+                        </Show>
+                        <Option
+                          title={option.title}
+                          footer={flatten() ? (option.category ?? option.footer) : option.footer}
+                          description={option.description !== category ? option.description : undefined}
+                          active={active()}
+                          current={current()}
+                          gutter={option.gutter}
+                        />
+                      </box>
+                    )
+                  }}
+                </For>
+              </>
+            )}
+          </For>
+        </scrollbox>
       </Show>
+      {/* air between the list and the hint whisper */}
+      <box height={1} flexShrink={0} />
+      <box
+        paddingLeft={2}
+        paddingRight={2}
+        flexDirection="row"
+        justifyContent="space-between"
+        gap={2}
+        flexShrink={0}
+      >
+        <text wrapMode="none" flexShrink={1}>
+          <Spans spans={hintSpans()} />
+        </text>
+        <Show when={right().length > 0}>
+          <text wrapMode="none" flexShrink={0}>
+            <Spans spans={rightHintSpans()} />
+          </text>
+        </Show>
+      </box>
     </box>
   )
 }
@@ -425,30 +429,31 @@ function Option(props: {
 }) {
   const { theme } = useTheme()
 
-  // Marker column: ▸ when active, ● when current (but not active), gutter if provided, else blank.
+  // no marker glyphs: the selected row is bold theme.text, unselected rows
+  // are textMuted, the current value is words-in-color (primary).
   return (
     <>
-      <text flexShrink={0} fg={props.active ? theme.text : props.current ? theme.primary : theme.textMuted}>
-        {props.active ? "▸" : props.current ? "●" : " "}
-      </text>
-      <Show when={!props.current && !props.active && props.gutter}>
+      <Show when={props.gutter}>
         <box flexShrink={0}>{props.gutter?.()}</box>
       </Show>
       <text
         flexGrow={1}
-        fg={props.active ? theme.text : props.current ? theme.primary : theme.text}
+        flexShrink={1}
+        fg={props.active ? theme.text : props.current ? theme.primary : theme.textMuted}
         attributes={props.active ? TextAttributes.BOLD : undefined}
         overflow="hidden"
         wrapMode="none"
       >
         {Locale.truncate(props.title, 61)}
         <Show when={props.description}>
-          <span style={{ fg: theme.textMuted }}> {props.description}</span>
+          <span style={{ fg: props.active ? theme.textMuted : sinkColor(theme, 1) }}> {props.description}</span>
         </Show>
       </text>
       <Show when={props.footer}>
         <box flexShrink={0}>
-          <text fg={theme.textMuted}>{props.footer}</text>
+          <text wrapMode="none" fg={props.active ? theme.textMuted : sinkColor(theme, 1)}>
+            {props.footer}
+          </text>
         </box>
       </Show>
     </>

@@ -1,42 +1,53 @@
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
 import { createMemo, For, Show, createSignal } from "solid-js"
+import { SidebarSection } from "../../component/sidebar-section"
+import { inlineSafe } from "../../util/inline-safe"
 
 const id = "internal:sidebar-files"
 
+// afterglow: file rows are name in text with a right-edge diff whisper —
+// +N in diffAdded, −N (U+2212) in diffRemoved. no chevrons: the collapse
+// toggle lives on the section header (click) and the collapsed state reads
+// as a dim count whisper after the word.
 function View(props: { api: TuiPluginApi; session_id: string }) {
   const [open, setOpen] = createSignal(true)
   const theme = () => props.api.theme.current
   const list = createMemo(() => props.api.state.session.diff(props.session_id))
+  const collapsible = createMemo(() => list().length > 2)
+  const expanded = createMemo(() => !collapsible() || open())
 
   return (
     <Show when={list().length > 0}>
       <box>
-        <box flexDirection="row" gap={1} onMouseDown={() => list().length > 2 && setOpen((x) => !x)}>
-          <Show when={list().length > 2}>
-            <text fg={theme().text}>{open() ? "▼" : "▶"}</text>
-          </Show>
-          <text fg={theme().text}>
-            <b>Modified Files</b>
-          </text>
-        </box>
-        <Show when={list().length <= 2 || open()}>
-          <For each={list()}>
-            {(item) => (
-              <box flexDirection="row" gap={1} justifyContent="space-between">
-                <text fg={theme().textMuted} wrapMode="none">
-                  {item.file}
-                </text>
-                <box flexDirection="row" gap={1} flexShrink={0}>
-                  <Show when={item.additions}>
-                    <text fg={theme().diffAdded}>+{item.additions}</text>
-                  </Show>
-                  <Show when={item.deletions}>
-                    <text fg={theme().diffRemoved}>-{item.deletions}</text>
-                  </Show>
+        <SidebarSection
+          t={theme()}
+          label="files"
+          whisper={expanded() ? undefined : `· ${list().length}`}
+          onMouseDown={() => collapsible() && setOpen((x) => !x)}
+        />
+        <Show when={expanded()}>
+          <box paddingLeft={2}>
+            <For each={list()}>
+              {(item) => (
+                <box flexDirection="row" justifyContent="space-between" gap={1}>
+                  <text fg={theme().text} wrapMode="none" flexShrink={1}>
+                    {inlineSafe(item.file)}
+                  </text>
+                  <text wrapMode="none" flexShrink={0}>
+                    <Show when={item.additions}>
+                      <span style={{ fg: theme().diffAdded }}>+{item.additions}</span>
+                    </Show>
+                    <Show when={item.additions && item.deletions}>
+                      <span> </span>
+                    </Show>
+                    <Show when={item.deletions}>
+                      <span style={{ fg: theme().diffRemoved }}>−{item.deletions}</span>
+                    </Show>
+                  </text>
                 </box>
-              </box>
-            )}
-          </For>
+              )}
+            </For>
+          </box>
         </Show>
       </box>
     </Show>

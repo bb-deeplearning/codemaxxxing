@@ -4,6 +4,9 @@ import { Global } from "@opencode-ai/core/global"
 
 const id = "internal:sidebar-footer"
 
+// afterglow footer: all-lowercase whispers, zero glyphs. the getting-started
+// note is a quiet surface (backgroundElement fill only when the token is
+// opaque — transparent themes degrade to air), dismissed by a word, not a glyph.
 function View(props: { api: TuiPluginApi }) {
   const theme = () => props.api.theme.current
   const has = createMemo(() =>
@@ -27,35 +30,41 @@ function View(props: { api: TuiPluginApi }) {
   return (
     <box gap={1}>
       <Show when={show()}>
+        {/* column box, never flex-row: the copy wraps to several lines and
+            tall children inside a flex-row trip opentui's layout budget
+            (specs/tui-render-freeze.md). */}
         <box
-          backgroundColor={theme().backgroundElement}
+          backgroundColor={theme().backgroundElement.a > 0 ? theme().backgroundElement : undefined}
           paddingTop={1}
           paddingBottom={1}
           paddingLeft={2}
           paddingRight={2}
-          flexDirection="row"
           gap={1}
         >
-          <text flexShrink={0} fg={theme().text}>
-            ⬖
-          </text>
-          <box flexGrow={1} gap={1}>
-            <box flexDirection="row" justifyContent="space-between">
-              <text fg={theme().text}>
-                <b>Getting started</b>
-              </text>
-              <text fg={theme().textMuted} onMouseDown={() => props.api.kv.set("dismissed_getting_started", true)}>
-                ✕
-              </text>
-            </box>
-            <text fg={theme().textMuted}>OpenCode includes free models so you can start immediately.</text>
-            <text fg={theme().textMuted}>
-              Connect from 75+ providers to use other models, including Claude, GPT, Gemini etc
+          <box flexDirection="row" justifyContent="space-between" gap={1}>
+            <text fg={theme().text} wrapMode="none" flexShrink={1}>
+              <b>getting started</b>
             </text>
-            <box flexDirection="row" gap={1} justifyContent="space-between">
-              <text fg={theme().text}>Connect provider</text>
-              <text fg={theme().textMuted}>/connect</text>
-            </box>
+            <text
+              fg={theme().textMuted}
+              wrapMode="none"
+              flexShrink={0}
+              onMouseDown={() => props.api.kv.set("dismissed_getting_started", true)}
+            >
+              dismiss
+            </text>
+          </box>
+          <text fg={theme().textMuted}>opencode includes free models so you can start immediately.</text>
+          <text fg={theme().textMuted}>
+            connect from 75+ providers to use other models, including claude, gpt, gemini etc
+          </text>
+          <box flexDirection="row" justifyContent="space-between" gap={1}>
+            <text fg={theme().textMuted} wrapMode="none" flexShrink={1}>
+              connect a provider
+            </text>
+            <text fg={theme().text} wrapMode="none" flexShrink={0}>
+              /connect
+            </text>
           </box>
         </box>
       </Show>
@@ -63,8 +72,8 @@ function View(props: { api: TuiPluginApi }) {
         <span style={{ fg: theme().textMuted }}>{path().parent}/</span>
         <span style={{ fg: theme().text }}>{path().name}</span>
       </text>
-      <text fg={theme().textMuted}>
-        <span style={{ fg: theme().success }}>•</span> <b>codema</b>
+      <text fg={theme().textMuted} wrapMode="none">
+        <b>codema</b>
         <span style={{ fg: theme().text }}>
           <b>xxx</b>
         </span>

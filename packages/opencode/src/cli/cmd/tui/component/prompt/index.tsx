@@ -1,6 +1,5 @@
 import { BoxRenderable, RGBA, TextareaRenderable, MouseEvent, PasteEvent, decodePasteBytes } from "@opentui/core"
 import { createEffect, createMemo, onMount, createSignal, onCleanup, on, Show, Switch, Match } from "solid-js"
-import "opentui-spinner/solid"
 import path from "path"
 import { fileURLToPath } from "url"
 import * as Log from "@opencode-ai/core/util/log"
@@ -8,8 +7,19 @@ import * as Log from "@opencode-ai/core/util/log"
 const log = Log.create({ service: "tui.prompt" })
 import { Filesystem } from "@/util/filesystem"
 import { useLocal } from "@tui/context/local"
-import { tint, useTheme } from "@tui/context/theme"
-import { EmptyBorder, SplitBorder } from "@tui/component/border"
+import { useTheme } from "@tui/context/theme"
+import {
+  clampRule,
+  contextWords,
+  fadeRule,
+  fadeTarget,
+  kinetic,
+  kineticLive,
+  mix,
+  modelWord,
+  RULE,
+  Spans,
+} from "@tui/ui/glow"
 import { useSDK } from "@tui/context/sdk"
 import { useRoute } from "@tui/context/route"
 import { useProject } from "@tui/context/project"
@@ -36,8 +46,6 @@ import { TuiEvent } from "../../event"
 import { iife } from "@/util/iife"
 import { Locale } from "@/util/locale"
 import { formatDuration } from "@/util/format"
-import { SP_FALLBACK } from "../spinner"
-import { createTurboColors, createTurboFrames } from "../../ui/spinner.ts"
 import { useDialog } from "@tui/ui/dialog"
 import { DialogProvider as DialogProviderConnect } from "../dialog-provider"
 import { DialogAlert } from "../../ui/dialog-alert"
@@ -64,6 +72,15 @@ export type PromptProps = {
     normal?: string[]
     shell?: string[]
   }
+  // afterglow (all additive — plugin contract safe):
+  // the working sentence for the kinetic busy line, e.g. "running bun test".
+  busyText?: string
+  // epoch ms the in-flight turn started — drives the "· 12s" whisper.
+  busyStartedAt?: number
+  // the return glance: verdict word + dim detail, shown idle above the rule.
+  glance?: { verdict: string; tone: "success" | "warning" | "error"; detail?: string }
+  // available content width in cells; falls back to terminal width - 6.
+  width?: number
 }
 
 export type PromptRef = {
@@ -117,88 +134,6 @@ function formatEditorContext(selection: EditorSelection) {
 }
 
 let stashed: { prompt: PromptInfo; cursor: number } | undefined
-
-// Context usage bar. 6-cell width matches the turbo spinner exactly so the
-// two are visually balanced when both share the status row (spinner left,
-// bar right). Half-height: uses `▄` (LOWER HALF BLOCK) so the bar reads as
-// a thin band along the bottom of the row — visually lighter than a full-
-// height ▌▎ bar, more present than a single line ─.
-//
-// Fills RIGHT-TO-LEFT: the filled portion grows from the right edge inward
-// as usage rises. Reads as "how much of the limit have I consumed", with
-// the right edge being the limit. Empty (unconsumed) capacity sits on the
-// left in muted border color.
-//
-// Single uniform color per render, tier-based:
-//   < 70%: theme.textMuted (calm chrome)
-//   70-90%: theme.warning  (yellow)
-//   > 90%:  theme.error    (red)
-//
-// Performance:
-//   - Single pre-built lookup table (BAR_LINE[N]) shared by filled +
-//     unfilled spans. Per-render cost is two array lookups + two spans.
-//   - Color is one tier check per pct change (memoized). No interpolation.
-const BAR_WIDTH = 6
-const BAR_LINE: readonly string[] = Object.freeze(Array.from({ length: BAR_WIDTH + 1 }, (_, i) => "▄".repeat(i)))
-
-function ContextBar(props: { pct: number }) {
-  const { theme } = useTheme()
-  // Round UP for any non-zero pct so a 1% reading still shows one filled
-  // cell — without it the bar would render empty for the entire 0-16%
-  // range (6-cell granularity = 16.67% per cell), which is misleading.
-  const filled = createMemo(() => {
-    if (props.pct <= 0) return 0
-    return Math.max(1, Math.min(BAR_WIDTH, Math.ceil((props.pct / 100) * BAR_WIDTH)))
-  })
-  const fillColor = createMemo(() => {
-    if (props.pct > 90) return theme.error
-    if (props.pct > 70) return theme.warning
-    return theme.textMuted
-  })
-  return (
-    <text wrapMode="none" flexShrink={0}>
-      <span style={{ fg: theme.border }}>{BAR_LINE[BAR_WIDTH - filled()]}</span>
-      <span style={{ fg: fillColor() }}>{BAR_LINE[filled()]}</span>
-    </text>
-  )
-}
-
-// (Old 8-cell ■/□ UsageMeter removed — usage now renders as plain
-// `tokens · pct% · cost` text on the identity row, with ContextBar pinned
-// to the right side of the status row, same width as the turbo spinner.)
-
-// Hoisted to module scope: frames are pure data with no theme/runtime
-// dependency, so building them per Prompt mount allocated 28 fresh strings
-// for nothing. The colour ramp DOES depend on the theme/agent and stays
-// per-component.
-const TURBO_FRAMES = createTurboFrames()
-const TURBO_INTERVAL_MS = 50
-
-// Prompt indicator state → glyph. Single 1-cell character; colour comes
-// from borderHighlight (agent-tinted). Precedence is enforced in the
-// indicatorState memo (leader > shell > streaming > typing > idle).
-//
-//   ●  idle   — strong agent-ID signal when prompt is fresh
-//   ○  typing — debounced; fades back when user pauses for TYPING_DEBOUNCE_MS
-//   ◉  streaming — concentric, draws attention to external state
-//   ❯  shell  — directional, signals command-execution mode
-//   ◌  leader — dotted, "paused waiting for keybind"
-//
-// All five glyphs are 1 cell wide → swapping between them does not change
-// the text node's intrinsic width, so Yoga skips layout propagation on
-// state transitions. Frozen at module scope: zero allocation per render.
-const INDICATOR_GLYPH = Object.freeze({
-  leader: "◌",
-  shell: "❯",
-  streaming: "◉",
-  typing: "○",
-  idle: "●",
-} as const)
-
-// Debounce window for the "typing" indicator state. ~150-300ms is normal
-// inter-keystroke cadence; 800ms bridges natural thinking pauses without
-// feeling laggy when the user actually stops.
-const TYPING_DEBOUNCE_MS = 800
 
 export function Prompt(props: PromptProps) {
   let input: TextareaRenderable
@@ -283,10 +218,6 @@ export function Prompt(props: PromptProps) {
   const [editorContextHover, setEditorContextHover] = createSignal(false)
   let lastSubmittedEditorSelectionKey: string | undefined
   const [auto, setAuto] = createSignal<AutocompleteRef>()
-  // Lower-cased provider label memoized — the JSX read previously called
-  // .toLowerCase() per render, allocating a fresh string each time.
-  const currentProviderLabel = createMemo(() => local.model.parsed().provider)
-  const currentProviderLabelLower = createMemo(() => currentProviderLabel().toLowerCase())
   const hasRightContent = createMemo(() => Boolean(props.right))
 
   function promptModelWarning() {
@@ -326,8 +257,10 @@ export function Prompt(props: PromptProps) {
   })
 
   createEffect(() => {
+    // the cursor is the brightest thing on screen — except while an ask has
+    // the heat (one glow at a time): disabled hides it into the page.
     if (props.disabled) input.cursorColor = theme.backgroundElement
-    if (!props.disabled) input.cursorColor = theme.text
+    if (!props.disabled) input.cursorColor = theme.primary
   })
 
   const lastUserMessage = createMemo(() => {
@@ -746,7 +679,9 @@ export function Prompt(props: PromptProps) {
 
   createEffect(() => {
     if (!input || input.isDestroyed) return
-    if (props.visible === false || dialog.stack.length > 0) {
+    // disabled: an ask (permission/question) owns the keyboard while the
+    // prompt stays mounted so the bottom edge never disappears.
+    if (props.visible === false || props.disabled || dialog.stack.length > 0) {
       if (input.focused) input.blur()
       return
     }
@@ -1217,73 +1152,75 @@ export function Prompt(props: PromptProps) {
   })
 
   const agentMetaAlpha = createFadeIn(() => !!local.agent.current(), animationsEnabled)
-  const modelMetaAlpha = createFadeIn(() => !!local.agent.current() && store.mode === "normal", animationsEnabled)
-  const variantMetaAlpha = createFadeIn(
-    () => !!local.agent.current() && store.mode === "normal" && showVariant(),
-    animationsEnabled,
-  )
-  // borderHighlight = tint of theme.border toward highlight() (which is the
-  // state-driven color: agent / shell-mode primary / leader-dim border).
-  // Used on the 1-cell ● accent at the start of the textarea so the prompt's
-  // affordance carries state.
-  const borderHighlight = createMemo(() => tint(theme.border, highlight(), agentMetaAlpha()))
-
-  // Typing activity signal — debounced. Flips to true on the first keystroke
-  // after idle (Solid signal equality dedupes subsequent setIsTyping(true)
-  // calls so a 100-keystroke burst causes ZERO downstream invalidations
-  // after the initial flip). Flips back to false TYPING_DEBOUNCE_MS after
-  // the last keystroke. Hooked into the existing onContentChange handler
-  // which already runs per keystroke; markTyping() adds a clearTimeout +
-  // setTimeout (microseconds) and one signal write that is usually a no-op.
-  const [isTyping, setIsTyping] = createSignal(false)
-  let typingTimer: ReturnType<typeof setTimeout> | undefined
-  function markTyping() {
-    setIsTyping(true)
-    if (typingTimer) clearTimeout(typingTimer)
-    typingTimer = setTimeout(() => setIsTyping(false), TYPING_DEBOUNCE_MS)
-  }
-  onCleanup(() => {
-    if (typingTimer) clearTimeout(typingTimer)
-  })
 
   // Defensive projection: status() returns
   //   sync.data.session_status[sessionID] ?? { type: "idle" }
   // The `?? { type: "idle" }` allocates a fresh object identity on every
   // miss, which would invalidate any memo that read status() directly even
   // when the actual `.type` value did not change. Project to .type once so
-  // indicatorState only re-evaluates on real type transitions.
+  // busy-state memos only re-evaluate on real type transitions.
   const statusType = createMemo(() => status().type)
+  const busy = createMemo(() => statusType() !== "idle")
 
-  // Prompt indicator state machine. Precedence:
-  //   leader > shell > streaming > typing > idle
-  // Streaming wins over typing because it represents an external state the
-  // user may not have noticed; typing is internal and self-evident.
-  //
-  // Per-keystroke cost: zero — markTyping() flips isTyping() exactly twice
-  // per typing burst (true on first keystroke, false after debounce), and
-  // Solid memo equality dedupes the resulting enum so the glyph text node
-  // re-renders only on actual state transitions, not per character.
-  const indicatorState = createMemo<keyof typeof INDICATOR_GLYPH>(() => {
-    if (keybind.leader) return "leader"
-    if (store.mode === "shell") return "shell"
-    if (statusType() !== "idle") return "streaming"
-    if (isTyping()) return "typing"
-    return "idle"
-  })
-
-  // Turbo spool spinner. Six cells: two braille turbines (compressor +
-  // turbine wheel, phase-offset 180°) and a boost gauge that fills as
-  // pressure builds. Cycle: idle → smoothstep spool-up → peak with bloom
-  // flash → linear bleed off. Rotation speed is proportional to current
-  // boost so turbines visibly accelerate under load. ~1.4s per cycle.
-  // See ui/spinner.ts createTurboFrames / createTurboColors. Frame strings
-  // are hoisted to module scope (TURBO_FRAMES); only the agent-tinted
-  // colour ramp recomputes per agent change.
+  // heat source for the kinetic busy sentence — the agent's identity color.
   const sparkColor = createMemo(() => {
     const agent = local.agent.current()
-    return agent ? local.agent.color(agent.name) : theme.border
+    return agent ? local.agent.color(agent.name) : theme.primary
   })
-  const turboColors = createMemo(() => createTurboColors(sparkColor()))
+
+  // ── the afterglow bottom edge ─────────────────────────────────────────
+  // static span arrays, memoized: they only rebuild when width, theme, the
+  // sentence, or the agent changes — never per stream delta. motion budget
+  // holds at cursor + this one live line (specs/tui-redesign.md #3).
+  const edgeWidth = createMemo(() => Math.max(0, props.width ?? dimensions().width - 6))
+  const ruleSpans = createMemo(() =>
+    fadeRule(theme, mix(theme.primary, fadeTarget(theme), 0.35), clampRule(RULE.deck, edgeWidth())),
+  )
+  const busySentence = createMemo(() => props.busyText ?? "working")
+
+  // the one live line: a brightness crest travels through the sentence
+  // while work runs. ~8fps on a single short line of ~14 spans — cheap
+  // even over mosh, and animations_enabled kills it entirely (the static
+  // kinetic ramp remains).
+  const [pulse, setPulse] = createSignal(0)
+  createEffect(() => {
+    if (!busy() || props.disabled || !animationsEnabled()) return
+    const timer = setInterval(() => setPulse((p) => (p + 0.055) % 1), 120)
+    onCleanup(() => clearInterval(timer))
+  })
+  const busySpans = createMemo(() =>
+    busy() && !props.disabled && animationsEnabled()
+      ? kineticLive(theme, busySentence(), sparkColor(), pulse())
+      : kinetic(theme, busySentence(), sparkColor()),
+  )
+
+  // "· 12s" elapsed whisper — ticks once per second, only while busy.
+  const [now, setNow] = createSignal(Date.now())
+  createEffect(() => {
+    if (!busy() || props.busyStartedAt === undefined) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    onCleanup(() => clearInterval(timer))
+  })
+  const elapsedText = createMemo(() => {
+    const started = props.busyStartedAt
+    if (!started || !busy()) return ""
+    const label = formatDuration(Math.max(0, Math.round((now() - started) / 1000)))
+    return label ? ` · ${label}` : ""
+  })
+
+  // context pressure as words, never glyphs — the decision instrument.
+  // calm reads "context 61%" (bare "61%" under 80 cols); past 70 it heats
+  // to "84% full · compact soon" in warning, past 90 in error.
+  const contextState = createMemo(() => {
+    const pct = usagePct()
+    if (pct === undefined) return undefined
+    return (
+      contextWords(theme, pct) ?? {
+        text: edgeWidth() < 76 ? `${pct}%` : `context ${pct}%`,
+        fg: theme.textMuted,
+      }
+    )
+  })
 
   const placeholderText = createMemo(() => {
     if (props.showPlaceholder === false) return undefined
@@ -1321,25 +1258,109 @@ export function Prompt(props: PromptProps) {
         promptPartTypeId={() => promptPartTypeId}
       />
       <box ref={(r) => (anchor = r)} visible={props.visible !== false}>
-        {/* Input row. The state indicator is a single 1-cell glyph whose
-            character encodes prompt state (see INDICATOR_GLYPH) and whose
-            colour encodes agent identity (borderHighlight). Geometry:
-
-              session paddingLeft (2) + this paddingLeft (1) = dot at col 3
-              dot (1 cell) + marginRight (2)                  = textarea at col 6
-
-            Dot sits one column outside the message-body indent — reads as
-            a margin marker anchoring the prompt as its own surface — while
-            the textarea text column stays aligned with message bodies
-            above. The 2-cell gap gives the glyph breathing room so denser
-            shapes (●, ◉) don't visually collide with the first character.
-
-            alignItems=flex-start keeps the dot pinned to the first row
-            when the textarea grows multi-line. */}
-        <box paddingLeft={1} paddingRight={0} paddingTop={1} flexShrink={0} flexDirection="row" alignItems="flex-start">
-          <text fg={borderHighlight()} flexShrink={0} marginRight={2}>
-            {INDICATOR_GLYPH[indicatorState()]}
-          </text>
+        {/* ── the live line ──────────────────────────────────────────────
+            exactly one hot spot at a time (specs/tui-redesign.md laws):
+            busy → the kinetic sentence burns in the agent's color;
+            ask up (disabled) → the work cools to "… · paused" in sink tone
+            and the ask above takes the heat;
+            idle after a finished turn → the return glance, verdict bold. */}
+        <Show when={busy() && !props.disabled}>
+          <box flexDirection="row" justifyContent="space-between" gap={2} flexShrink={0} marginBottom={1}>
+            <Switch>
+              <Match when={status().type === "retry"}>
+                {(() => {
+                  // failures burn: retry message in error, countdown appended.
+                  const retry = createMemo(() => {
+                    const s = status()
+                    return s.type === "retry" ? s : undefined
+                  })
+                  const message = createMemo(() => {
+                    const r = retry()
+                    if (!r) return ""
+                    if (r.message.includes("exceeded your current quota") && r.message.includes("gemini"))
+                      return "gemini is way too hot right now"
+                    if (r.message.length > 80) return r.message.slice(0, 80) + "..."
+                    return r.message
+                  })
+                  const isTruncated = createMemo(() => (retry()?.message.length ?? 0) > 120)
+                  const [seconds, setSeconds] = createSignal(0)
+                  onMount(() => {
+                    const timer = setInterval(() => {
+                      const next = retry()?.next
+                      if (next) setSeconds(Math.round((next - Date.now()) / 1000))
+                    }, 1000)
+                    onCleanup(() => clearInterval(timer))
+                  })
+                  const retryText = () => {
+                    const r = retry()
+                    if (!r) return ""
+                    const hint = isTruncated() ? " (click to expand)" : ""
+                    const duration = formatDuration(seconds())
+                    return `${message()}${hint} · retrying ${duration ? `in ${duration} ` : ""}attempt #${r.attempt}`
+                  }
+                  return (
+                    <box
+                      flexShrink={1}
+                      onMouseUp={() => {
+                        const r = retry()
+                        if (r && isTruncated()) void DialogAlert.show(dialog, "Retry Error", r.message)
+                      }}
+                    >
+                      <text wrapMode="none" fg={theme.error}>
+                        {retryText()}
+                      </text>
+                    </box>
+                  )
+                })()}
+              </Match>
+              <Match when={true}>
+                <text wrapMode="none" flexShrink={1}>
+                  <Spans spans={busySpans()} />
+                  <span style={{ fg: theme.textMuted }}>{elapsedText()}</span>
+                  <Show when={queuedCount() > 0}>
+                    <span style={{ fg: theme.textMuted }}>
+                      {" · "}
+                      {keybind.print("session_flush_queued")} flush {queuedCount()} queued
+                    </span>
+                  </Show>
+                </text>
+              </Match>
+            </Switch>
+            <text flexShrink={0} fg={store.interrupt > 0 ? theme.primary : theme.textMuted}>
+              {store.interrupt > 0 ? "esc again to stop" : "esc to stop"}
+            </text>
+          </box>
+        </Show>
+        <Show when={!busy() && props.glance}>
+          {(glance) => (
+            <text wrapMode="none" flexShrink={0} marginBottom={1}>
+              <span
+                style={{
+                  fg:
+                    glance().tone === "success"
+                      ? theme.success
+                      : glance().tone === "warning"
+                        ? theme.warning
+                        : theme.error,
+                  bold: true,
+                }}
+              >
+                {glance().verdict}
+              </span>
+              <Show when={glance().detail}>
+                <span style={{ fg: theme.textMuted }}> — {glance().detail}</span>
+              </Show>
+            </text>
+          )}
+        </Show>
+        {/* ── the sacred bottom edge: fade rule → air → cursor → air →
+            whisper. the air makes the composer read as its own surface —
+            structure out of space, not borders. */}
+        <text wrapMode="none" flexShrink={0} selectable={false}>
+          <Spans spans={ruleSpans()} />
+        </text>
+        <box height={1} flexShrink={0} />
+        <box flexShrink={0}>
           <box flexGrow={1} flexShrink={1}>
             <textarea
               placeholder={placeholderText()}
@@ -1353,7 +1374,6 @@ export function Prompt(props: PromptProps) {
                 setStore("prompt", "input", value)
                 autocomplete.onInput(value)
                 syncExtmarksWithPromptParts()
-                markTyping()
               }}
               keyBindings={textareaKeybindings()}
               onKeyDown={async (e) => {
@@ -1530,205 +1550,64 @@ export function Prompt(props: PromptProps) {
                 setTimeout(() => {
                   // setTimeout is a workaround and needs to be addressed properly
                   if (!input || input.isDestroyed) return
-                  input.cursorColor = theme.text
+                  input.cursorColor = theme.primary
                 }, 0)
               }}
               onMouseDown={(r: MouseEvent) => r.target?.focus()}
-              cursorColor={theme.text}
+              cursorColor={theme.primary}
               syntaxStyle={syntax()}
             />
           </box>
         </box>
-        {/* Breathing row between input and identity strip — so the meta below
-            doesn't crowd the bottom of the textarea. */}
         <box height={1} flexShrink={0} />
-        {/* Identity row. Stable position. agent · model · variant on left,
-            meter + cost + plugin slot on right. paddingLeft=3 puts content
-            at col 5 absolute (matches message body indent). paddingRight=0
-            so it extends to the same right edge as message bodies above.
-            Wraps to multiple lines on narrow widths — never hides info. */}
+        {/* status whisper — one dim line: agent · model [· variant] ·
+            context words · cost. words in color, never glyphs or meters. */}
         <box
-          paddingLeft={3}
-          paddingRight={0}
           flexDirection="row"
           justifyContent="space-between"
           alignItems="flex-start"
-          gap={3}
-          flexShrink={0}
-          flexWrap="wrap"
-        >
-          <box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
-            <Show when={local.agent.current()} fallback={<text fg={theme.textMuted}>—</text>}>
-              {(agent) => (
-                <>
-                  <text fg={fadeColor(highlight(), agentMetaAlpha())}>
-                    {store.mode === "shell" ? "shell" : agent().name}
-                  </text>
-                  <Show when={store.mode === "normal"}>
-                    <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>·</text>
-                    <text
-                      flexShrink={0}
-                      fg={fadeColor(keybind.leader ? theme.textMuted : theme.text, modelMetaAlpha())}
-                    >
-                      {local.model.parsed().modelID}
-                    </text>
-                    <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>·</text>
-                    <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>{currentProviderLabelLower()}</text>
-                    <Show when={showVariant()}>
-                      <text fg={fadeColor(theme.textMuted, variantMetaAlpha())}>·</text>
-                      <text>
-                        <span style={{ fg: fadeColor(theme.warning, variantMetaAlpha()), bold: true }}>
-                          {local.model.variant.current()}
-                        </span>
-                      </text>
-                    </Show>
-                  </Show>
-                </>
-              )}
-            </Show>
-          </box>
-          <box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
-            {/* Right side of identity row: token-count · pct · cost. The
-                visual bar lives in the row BELOW (where the breathing
-                row used to be) so this strip stays a clean text band.
-                Spacing is tight (gap={1} + a single ` · ` between
-                chunks) — no parentheses around the percentage. */}
-            <Show when={hasUsage()}>
-              <Show
-                when={usageLimit() && usagePct() !== undefined}
-                fallback={<text fg={theme.textMuted}>{usageTokensFormatted()}</text>}
-              >
-                <text fg={theme.textMuted}>
-                  {usageTokensFormatted()} <span style={{ fg: theme.textMuted }}>·</span> {usagePct()}%
-                </text>
-              </Show>
-              <Show when={usageCost()}>
-                <text fg={theme.textMuted}>
-                  <span style={{ fg: theme.textMuted }}>·</span> {usageCost()}
-                </text>
-              </Show>
-            </Show>
-            <Show when={hasRightContent()}>
-              <box flexDirection="row" gap={1} alignItems="center">
-                {props.right}
-              </box>
-            </Show>
-          </box>
-        </box>
-        {/* Breathing row between identity and status so they read as paired
-            but distinct surfaces. The bar moved to the status row's right
-            side (next to the turbo spinner) for visual symmetry. */}
-        <box height={1} flexShrink={0} />
-        {/* Status row. Spark spinner + state on the LEFT when busy/retry,
-            keybind hints when idle. Editor file context pinned RIGHT when
-            present. Reserves 1 row min so identity above doesn't jump. */}
-        <box
-          paddingLeft={3}
-          paddingRight={0}
-          flexDirection="row"
-          justifyContent="space-between"
-          alignItems="flex-start"
-          gap={3}
+          gap={2}
           flexShrink={0}
           minHeight={1}
-          flexWrap="wrap"
         >
-          <Show
-            when={status().type !== "idle"}
-            fallback={
-              <Switch>
-                <Match when={store.mode === "normal"}>
-                  <text fg={theme.border} flexShrink={0}>
-                    {keybind.print("agent_cycle")} agents · {keybind.print("command_list")} commands
-                  </text>
-                </Match>
-                <Match when={store.mode === "shell"}>
-                  <text fg={theme.border} flexShrink={0}>
-                    esc exit shell mode
-                  </text>
-                </Match>
-              </Switch>
-            }
-          >
-            <box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
-              <Show when={kv.get("animations_enabled", true)} fallback={<text fg={sparkColor()}>{SP_FALLBACK}</text>}>
-                <spinner color={turboColors()} frames={TURBO_FRAMES} interval={TURBO_INTERVAL_MS} />
-              </Show>
-              <box flexDirection="row" gap={1} flexShrink={0}>
-                {(() => {
-                  const retry = createMemo(() => {
-                    const s = status()
-                    if (s.type !== "retry") return
-                    return s
-                  })
-                  const message = createMemo(() => {
-                    const r = retry()
-                    if (!r) return
-                    if (r.message.includes("exceeded your current quota") && r.message.includes("gemini"))
-                      return "gemini is way too hot right now"
-                    if (r.message.length > 80) return r.message.slice(0, 80) + "..."
-                    return r.message
-                  })
-                  const isTruncated = createMemo(() => {
-                    const r = retry()
-                    if (!r) return false
-                    return r.message.length > 120
-                  })
-                  const [seconds, setSeconds] = createSignal(0)
-                  onMount(() => {
-                    const timer = setInterval(() => {
-                      const next = retry()?.next
-                      if (next) setSeconds(Math.round((next - Date.now()) / 1000))
-                    }, 1000)
-
-                    onCleanup(() => {
-                      clearInterval(timer)
-                    })
-                  })
-                  const handleMessageClick = () => {
-                    const r = retry()
-                    if (!r) return
-                    if (isTruncated()) {
-                      void DialogAlert.show(dialog, "Retry Error", r.message)
-                    }
-                  }
-
-                  const retryText = () => {
-                    const r = retry()
-                    if (!r) return ""
-                    const baseMessage = message()
-                    const truncatedHint = isTruncated() ? " (click to expand)" : ""
-                    const duration = formatDuration(seconds())
-                    const retryInfo = ` [retrying ${duration ? `in ${duration} ` : ""}attempt #${r.attempt}]`
-                    return baseMessage + truncatedHint + retryInfo
-                  }
-
-                  return (
-                    <Show when={retry()}>
-                      <box onMouseUp={handleMessageClick}>
-                        <text fg={theme.error}>{retryText()}</text>
-                      </box>
-                    </Show>
-                  )
-                })()}
-              </box>
-              <text>
-                <span style={{ fg: store.interrupt > 0 ? theme.primary : theme.text }}>esc</span>
-                <span style={{ fg: store.interrupt > 0 ? theme.primary : theme.textMuted }}>
-                  {store.interrupt > 0 ? " again to interrupt" : " interrupt"}
-                </span>
-              </text>
-              <Show when={queuedCount() > 0}>
-                <text fg={theme.textMuted}>·</text>
-                <text>
-                  <span style={{ fg: theme.text }}>{keybind.print("session_flush_queued")}</span>
-                  <span style={{ fg: theme.textMuted }}>
-                    {queuedCount() === 1 ? " flush queued" : ` flush ${queuedCount()} queued`}
-                  </span>
-                </text>
-              </Show>
-            </box>
-          </Show>
+          <text wrapMode="none" flexShrink={1} fg={theme.textMuted}>
+            <Switch>
+              <Match when={store.mode === "shell"}>
+                <span style={{ fg: theme.primary }}>shell</span>
+                <span style={{ fg: theme.textMuted }}> · esc to exit</span>
+              </Match>
+              <Match when={true}>
+                <Show when={local.agent.current()}>
+                  {(agent) => (
+                    <>
+                      <span style={{ fg: fadeColor(highlight(), agentMetaAlpha()) }}>{agent().name}</span>
+                      <span style={{ fg: theme.textMuted }}> · </span>
+                    </>
+                  )}
+                </Show>
+                <span style={{ fg: theme.textMuted }}>{modelWord(local.model.parsed().modelID)}</span>
+                <Show when={showVariant()}>
+                  <span style={{ fg: theme.textMuted }}> · </span>
+                  <span style={{ fg: theme.warning, bold: true }}>{local.model.variant.current()}</span>
+                </Show>
+                <Show when={contextState()} fallback={
+                  <Show when={hasUsage() && usageTokensFormatted()}>
+                    <span style={{ fg: theme.textMuted }}> · {usageTokensFormatted()}</span>
+                  </Show>
+                }>
+                  {(ctx) => (
+                    <>
+                      <span style={{ fg: theme.textMuted }}> · </span>
+                      <span style={{ fg: ctx().fg }}>{ctx().text}</span>
+                    </>
+                  )}
+                </Show>
+                <Show when={usageCost()}>
+                  <span style={{ fg: theme.textMuted }}> · {usageCost()} today</span>
+                </Show>
+              </Match>
+            </Switch>
+          </text>
           <box flexDirection="row" gap={2} alignItems="center" flexShrink={0}>
             <Show when={editorFileLabelDisplay()}>
               {(file) => (
@@ -1742,12 +1621,10 @@ export function Prompt(props: PromptProps) {
                 </text>
               )}
             </Show>
-            {/* Context bar pinned RIGHT, same row + width as the turbo
-                spinner (6 cells + brackets) for visual symmetry. Hidden
-                if no usage data (no model bound or no context limit
-                known). */}
-            <Show when={hasUsage() && usageLimit() && usagePct() !== undefined}>
-              <ContextBar pct={usagePct()!} />
+            <Show when={hasRightContent()}>
+              <box flexDirection="row" gap={1} alignItems="center">
+                {props.right}
+              </box>
             </Show>
           </box>
         </box>

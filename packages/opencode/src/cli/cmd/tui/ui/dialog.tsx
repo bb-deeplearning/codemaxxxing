@@ -1,11 +1,23 @@
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
-import { batch, createContext, Show, useContext, type JSX, type ParentProps } from "solid-js"
+import { batch, createContext, createMemo, Show, useContext, type JSX, type ParentProps } from "solid-js"
 import { useTheme } from "@tui/context/theme"
 import { MouseButton, Renderable, RGBA } from "@opentui/core"
 import { createStore } from "solid-js/store"
 import { useToast } from "./toast"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import * as Selection from "@tui/util/selection"
+import { clampRule, fadeRule, RULE, Spans } from "@tui/ui/glow"
+import { inlineSafe } from "@tui/util/inline-safe"
+
+export type DialogSize = "medium" | "large" | "xlarge"
+
+// the afterglow dialog is a floating panel with no box borders — its shape
+// is the panel fill (when the theme has one) plus fades and air inside.
+export function dialogWidth(size: DialogSize): number {
+  if (size === "xlarge") return 116
+  if (size === "large") return 88
+  return 60
+}
 
 export function Dialog(
   props: ParentProps<{
@@ -18,11 +30,7 @@ export function Dialog(
   const renderer = useRenderer()
 
   let dismiss = false
-  const width = () => {
-    if (props.size === "xlarge") return 116
-    if (props.size === "large") return 88
-    return 60
-  }
+  const width = () => dialogWidth(props.size ?? "medium")
 
   return (
     <box
@@ -53,7 +61,9 @@ export function Dialog(
         }}
         width={width()}
         maxWidth={dimensions().width - 2}
-        backgroundColor={theme.backgroundPanel}
+        // surfaces yes, borders no: the panel fill is allowed chrome, but a
+        // transparent theme (panel token a === 0) degrades to fades + air.
+        backgroundColor={theme.backgroundPanel.a > 0 ? theme.backgroundPanel : undefined}
       >
         {props.children}
       </box>
@@ -188,4 +198,39 @@ export function useDialog() {
     throw new Error("useDialog must be used within a DialogProvider")
   }
   return value
+}
+
+// content cells available inside the standard dialog chrome (2 cols of
+// horizontal padding each side), after the panel clamps to the terminal.
+// callers clamp their fade rules against this.
+export function useDialogInnerWidth(): () => number {
+  const dialog = useDialog()
+  const dimensions = useTerminalDimensions()
+  return createMemo(() => Math.max(0, Math.min(dialogWidth(dialog.size), dimensions().width - 2) - 4))
+}
+
+// the shared dialog head: bold lowercase title in theme.text with a dim
+// clickable "esc" whisper at the right edge, over a dissolving rule in the
+// dialog's heat color (warning for destructive confirms, primary otherwise).
+// no box borders anywhere — structure is fades and air.
+export function DialogHeader(props: { title: string; color?: RGBA }) {
+  const dialog = useDialog()
+  const { theme } = useTheme()
+  const innerWidth = useDialogInnerWidth()
+  const ruleSpans = createMemo(() => fadeRule(theme, props.color ?? theme.primary, clampRule(RULE.ask, innerWidth())))
+  return (
+    <>
+      <box flexDirection="row" justifyContent="space-between" gap={2} flexShrink={0}>
+        <text wrapMode="none" flexShrink={1}>
+          <span style={{ fg: theme.text, bold: true }}>{inlineSafe(props.title).toLowerCase()}</span>
+        </text>
+        <text wrapMode="none" flexShrink={0} fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
+          esc
+        </text>
+      </box>
+      <text wrapMode="none" flexShrink={0} selectable={false}>
+        <Spans spans={ruleSpans()} />
+      </text>
+    </>
+  )
 }

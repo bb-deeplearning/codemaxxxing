@@ -1,7 +1,8 @@
 import { createMemo, createSignal, type JSX } from "solid-js"
 import { Show } from "solid-js"
 import type { TextPart } from "@opencode-ai/sdk/v2"
-import type { RGBA } from "@opentui/core"
+import type { MouseEvent, RGBA } from "@opentui/core"
+import { useRenderer } from "@opentui/solid"
 import stripAnsi from "strip-ansi"
 import { inlineSafe } from "../../util/inline-safe"
 
@@ -164,6 +165,7 @@ export interface MailboxMessageProps {
 }
 
 export function MailboxMessage(props: MailboxMessageProps): JSX.Element {
+  const renderer = useRenderer()
   const author = (props.part.metadata?.["from"] as string | undefined) ?? undefined
 
   // Single-pass body normalization. ANSI strip + prefix strip happen on
@@ -188,6 +190,26 @@ export function MailboxMessage(props: MailboxMessageProps): JSX.Element {
   // doesn't change either is a free reference comparison downstream.
   const truncated = createMemo(() => truncateBody(normalized().body, expanded()))
 
+  // Click-to-expand handler. Stable identity (never swapped for undefined)
+  // so the opentui solid renderer can't hold a stale handler across
+  // truncation changes; the overflow check lives INSIDE the handler.
+  //
+  // Ordering is load-bearing:
+  //   1. no overflow → return without stopping propagation, so a plain
+  //      click still bubbles to UserMessage's onMouseUp (DialogMessage).
+  //   2. active selection → return WITHOUT stopping propagation, so the
+  //      app root's copy-on-select handler (app.tsx) still fires when a
+  //      drag-selection ends over the mailbox body. Same guard as
+  //      InlineTool/BlockTool in index.tsx.
+  //   3. otherwise → stopPropagation THEN toggle, so expanding/collapsing
+  //      doesn't also open DialogMessage via the ancestor UserMessage box.
+  const onMouseUp = (e: MouseEvent) => {
+    if (!truncated().overflow) return
+    if (renderer.getSelection()?.getSelectedText()) return
+    e.stopPropagation()
+    toggle()
+  }
+
   const statusFg = createMemo(() => statusChromeColor(props.theme, normalized().status))
 
   // Render nothing when the body is empty AFTER stripping (e.g. a child
@@ -202,7 +224,7 @@ export function MailboxMessage(props: MailboxMessageProps): JSX.Element {
       marginTop={1}
       flexShrink={0}
       flexDirection="column"
-      onMouseUp={truncated().overflow ? toggle : undefined}
+      onMouseUp={onMouseUp}
     >
       <text fg={props.theme.textMuted}>
         <span style={{ fg: props.theme.textMuted }}>← from </span>

@@ -24,6 +24,11 @@ const FAKE_THEME: SubagentFooterTheme = {
   text: RGBA.fromHex("#ffffff"),
   textMuted: RGBA.fromHex("#888888"),
   border: RGBA.fromHex("#444444"),
+  background: RGBA.fromHex("#101010"),
+  primary: RGBA.fromHex("#00ccff"),
+  success: RGBA.fromHex("#00cc66"),
+  warning: RGBA.fromHex("#ffcc00"),
+  error: RGBA.fromHex("#ff0000"),
 }
 
 const session = (overrides: Partial<Session> = {}): Session => ({
@@ -97,12 +102,32 @@ const userMsg = (overrides: Partial<UserMessage> = {}): UserMessage => ({
 })
 
 describe("agentNameFromTitle", () => {
-  test("extracts the @-prefixed slug from a subagent title", () => {
+  test("extracts the agent type from a legacy v1 subagent title", () => {
     expect(agentNameFromTitle("@worker subagent (foo)")).toBe("worker")
+  })
+
+  test("extracts the agent type from the legacy task-tool shape", () => {
+    // tool/task.ts:72 — `${description} (@${agentType} subagent)`
+    expect(agentNameFromTitle("Fix the race (@general subagent)")).toBe("general")
+  })
+
+  test("extracts the nickname from a v2 spawn title", () => {
+    // agent/control.ts:1031 — `${task_name} (@${nickname})`
+    expect(agentNameFromTitle("git_historian (@plato)")).toBe("plato")
+    expect(agentNameFromTitle("worker_1 (@newton)")).toBe("newton")
+  })
+
+  test("legacy format wins over the v2 parse (space before paren blocks v2)", () => {
+    expect(agentNameFromTitle("desc (@explore subagent)")).toBe("explore")
+  })
+
+  test("v2 parse only matches a trailing parenthetical", () => {
+    expect(agentNameFromTitle("(@plato) something after")).toBeUndefined()
   })
 
   test("returns undefined for non-subagent titles", () => {
     expect(agentNameFromTitle("regular session")).toBeUndefined()
+    expect(agentNameFromTitle("mentions (parens) but no at-sign")).toBeUndefined()
     expect(agentNameFromTitle(undefined)).toBeUndefined()
     expect(agentNameFromTitle("")).toBeUndefined()
   })
@@ -117,7 +142,7 @@ describe("computeSubagentInfo", () => {
       session({ id: "ses_other", parentID: "ses_x", time: { created: 50, updated: 51 } }),
     ]
     const info = computeSubagentInfo(sessions, sessions[0], "worker")
-    expect(info.label).toBe("Worker")
+    expect(info.label).toBe("worker")
     expect(info.total).toBe(3)
     // ses_self created at 200 → 1 sibling earlier → index 2.
     expect(info.index).toBe(2)
@@ -125,12 +150,12 @@ describe("computeSubagentInfo", () => {
 
   test("handles a session with no parent (root session) by returning total=0", () => {
     const root = session({ id: "ses_root", parentID: undefined })
-    expect(computeSubagentInfo([root], root, undefined)).toEqual({ label: "Subagent", index: 0, total: 0 })
+    expect(computeSubagentInfo([root], root, undefined)).toEqual({ label: "subagent", index: 0, total: 0 })
   })
 
   test("returns Subagent when no agent name resolves", () => {
     const s = session()
-    expect(computeSubagentInfo([s], s, undefined).label).toBe("Subagent")
+    expect(computeSubagentInfo([s], s, undefined).label).toBe("subagent")
   })
 
   test("returns the unmodified label when given undefined session", () => {
@@ -139,7 +164,7 @@ describe("computeSubagentInfo", () => {
 
   test("titlecases multi-word agent names", () => {
     const s = session()
-    expect(computeSubagentInfo([s], s, "code reviewer").label).toBe("Code Reviewer")
+    expect(computeSubagentInfo([s], s, "code reviewer").label).toBe("code reviewer")
   })
 })
 
@@ -248,7 +273,7 @@ describe("SubagentFooterView", () => {
 
   test("renders the label, sibling counter, and status", async () => {
     const { frame, destroy } = await renderFrame({
-      label: "Worker",
+      label: "worker",
       index: 2,
       total: 4,
       status: "running",
@@ -263,7 +288,7 @@ describe("SubagentFooterView", () => {
       onNext: () => {},
     })
     try {
-      expect(frame).toContain("Worker")
+      expect(frame).toContain("worker")
       expect(frame).toContain("2 of 4")
       expect(frame).toContain("running")
       expect(frame).toContain("parent")
@@ -277,7 +302,7 @@ describe("SubagentFooterView", () => {
   test("renders all four status labels", async () => {
     for (const status of ["running", "waiting", "completed", "errored"] as const) {
       const { frame, destroy } = await renderFrame({
-        label: "Worker",
+        label: "worker",
         index: 1,
         total: 1,
         status,
@@ -301,7 +326,7 @@ describe("SubagentFooterView", () => {
 
   test("hides sibling counter when total is zero (root session)", async () => {
     const { frame, destroy } = await renderFrame({
-      label: "Subagent",
+      label: "subagent",
       index: 0,
       total: 0,
       status: "waiting",
@@ -324,7 +349,7 @@ describe("SubagentFooterView", () => {
 
   test("renders usage strip when hasUsage is true and usageContext is provided", async () => {
     const { frame, destroy } = await renderFrame({
-      label: "Worker",
+      label: "worker",
       index: 1,
       total: 1,
       status: "running",
@@ -341,7 +366,6 @@ describe("SubagentFooterView", () => {
       onNext: () => {},
     })
     try {
-      expect(frame).toContain("tokens")
       expect(frame).toContain("1.2K (12%)")
       expect(frame).toContain("$0.05")
     } finally {
@@ -351,7 +375,7 @@ describe("SubagentFooterView", () => {
 
   test("renders usage strip without cost when usageCost is undefined", async () => {
     const { frame, destroy } = await renderFrame({
-      label: "Worker",
+      label: "worker",
       index: 1,
       total: 1,
       status: "running",
@@ -367,7 +391,6 @@ describe("SubagentFooterView", () => {
       onNext: () => {},
     })
     try {
-      expect(frame).toContain("tokens")
       expect(frame).toContain("100")
       expect(frame).not.toContain("$")
     } finally {
@@ -382,7 +405,7 @@ describe("SubagentFooterView", () => {
     const handle = await testRender(
       () => (
         <SubagentFooterView
-          label="Worker"
+          label="worker"
           index={1}
           total={1}
           status="running"

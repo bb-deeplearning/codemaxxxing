@@ -1,50 +1,55 @@
 /** @jsxImportSource @opentui/solid */
 import { Match, Show, Switch, createMemo, createSignal } from "solid-js"
-import type { JSX } from "@opentui/solid"
 import type { RGBA } from "@opentui/core"
 import type { ToolPart } from "@opencode-ai/sdk/v2"
 import stripAnsi from "strip-ansi"
-import { SplitBorder } from "@tui/component/border"
 import { inlineSafe } from "@tui/util/inline-safe"
+import { mix } from "@tui/ui/glow"
 import type { Tool } from "@/tool/tool"
 import type { ExecCommandTool } from "@/tool/process/exec-command"
 import type { WriteStdinTool } from "@/tool/process/write-stdin"
 
-// TUI part renderers for the unified_exec tools (exec_command + write_stdin)
-// shipped in wave 3. These extend the per-tool dispatch in
-// routes/session/index.tsx with two more `Match` clauses; the renderers
-// themselves take only their per-call props plus the small color palette
-// they need, so they stay decoupled from the Theme/Sync/Session context
-// stack and can be unit-rendered in isolation. The session route is the
-// only place that pulls colors from `useTheme()` and forwards them.
+// TUI part renderers for the unified_exec tools (exec_command + write_stdin),
+// afterglow edition: exec_command is a loud "run" object — colored header
+// word, bold command title, verdict whisper on the right edge; write_stdin
+// is quiet chatter — one dim line. Output cools into the dark (dim body,
+// sunk tail, "n more" whisper) instead of a bordered terminal block.
+//
+// The renderers take only their per-call props plus the small color
+// palette they need, so they stay decoupled from the Theme/Sync/Session
+// context stack and can be unit-rendered in isolation. The session route
+// is the only place that pulls colors from `useTheme()` and forwards them.
 //
 // Antipattern note (specs/tui-render-freeze.md):
-//   - Header line is a single `<text>` node with inline `<span>` colour
-//     stripes, NOT a `<box flexDirection="row">` wrapping multiple
-//     children. Multi-line / multi-KB cmd or chars are pre-sanitised via
-//     `inlineSafe` so the header stays one logical line even on narrow
-//     terminals; the raw values stay in `props.input` for any consumer
-//     that wants the original.
-//   - Output renders as vertical siblings inside a column box bordered
-//     on the left (same visual idiom as Shell's terminal block). Long
-//     outputs collapse to MAX_OUTPUT_LINES with a click-to-expand text
-//     affordance, matching the Bash renderer's interaction model.
+//   - The header is a flex-row justify-between of exactly two SINGLE-LINE
+//     `<text>` nodes (wrapMode="none", cmd pre-sanitised via `inlineSafe`)
+//     — the sanctioned right-whisper shape. Never put a wrappable child in
+//     that row.
+//   - Output renders as vertical siblings inside a column box.
 
-// Output truncation cap. Matches Shell's renderer (10 lines + ellipsis).
+// Output truncation cap. Matches the Shell renderer (10 lines).
 const MAX_OUTPUT_LINES = 10
 
-// Display caps for header strings. The header lives in a single `<text>`
-// (not a flex-row), so the freeze antipattern doesn't trigger directly,
-// but we still want one logical line for readability and as defence in
-// depth against future structural changes.
+// Display caps for header strings.
 const HEADER_CMD_MAX = 120
 const HEADER_CHARS_MAX = 60
 
 export interface ProcessTheme {
   text: RGBA
   textMuted: RGBA
-  accent: RGBA
+  background: RGBA
+  primary: RGBA
+  success: RGBA
+  warning: RGBA
   error: RGBA
+}
+
+// the sink tones from glow, computed against the injected palette so the
+// renderers stay context-free. transparent backgrounds (a === 0) degrade
+// to textMuted — the same rule as glow.fadeTarget.
+function sink(theme: ProcessTheme, depth: number): RGBA {
+  const target = theme.background.a > 0 ? theme.background : theme.textMuted
+  return mix(theme.textMuted, target, depth >= 2 ? 0.6 : 0.32)
 }
 
 type ToolProps<T> = {
@@ -77,20 +82,22 @@ function statusError(part: ToolPart): string | undefined {
   return part.state.status === "error" ? part.state.error : undefined
 }
 
-// Pill text shown to the right of the header. Codex's exec_command leaves
-// `session_id` in metadata while the process is alive and replaces it with
-// `exit_code` once the process exits — we surface whichever is present so
-// the header reads as either "session #N" (still running) or "exit C"
-// (terminal). Same for write_stdin: alive → session pill, exited → exit.
-function metadataPill(metadata: Record<string, unknown>): string | undefined {
+// Verdict for the right whisper. Codex's exec_command leaves `session_id`
+// in metadata while the process is alive and replaces it with `exit_code`
+// once it exits — alive reads as a dim "session #N", terminal reads as a
+// bold verdict word ("done" / "exit C").
+function verdict(theme: ProcessTheme, metadata: Record<string, unknown>): { word: string; fg: RGBA; bold: boolean } | undefined {
   const exit = metadata.exit_code
-  if (typeof exit === "number") return `exit ${exit}`
+  if (typeof exit === "number") {
+    if (exit === 0) return { word: "done", fg: theme.success, bold: true }
+    return { word: `exit ${exit}`, fg: theme.error, bold: true }
+  }
   const sid = metadata.session_id
-  if (typeof sid === "number") return `session #${sid}`
+  if (typeof sid === "number") return { word: `session #${sid}`, fg: theme.textMuted, bold: false }
   return undefined
 }
 
-// One-decimal seconds format for the wall-time pill. `wall_time_seconds`
+// One-decimal seconds format for the wall-time whisper. `wall_time_seconds`
 // in the tool's metadata is the elapsed real time the model spent inside
 // this call. Hidden when absent (pending / running with no metadata yet).
 function wallTimeLabel(metadata: Record<string, unknown>): string | undefined {
@@ -99,39 +106,25 @@ function wallTimeLabel(metadata: Record<string, unknown>): string | undefined {
   return `${w.toFixed(1)}s`
 }
 
-// Output renderer reused by both Process and ProcessWriteStdin. Splits the
-// output once per output change, caps to MAX_OUTPUT_LINES collapsed, and
-// exposes a click affordance when the cap is exceeded. ANSI escape
-// sequences are stripped because the model PTY output can carry colour
-// codes and pager artefacts that are noise in the transcript view.
-function OutputBlock(props: {
-  output: string
-  theme: ProcessTheme
-  expanded: boolean
-  onToggle: () => void
-  prefix?: JSX.Element
-}) {
+// Output cooling into the dark, reused by both renderers: dim body at +2
+// indent, last visible line sinks, the "n more" whisper is almost gone.
+// ANSI escape sequences are stripped because the model PTY output can
+// carry colour codes and pager artefacts that are noise in the transcript.
+function OutputBlock(props: { output: string; theme: ProcessTheme; expanded: boolean; onToggle: () => void }) {
   const lines = createMemo(() => props.output.split("\n"))
   const overflow = createMemo(() => lines().length > MAX_OUTPUT_LINES)
-  const limited = createMemo(() => {
-    if (props.expanded || !overflow()) return props.output
-    return [...lines().slice(0, MAX_OUTPUT_LINES), "…"].join("\n")
-  })
 
   return (
-    <box
-      border={["left"]}
-      customBorderChars={SplitBorder.customBorderChars}
-      borderColor={props.theme.accent}
-      paddingLeft={1}
-      gap={1}
-      flexShrink={0}
-      onMouseUp={overflow() ? props.onToggle : undefined}
-    >
-      <Show when={props.prefix}>{props.prefix}</Show>
-      <text fg={props.theme.textMuted}>{limited()}</text>
-      <Show when={overflow()}>
-        <text fg={props.theme.textMuted}>{props.expanded ? "Click to collapse" : "Click to expand"}</text>
+    <box paddingLeft={2} flexShrink={0} onMouseUp={overflow() ? props.onToggle : undefined}>
+      <Show
+        when={overflow() && !props.expanded}
+        fallback={<text fg={props.theme.textMuted}>{props.output}</text>}
+      >
+        <text fg={props.theme.textMuted}>{lines().slice(0, MAX_OUTPUT_LINES - 1).join("\n")}</text>
+        <text fg={sink(props.theme, 1)} wrapMode="none">
+          {lines()[MAX_OUTPUT_LINES - 1]}
+        </text>
+        <text fg={sink(props.theme, 2)}>{lines().length - MAX_OUTPUT_LINES} more</text>
       </Show>
     </box>
   )
@@ -140,7 +133,7 @@ function OutputBlock(props: {
 export function Process(props: RenderProps<typeof ExecCommandTool>) {
   const cmd = createMemo(() => inlineSafe(props.input.cmd ?? "", HEADER_CMD_MAX))
   const output = createMemo(() => stripAnsi(props.output?.trim() ?? ""))
-  const pill = createMemo(() => metadataPill(props.metadata as Record<string, unknown>))
+  const state = createMemo(() => verdict(props.theme, props.metadata as Record<string, unknown>))
   const wall = createMemo(() => wallTimeLabel(props.metadata as Record<string, unknown>))
   const error = createMemo(() => statusError(props.part))
   // Expand state has two flavours. Tests inject a controlled `expanded`
@@ -157,33 +150,28 @@ export function Process(props: RenderProps<typeof ExecCommandTool>) {
   return (
     <Switch>
       <Match when={isPending(props.part)}>
-        <text fg={props.theme.textMuted}>exec · preparing…</text>
+        <text fg={props.theme.textMuted}>preparing a command...</text>
       </Match>
       <Match when={true}>
         <box marginTop={1} gap={1} flexShrink={0}>
-          <text fg={props.theme.textMuted}>
-            <span style={{ fg: props.theme.textMuted }}>exec · </span>
-            <span style={{ fg: props.theme.text }}>{cmd()}</span>
-            <Show when={pill()}>
-              <span style={{ fg: props.theme.textMuted }}> · {pill()}</span>
+          <box flexDirection="row" justifyContent="space-between" gap={2} alignItems="flex-start" flexShrink={0}>
+            <text wrapMode="none" flexShrink={1}>
+              <span style={{ fg: props.theme.primary }}>run</span>
+              <span style={{ fg: props.theme.text, bold: true }}> {cmd()}</span>
+            </text>
+            <Show when={state() || wall()}>
+              <text wrapMode="none" flexShrink={0}>
+                <Show when={state()}>
+                  {(v) => <span style={{ fg: v().fg, bold: v().bold }}>{v().word}</span>}
+                </Show>
+                <Show when={wall()}>
+                  <span style={{ fg: props.theme.textMuted }}>{state() ? " · " : ""}{wall()}</span>
+                </Show>
+              </text>
             </Show>
-            <Show when={wall()}>
-              <span style={{ fg: props.theme.textMuted }}> · {wall()}</span>
-            </Show>
-          </text>
+          </box>
           <Show when={output()}>
-            <OutputBlock
-              output={output()}
-              theme={props.theme}
-              expanded={expanded()}
-              onToggle={toggle}
-              prefix={
-                <text>
-                  <span style={{ fg: props.theme.accent, bold: true }}>$ </span>
-                  <span style={{ fg: props.theme.text }}>{cmd()}</span>
-                </text>
-              }
-            />
+            <OutputBlock output={output()} theme={props.theme} expanded={expanded()} onToggle={toggle} />
           </Show>
           <Show when={error()}>
             <text fg={props.theme.error}>{error()}</text>
@@ -198,16 +186,15 @@ export function ProcessWriteStdin(props: RenderProps<typeof WriteStdinTool>) {
   const sid = createMemo(() => props.input.session_id)
   // Empty / omitted chars is the canonical "pure poll" pattern (codex
   // process_manager.rs:619-621): the model is just draining recent output
-  // without sending input. The "(poll)" sentinel makes that shape obvious
-  // in the transcript so the reader can tell at a glance which calls were
-  // input vs simple drains.
+  // without sending input. The "poll" word makes that shape obvious in
+  // the transcript so the reader can tell which calls were input vs drains.
   const chars = createMemo(() => {
     const c = props.input.chars ?? ""
-    if (c.length === 0) return "(poll)"
+    if (c.length === 0) return "poll"
     return inlineSafe(c, HEADER_CHARS_MAX)
   })
   const output = createMemo(() => stripAnsi(props.output?.trim() ?? ""))
-  const pill = createMemo(() => metadataPill(props.metadata as Record<string, unknown>))
+  const state = createMemo(() => verdict(props.theme, props.metadata as Record<string, unknown>))
   const wall = createMemo(() => wallTimeLabel(props.metadata as Record<string, unknown>))
   const error = createMemo(() => statusError(props.part))
   const [localExpanded, setLocalExpanded] = createSignal(false)
@@ -217,17 +204,18 @@ export function ProcessWriteStdin(props: RenderProps<typeof WriteStdinTool>) {
   return (
     <Switch>
       <Match when={isPending(props.part)}>
-        <text fg={props.theme.textMuted}>write_stdin · preparing…</text>
+        <text fg={props.theme.textMuted}>watching a process...</text>
       </Match>
       <Match when={true}>
-        <box marginTop={1} gap={1} flexShrink={0}>
-          <text fg={props.theme.textMuted}>
-            <span style={{ fg: props.theme.textMuted }}>write_stdin · </span>
+        <box flexShrink={0}>
+          {/* quiet chatter: one dim line — label dim, payload in text tone */}
+          <text wrapMode="none" fg={props.theme.textMuted}>
+            <span style={{ fg: props.theme.textMuted }}>stdin </span>
             <span style={{ fg: props.theme.text }}>
-              #{sid()} · {chars()}
+              #{sid()} {chars()}
             </span>
-            <Show when={pill()}>
-              <span style={{ fg: props.theme.textMuted }}> · {pill()}</span>
+            <Show when={state()}>
+              {(v) => <span style={{ fg: props.theme.textMuted }}> · {v().word}</span>}
             </Show>
             <Show when={wall()}>
               <span style={{ fg: props.theme.textMuted }}> · {wall()}</span>

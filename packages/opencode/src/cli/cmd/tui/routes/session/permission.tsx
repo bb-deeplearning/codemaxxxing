@@ -1,25 +1,24 @@
 import { createStore } from "solid-js/store"
 import { createMemo, For, Match, Show, Switch } from "solid-js"
-import { Portal, useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
-import type { TextareaRenderable } from "@opentui/core"
+import { Portal, useKeyboard, useTerminalDimensions, type JSX } from "@opentui/solid"
+import type { RGBA, TextareaRenderable } from "@opentui/core"
 import { useKeybind } from "../../context/keybind"
 import { useTheme } from "../../context/theme"
 import type { PermissionRequest } from "@opencode-ai/sdk/v2"
 import { useSDK } from "../../context/sdk"
-import { LabeledRule, Rule } from "../../component/border"
 import { useSync } from "../../context/sync"
 import { useTextareaKeybindings } from "../../component/textarea-keybindings"
 import { useProject } from "../../context/project"
 import path from "path"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import { Keybind } from "@/util/keybind"
-import { Locale } from "@/util/locale"
 import { inlineSafe } from "../../util/inline-safe"
 import { Global } from "@opencode-ai/core/global"
 import { ShellID } from "@/tool/shell/id"
 import { useDialog } from "../../ui/dialog"
 import { getScrollAcceleration } from "../../util/scroll"
 import { useTuiConfig } from "../../context/tui-config"
+import { clampRule, fadeRule, RULE, Spans, type GlowSpan } from "@tui/ui/glow"
 
 type PermissionStage = "permission" | "always" | "reject"
 
@@ -109,18 +108,6 @@ function EditBody(props: { request: PermissionRequest }) {
   )
 }
 
-function TextBody(props: { title: string; description?: string }) {
-  const { theme } = useTheme()
-  return (
-    <>
-      <text fg={theme.textMuted}>{props.title}</text>
-      <Show when={props.description}>
-        <text fg={theme.text}>{props.description}</text>
-      </Show>
-    </>
-  )
-}
-
 export function PermissionPrompt(props: { request: PermissionRequest }) {
   const sdk = useSDK()
   const project = useProject()
@@ -143,45 +130,47 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
     return {}
   })
 
+  // the tool speaking for this ask, dug out of the same tool part as
+  // input() — titles like "read wants to leave the project" need it.
+  const toolName = createMemo(() => {
+    const tool = props.request.tool
+    if (!tool) return undefined
+    const parts = sync.data.part[tool.messageID] ?? []
+    for (const part of parts) {
+      if (part.type === "tool" && part.callID === tool.callID) return part.tool
+    }
+    return undefined
+  })
+
   const { theme } = useTheme()
+
+  const reject = () => {
+    if (session()?.parentID) {
+      setStore("stage", "reject")
+      return
+    }
+    void sdk.client.permission.reply({
+      reply: "reject",
+      requestID: props.request.id,
+      workspace: project.workspace.current(),
+    })
+  }
 
   return (
     <Switch>
       <Match when={store.stage === "always"}>
-        <Prompt
-          title="always allow"
-          body={
-            <Switch>
-              <Match when={props.request.always.length === 1 && props.request.always[0] === "*"}>
-                <TextBody title={"this will allow " + props.request.permission + " until opencode is restarted."} />
-              </Match>
-              <Match when={true}>
-                <box gap={1}>
-                  <text fg={theme.textMuted}>this will allow the following patterns until opencode is restarted</text>
-                  <box>
-                    <For each={props.request.always}>
-                      {(pattern) => (
-                        <text fg={theme.text}>
-                          {"- "}
-                          {pattern}
-                        </text>
-                      )}
-                    </For>
-                  </box>
-                </box>
-              </Match>
-            </Switch>
-          }
-          options={{ confirm: "confirm", cancel: "cancel" }}
-          escapeKey="cancel"
-          onSelect={(option) => {
+        <AlwaysAsk
+          request={props.request}
+          onConfirm={() => {
             setStore("stage", "permission")
-            if (option === "cancel") return
             void sdk.client.permission.reply({
               reply: "always",
               requestID: props.request.id,
               workspace: project.workspace.current(),
             })
+          }}
+          onCancel={() => {
+            setStore("stage", "permission")
           }}
         />
       </Match>
@@ -209,9 +198,9 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
             if (permission === "edit") {
               const raw = props.request.metadata?.filepath
               const filepath = typeof raw === "string" ? raw : ""
+              const base = filepath ? path.basename(filepath) : ""
               return {
-                label: "edit",
-                target: normalizePath(filepath),
+                title: base ? `edit wants to change ${base}` : "edit wants to change a file",
                 body: <EditBody request={props.request} />,
               }
             }
@@ -219,9 +208,9 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
             if (permission === "read") {
               const raw = data.filePath
               const filePath = typeof raw === "string" ? raw : ""
+              const base = filePath ? path.basename(filePath) : ""
               return {
-                label: "read",
-                target: normalizePath(filePath),
+                title: base ? `read wants to open ${base}` : "read wants to open a file",
                 body: (
                   <Show when={filePath}>
                     <text fg={theme.textMuted}>
@@ -236,8 +225,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
             if (permission === "glob") {
               const pattern = typeof data.pattern === "string" ? data.pattern : ""
               return {
-                label: "glob",
-                target: pattern,
+                title: "glob wants to search",
                 body: (
                   <Show when={pattern}>
                     <text fg={theme.textMuted}>
@@ -252,8 +240,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
             if (permission === "grep") {
               const pattern = typeof data.pattern === "string" ? data.pattern : ""
               return {
-                label: "grep",
-                target: pattern,
+                title: "grep wants to search",
                 body: (
                   <Show when={pattern}>
                     <text fg={theme.textMuted}>
@@ -269,8 +256,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               const raw = data.path
               const dir = typeof raw === "string" ? raw : ""
               return {
-                label: "list",
-                target: normalizePath(dir),
+                title: dir ? `list wants to browse ${normalizePath(dir)}` : "list wants to browse",
                 body: (
                   <Show when={dir}>
                     <text fg={theme.textMuted}>
@@ -283,26 +269,32 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
             }
 
             if (permission === ShellID.ToolID) {
-              const description =
-                typeof data.description === "string" && data.description ? data.description : "shell command"
-              const command = typeof data.command === "string" ? data.command : ""
+              const description = typeof data.description === "string" && data.description ? data.description : ""
+              // the bash permission key is shared by the whole SHELL_TOOLS
+              // group (GOTCHAS: permission-key-collapse…) — legacy shell
+              // passes `command`, codex-parity exec_command passes `cmd`.
+              const command =
+                typeof data.command === "string" ? data.command : typeof data.cmd === "string" ? data.cmd : ""
               return {
-                label: "shell",
-                target: description,
+                title: "bash wants to run",
                 body: (
-                  <Show when={command}>
-                    <text fg={theme.text}>$ {command}</text>
-                  </Show>
+                  <>
+                    <Show when={command}>
+                      <text fg={theme.text}>{command}</text>
+                    </Show>
+                    <Show when={description}>
+                      <text fg={theme.textMuted}>{description}</text>
+                    </Show>
+                  </>
                 ),
               }
             }
 
             if (permission === "task") {
-              const type = typeof data.subagent_type === "string" ? data.subagent_type : "unknown"
+              const type = typeof data.subagent_type === "string" ? data.subagent_type : ""
               const desc = typeof data.description === "string" ? data.description : ""
               return {
-                label: "task",
-                target: Locale.titlecase(type),
+                title: type ? `task wants to spawn ${type.toLowerCase()}` : "task wants to spawn an agent",
                 body: (
                   <Show when={desc}>
                     <text fg={theme.text}>{desc}</text>
@@ -313,9 +305,16 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
 
             if (permission === "webfetch") {
               const url = typeof data.url === "string" ? data.url : ""
+              const host = (() => {
+                if (!url) return ""
+                try {
+                  return new URL(url).host
+                } catch {
+                  return ""
+                }
+              })()
               return {
-                label: "webfetch",
-                target: url,
+                title: host ? `webfetch wants to load ${host}` : "webfetch wants to load a url",
                 body: (
                   <Show when={url}>
                     <text fg={theme.textMuted}>
@@ -329,8 +328,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
             if (permission === "websearch") {
               const query = typeof data.query === "string" ? data.query : ""
               return {
-                label: "websearch",
-                target: query,
+                title: "websearch wants to search",
                 body: (
                   <Show when={query}>
                     <text fg={theme.textMuted}>
@@ -354,32 +352,37 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               const patterns = (props.request.patterns ?? []).filter((p): p is string => typeof p === "string")
 
               return {
-                label: "external_directory",
-                target: dir,
+                title: `${toolName() ?? "a tool"} wants to leave the project`,
                 body: (
-                  <Show when={patterns.length > 0}>
-                    <box gap={1}>
-                      <text fg={theme.textMuted}>patterns</text>
-                      <box>
-                        <For each={patterns}>{(p) => <text fg={theme.text}>{"- " + p}</text>}</For>
+                  <>
+                    <Show when={dir}>
+                      <text fg={theme.textMuted}>
+                        <span style={{ fg: theme.textMuted }}>directory</span>{" "}
+                        <span style={{ fg: theme.text }}>{dir}</span>
+                      </text>
+                    </Show>
+                    <Show when={patterns.length > 0}>
+                      <box gap={1}>
+                        <text fg={theme.textMuted}>patterns</text>
+                        <box>
+                          <For each={patterns}>{(p) => <text fg={theme.text}>{p}</text>}</For>
+                        </box>
                       </box>
-                    </box>
-                  </Show>
+                    </Show>
+                  </>
                 ),
               }
             }
 
             if (permission === "doom_loop") {
               return {
-                label: "doom_loop",
-                target: "continue after repeated failures",
+                title: "doom loop detected",
                 body: <text fg={theme.textMuted}>this keeps the session running despite repeated failures.</text>,
               }
             }
 
             return {
-              label: "tool",
-              target: permission,
+              title: `${permission} wants to run`,
               body: (
                 <text fg={theme.textMuted}>
                   <span style={{ fg: theme.textMuted }}>tool</span> <span style={{ fg: theme.text }}>{permission}</span>
@@ -390,51 +393,199 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
 
           const current = info()
 
-          const header = () => (
-            <box flexDirection="row" gap={1} flexShrink={0}>
-              <text fg={theme.warning}>{"△"}</text>
-              <text fg={theme.text}>permission required</text>
-            </box>
-          )
-
           return (
-            <Prompt
-              title="permission required"
-              header={header()}
-              targetLabel={current.label}
-              targetValue={current.target}
+            <PermissionAsk
+              title={current.title}
               body={current.body}
-              options={{ once: "allow once", always: "allow always", reject: "reject" }}
-              escapeKey="reject"
-              fullscreen
-              onSelect={(option) => {
-                if (option === "always") {
-                  setStore("stage", "always")
-                  return
-                }
-                if (option === "reject") {
-                  if (session()?.parentID) {
-                    setStore("stage", "reject")
-                    return
-                  }
-                  void sdk.client.permission.reply({
-                    reply: "reject",
-                    requestID: props.request.id,
-                    workspace: project.workspace.current(),
-                  })
-                  return
-                }
+              onOnce={() => {
                 void sdk.client.permission.reply({
                   reply: "once",
                   requestID: props.request.id,
                   workspace: project.workspace.current(),
                 })
               }}
+              onAlways={() => setStore("stage", "always")}
+              onReject={reject}
             />
           )
         })()}
       </Match>
     </Switch>
+  )
+}
+
+// the shared ask chrome, per the asksD frame (design/deck/frames/glow.ts:137-140):
+// air → bold title in the heat color → dissolving rule → body at +2 → keyed
+// action line. no borders, no glyphs — structure is made of fades.
+function AskLayout(props: {
+  title: string
+  color: RGBA
+  body?: JSX.Element
+  actions: GlowSpan[]
+  expanded?: boolean
+}) {
+  const { theme } = useTheme()
+  const dimensions = useTerminalDimensions()
+
+  // RULE.ask wide, clamped to the room left inside the route's 4 cols of
+  // horizontal padding. rebuilt only when width or theme moves.
+  const ruleSpans = createMemo(() => fadeRule(theme, props.color, clampRule(RULE.ask, dimensions().width - 4)))
+
+  return (
+    <box
+      flexDirection="column"
+      flexShrink={0}
+      {...(props.expanded
+        ? { top: dimensions().height * -1 + 1, bottom: 1, left: 2, right: 2, position: "absolute" as const }
+        : {
+            top: 0,
+            maxHeight: 15,
+            bottom: 0,
+            left: 0,
+            right: 0,
+            position: "relative" as const,
+          })}
+    >
+      {/* air above the title instead of a rule */}
+      <box height={1} flexShrink={0} />
+      <text flexShrink={0}>
+        <span style={{ fg: props.color, bold: true }}>{inlineSafe(props.title)}</span>
+      </text>
+      <text wrapMode="none" flexShrink={0} selectable={false}>
+        <Spans spans={ruleSpans()} />
+      </text>
+      <box paddingLeft={2} flexGrow={1} flexShrink={1}>
+        {props.body}
+      </box>
+      <text wrapMode="none" flexShrink={0}>
+        <Spans spans={props.actions} />
+      </text>
+      {/* air below the ask so the keyed line never sits on the bottom
+          edge's rule — loud objects breathe (spec: air is structure). */}
+      <box height={1} flexShrink={0} />
+    </box>
+  )
+}
+
+// stage "permission" — direct keys instead of option cycling: enter allows
+// once, a opens the always flow, d (or esc) opens the reject flow, ctrl+f
+// toggles the fullscreen diff.
+function PermissionAsk(props: {
+  title: string
+  body: JSX.Element
+  onOnce: () => void
+  onAlways: () => void
+  onReject: () => void
+}) {
+  const { theme } = useTheme()
+  const keybind = useKeybind()
+  const dialog = useDialog()
+  const diffKey = Keybind.parse("ctrl+f")[0]
+  const [store, setStore] = createStore({ expanded: false })
+
+  useKeyboard((evt) => {
+    if (dialog.stack.length > 0) return
+
+    if (evt.name === "return") {
+      evt.preventDefault()
+      props.onOnce()
+      return
+    }
+    if (evt.name === "a" && !evt.ctrl && !evt.meta) {
+      evt.preventDefault()
+      props.onAlways()
+      return
+    }
+    if (evt.name === "d" && !evt.ctrl && !evt.meta) {
+      evt.preventDefault()
+      props.onReject()
+      return
+    }
+    if (evt.name === "escape" || keybind.match("app_exit", evt)) {
+      evt.preventDefault()
+      props.onReject()
+      return
+    }
+    if (diffKey && Keybind.match(diffKey, keybind.parse(evt))) {
+      evt.preventDefault()
+      evt.stopPropagation()
+      setStore("expanded", (v) => !v)
+    }
+  })
+
+  const actions = createMemo<GlowSpan[]>(() => [
+    { text: "enter", fg: theme.success, bold: true },
+    { text: " yes · ", fg: theme.textMuted },
+    { text: "a", fg: theme.info, bold: true },
+    { text: " always · ", fg: theme.textMuted },
+    { text: "d", fg: theme.error, bold: true },
+    { text: " no", fg: theme.textMuted },
+    { text: store.expanded ? " · ctrl+f minimize" : " · ctrl+f expand", fg: theme.textMuted },
+  ])
+
+  const content = () => (
+    <AskLayout
+      title={props.title}
+      color={theme.warning}
+      body={props.body}
+      actions={actions()}
+      expanded={store.expanded}
+    />
+  )
+
+  return (
+    <Show when={!store.expanded} fallback={<Portal>{content()}</Portal>}>
+      {content()}
+    </Show>
+  )
+}
+
+// stage "always" — confirm the pattern grant.
+function AlwaysAsk(props: { request: PermissionRequest; onConfirm: () => void; onCancel: () => void }) {
+  const { theme } = useTheme()
+  const keybind = useKeybind()
+  const dialog = useDialog()
+
+  useKeyboard((evt) => {
+    if (dialog.stack.length > 0) return
+
+    if (evt.name === "return") {
+      evt.preventDefault()
+      props.onConfirm()
+      return
+    }
+    if (evt.name === "escape" || keybind.match("app_exit", evt)) {
+      evt.preventDefault()
+      props.onCancel()
+    }
+  })
+
+  const actions = createMemo<GlowSpan[]>(() => [
+    { text: "enter", fg: theme.success, bold: true },
+    { text: " confirm · ", fg: theme.textMuted },
+    { text: "esc", fg: theme.error, bold: true },
+    { text: " cancel", fg: theme.textMuted },
+  ])
+
+  return (
+    <AskLayout
+      title="always allow"
+      color={theme.warning}
+      body={
+        <Switch>
+          <Match when={props.request.always.length === 1 && props.request.always[0] === "*"}>
+            <text fg={theme.textMuted}>
+              this will allow {props.request.permission} until opencode is restarted.
+            </text>
+          </Match>
+          <Match when={true}>
+            <text fg={theme.textMuted}>allows these patterns until opencode is restarted</text>
+            <For each={props.request.always}>{(pattern) => <text fg={theme.textMuted}>{pattern}</text>}</For>
+          </Match>
+        </Switch>
+      }
+      actions={actions()}
+    />
   )
 }
 
@@ -459,207 +610,31 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
     }
   })
 
-  return (
-    <box flexDirection="column" flexShrink={0}>
-      <Rule color={theme.error} />
-      <box paddingTop={1} paddingLeft={1} paddingRight={1} paddingBottom={1} gap={1}>
-        <box flexDirection="row" gap={1}>
-          <text fg={theme.error}>{"△"}</text>
-          <text fg={theme.text}>reject permission</text>
-        </box>
-        <box paddingLeft={3}>
-          <text fg={theme.textMuted}>tell opencode what to do differently</text>
-        </box>
-        <box paddingLeft={3} paddingTop={1}>
-          <textarea
-            ref={(val: TextareaRenderable) => {
-              input = val
-              val.traits = { status: "REJECT" }
-            }}
-            focused
-            textColor={theme.text}
-            focusedTextColor={theme.text}
-            cursorColor={theme.primary}
-            keyBindings={textareaKeybindings()}
-          />
-        </box>
-      </box>
-      <LabeledRule
-        color={theme.error}
-        right={
-          <box flexDirection="row" gap={2} flexShrink={0}>
-            <text>
-              <span style={{ fg: theme.text }}>enter</span> <span style={{ fg: theme.textMuted }}>confirm</span>
-            </text>
-            <text>
-              <span style={{ fg: theme.text }}>esc</span> <span style={{ fg: theme.textMuted }}>cancel</span>
-            </text>
-          </box>
-        }
-      />
-    </box>
-  )
-}
-
-function Prompt<const T extends Record<string, string>>(props: {
-  title: string
-  header?: JSX.Element
-  targetLabel?: string
-  targetValue?: string
-  body: JSX.Element
-  options: T
-  escapeKey?: keyof T
-  fullscreen?: boolean
-  onSelect: (option: keyof T) => void
-}) {
-  const { theme } = useTheme()
-  const keybind = useKeybind()
-  const dimensions = useTerminalDimensions()
-  const keys = Object.keys(props.options) as (keyof T)[]
-  const [store, setStore] = createStore({
-    selected: keys[0],
-    expanded: false,
-  })
-  const diffKey = Keybind.parse("ctrl+f")[0]
-  const dialog = useDialog()
-
-  useKeyboard((evt) => {
-    if (dialog.stack.length > 0) return
-
-    if (evt.name === "left" || evt.name == "h") {
-      evt.preventDefault()
-      const idx = keys.indexOf(store.selected)
-      const next = keys[(idx - 1 + keys.length) % keys.length]
-      setStore("selected", next)
-    }
-
-    if (evt.name === "right" || evt.name == "l") {
-      evt.preventDefault()
-      const idx = keys.indexOf(store.selected)
-      const next = keys[(idx + 1) % keys.length]
-      setStore("selected", next)
-    }
-
-    if (evt.name === "return") {
-      evt.preventDefault()
-      props.onSelect(store.selected)
-    }
-
-    if (props.escapeKey && (evt.name === "escape" || keybind.match("app_exit", evt))) {
-      evt.preventDefault()
-      props.onSelect(props.escapeKey)
-    }
-
-    if (props.fullscreen && diffKey && Keybind.match(diffKey, keybind.parse(evt))) {
-      evt.preventDefault()
-      evt.stopPropagation()
-      setStore("expanded", (v) => !v)
-    }
-  })
-
-  const hint = createMemo(() => (store.expanded ? "minimize" : "fullscreen"))
-  useRenderer()
-
-  const content = () => (
-    <box
-      flexDirection="column"
-      flexShrink={0}
-      {...(store.expanded
-        ? { top: dimensions().height * -1 + 1, bottom: 1, left: 2, right: 2, position: "absolute" }
-        : {
-            top: 0,
-            maxHeight: 15,
-            bottom: 0,
-            left: 0,
-            right: 0,
-            position: "relative",
-          })}
-    >
-      {/* top interruption rule */}
-      <Rule color={theme.warning} />
-      <box paddingTop={1} paddingLeft={1} paddingRight={1} flexGrow={1} gap={1}>
-        <Show
-          when={props.header}
-          fallback={
-            <box flexDirection="row" gap={1} flexShrink={0}>
-              <text fg={theme.warning}>{"△"}</text>
-              <text fg={theme.text}>{props.title}</text>
-            </box>
-          }
-        >
-          {props.header}
-        </Show>
-        <Show when={props.targetLabel}>
-          <LabeledRule
-            color={theme.border}
-            left={<text fg={theme.textMuted}>{props.targetLabel}</text>}
-            right={
-              <Show when={props.targetValue}>
-                {(t) => (
-                  // Sanitize via inlineSafe — `targetValue` lands inside
-                  // LabeledRule's flex-row, and tool-supplied values
-                  // (Shell description, webfetch URL, websearch query,
-                  // arbitrary file paths) can be multi-line / multi-KB.
-                  // See specs/tui-render-freeze.md.
-                  <text fg={theme.text}>{inlineSafe(t())}</text>
-                )}
-              </Show>
-            }
-          />
-        </Show>
-        <box paddingLeft={3} flexGrow={1} flexShrink={1} gap={1}>
-          {props.body}
-        </box>
-      </box>
-      {/* bottom interruption rule + actions */}
-      <LabeledRule
-        color={theme.warning}
-        right={
-          <box flexDirection="row" gap={2} flexShrink={0}>
-            <For each={keys}>
-              {(option) => (
-                <box
-                  onMouseOver={() => setStore("selected", option)}
-                  onMouseUp={() => {
-                    setStore("selected", option)
-                    props.onSelect(option)
-                  }}
-                >
-                  <text>
-                    <span
-                      style={{
-                        fg: option === store.selected ? theme.warning : theme.textMuted,
-                        bold: option === store.selected,
-                      }}
-                    >
-                      {option === store.selected ? "▸ " : "  "}
-                      {props.options[option]}
-                    </span>
-                  </text>
-                </box>
-              )}
-            </For>
-            <text fg={theme.border}>│</text>
-            <Show when={props.fullscreen}>
-              <text>
-                <span style={{ fg: theme.text }}>ctrl+f</span> <span style={{ fg: theme.textMuted }}>{hint()}</span>
-              </text>
-            </Show>
-            <text>
-              <span style={{ fg: theme.text }}>←→</span> <span style={{ fg: theme.textMuted }}>select</span>
-            </text>
-            <text>
-              <span style={{ fg: theme.text }}>enter</span> <span style={{ fg: theme.textMuted }}>confirm</span>
-            </text>
-          </box>
-        }
-      />
-    </box>
-  )
+  const actions = createMemo<GlowSpan[]>(() => [
+    { text: "enter", fg: theme.success, bold: true },
+    { text: " send · ", fg: theme.textMuted },
+    { text: "esc", fg: theme.error, bold: true },
+    { text: " cancel", fg: theme.textMuted },
+  ])
 
   return (
-    <Show when={!store.expanded} fallback={<Portal>{content()}</Portal>}>
-      {content()}
-    </Show>
+    <AskLayout
+      title="reject — say why"
+      color={theme.error}
+      body={
+        <textarea
+          ref={(val: TextareaRenderable) => {
+            input = val
+            val.traits = { status: "REJECT" }
+          }}
+          focused
+          textColor={theme.text}
+          focusedTextColor={theme.text}
+          cursorColor={theme.primary}
+          keyBindings={textareaKeybindings()}
+        />
+      }
+      actions={actions()}
+    />
   )
 }

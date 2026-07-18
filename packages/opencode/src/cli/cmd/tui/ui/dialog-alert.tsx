@@ -1,8 +1,8 @@
-import { TextAttributes } from "@opentui/core"
+import { createMemo } from "solid-js"
 import { useTheme } from "../context/theme"
-import { useDialog, type DialogContext } from "./dialog"
+import { DialogHeader, useDialog, type DialogContext } from "./dialog"
 import { useKeyboard } from "@opentui/solid"
-import { Rule } from "../component/border"
+import { Spans, type GlowSpan } from "@tui/ui/glow"
 
 export type DialogAlertProps = {
   title: string
@@ -10,6 +10,8 @@ export type DialogAlertProps = {
   onConfirm?: () => void
 }
 
+// the afterglow alert: bold lowercase title over a dissolving primary rule,
+// body at +2, then the keyed action whisper. no borders — fades and air.
 export function DialogAlert(props: DialogAlertProps) {
   const dialog = useDialog()
   const { theme } = useTheme()
@@ -23,44 +25,33 @@ export function DialogAlert(props: DialogAlertProps) {
     }
   })
 
+  const actionSpans = createMemo<GlowSpan[]>(() => [
+    { text: "enter", fg: theme.success, bold: true },
+    { text: " ok · ", fg: theme.textMuted },
+    { text: "esc", fg: theme.error, bold: true },
+    { text: " close", fg: theme.textMuted },
+  ])
+
   return (
-    <box>
-      {/* Header */}
-      <box flexDirection="row" justifyContent="space-between" paddingLeft={3} paddingRight={3} paddingTop={1}>
-        <text attributes={TextAttributes.BOLD} fg={theme.text}>
-          {props.title}
-        </text>
-        <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
-          esc
-        </text>
-      </box>
-      <box paddingTop={1}>
-        <Rule color={theme.borderActive} />
-      </box>
-      {/* Body */}
-      <box paddingLeft={3} paddingRight={3} paddingTop={1} paddingBottom={1}>
+    <box paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2}>
+      <DialogHeader title={props.title} />
+      <box height={1} flexShrink={0} />
+      <box paddingLeft={2}>
         <text fg={theme.text} wrapMode="word">
           {props.message}
         </text>
       </box>
-      <Rule color={theme.borderActive} />
-      {/* Footer hint */}
-      <box
-        paddingLeft={3}
-        paddingRight={3}
-        paddingTop={1}
-        paddingBottom={1}
-        flexDirection="row"
-        justifyContent="flex-end"
+      <box height={1} flexShrink={0} />
+      <text
+        wrapMode="none"
+        flexShrink={0}
         onMouseUp={() => {
           props.onConfirm?.()
           dialog.clear()
         }}
       >
-        <text>
-          <span style={{ fg: theme.text, bold: true }}>enter</span> <span style={{ fg: theme.textMuted }}>ok</span>
-        </text>
-      </box>
+        <Spans spans={actionSpans()} />
+      </text>
     </box>
   )
 }

@@ -1,55 +1,51 @@
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
 import { createMemo, For, Show, createSignal } from "solid-js"
+import { sinkColor } from "@tui/ui/glow"
+import { SidebarSection } from "../../component/sidebar-section"
+import { inlineSafe } from "../../util/inline-safe"
 
 const id = "internal:sidebar-lsp"
 
+// afterglow: no status dots — temperature is the word itself. a connected
+// server is dim chatter (name muted, root sunk); a broken one burns (name
+// in error). the header is the collapse click target; collapsed state is
+// a dim count whisper, not a chevron.
 function View(props: { api: TuiPluginApi }) {
   const [open, setOpen] = createSignal(true)
   const theme = () => props.api.theme.current
   const list = createMemo(() => props.api.state.lsp())
   const off = createMemo(() => props.api.state.config.lsp === false)
+  const collapsible = createMemo(() => list().length > 2)
+  const expanded = createMemo(() => !collapsible() || open())
 
   return (
     <box>
-      <box flexDirection="row" gap={1} onMouseDown={() => list().length > 2 && setOpen((x) => !x)}>
-        <Show when={list().length > 2}>
-          <text fg={theme().text}>{open() ? "▼" : "▶"}</text>
-        </Show>
-        <text fg={theme().text}>
-          <b>LSP</b>
-        </text>
-      </box>
-      <Show when={list().length <= 2 || open()}>
-        <Show when={list().length === 0}>
-          <text fg={theme().textMuted}>
-            {off() ? "LSPs have been disabled in settings" : "LSPs will activate as files are read"}
-          </text>
-        </Show>
-        <For each={list()}>
-          {(item) => (
-            // Marker as absolute overlay; body text in column. Same fix
-            // shape as mcp.tsx and todo-item.tsx — long monorepo paths
-            // (item.root) inside a flex-row primary `<text>` are the same
-            // antipattern (see specs/tui-render-freeze.md), even if the
-            // current threshold rarely trips on 3-4 row paths. Defensive.
-            <box paddingLeft={2}>
-              <text
-                position="absolute"
-                left={0}
-                top={0}
-                flexShrink={0}
-                style={{
-                  fg: item.status === "connected" ? theme().success : theme().error,
-                }}
-              >
-                •
+      <SidebarSection
+        t={theme()}
+        label="lsp"
+        whisper={expanded() ? undefined : `· ${list().length}`}
+        onMouseDown={() => collapsible() && setOpen((x) => !x)}
+      />
+      <Show when={expanded()}>
+        <box paddingLeft={2}>
+          <Show when={list().length === 0}>
+            <text fg={theme().textMuted}>
+              {off() ? "lsps are disabled in settings" : "lsps activate as files are read"}
+            </text>
+          </Show>
+          <For each={list()}>
+            {(item) => (
+              // one single-line text per row (wrapMode none): monorepo roots
+              // are unbounded strings, so they truncate at the sidebar edge
+              // instead of wrapping — and never sit in a flex-row primary
+              // cell (specs/tui-render-freeze.md).
+              <text wrapMode="none" flexShrink={0}>
+                <span style={{ fg: item.status === "connected" ? theme().textMuted : theme().error }}>{item.id}</span>
+                <span style={{ fg: sinkColor(theme(), 2) }}> {inlineSafe(item.root)}</span>
               </text>
-              <text fg={theme().textMuted}>
-                {item.id} {item.root}
-              </text>
-            </box>
-          )}
-        </For>
+            )}
+          </For>
+        </box>
       </Show>
     </box>
   )

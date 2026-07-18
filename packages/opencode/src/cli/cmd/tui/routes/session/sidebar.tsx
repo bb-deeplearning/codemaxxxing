@@ -1,13 +1,16 @@
 import { useProject } from "@tui/context/project"
+import { Session } from "@/session/session"
 import { useSync } from "@tui/context/sync"
 import { createMemo, Show } from "solid-js"
 import { useTheme } from "../../context/theme"
 import { useTuiConfig } from "../../context/tui-config"
 import { InstallationChannel } from "@opencode-ai/core/installation/version"
 import { TuiPluginRuntime } from "@/cli/cmd/tui/plugin/runtime"
-import { Rule, EmptyBorder } from "@tui/component/border"
 import type { AssistantMessage, Message } from "@opencode-ai/sdk/v2"
 import { Locale } from "@/util/locale"
+import { inlineSafe } from "../../util/inline-safe"
+import { clampRule, fadeRule, fadeTarget, mix, RULE, Spans } from "@tui/ui/glow"
+import { SidebarSection, SIDEBAR_INNER } from "@tui/component/sidebar-section"
 
 import { getScrollAcceleration } from "../../util/scroll"
 
@@ -16,29 +19,15 @@ import { getScrollAcceleration } from "../../util/scroll"
 // downstream doesn't invalidate consumers with a fresh `[]` per call.
 const EMPTY_MESSAGES: readonly Message[] = Object.freeze([]) as readonly Message[]
 
-// Custom border chars for the sidebar's left edge — single vertical bar,
-// nothing on top/bottom corners. Module-scope so the prop identity is stable
-// across renders (opentui caches based on identity).
-const SIDEBAR_EDGE_CHARS = { ...EmptyBorder, vertical: "│" }
-
-// Tracked small caps section header. Spaces between letters convey
-// hierarchy without pulling weight into the chrome. Module-scope cache so
-// each render is an O(1) Map lookup, not a string split + join.
-const TRACKED_CACHE = new Map<string, string>()
-function tracked(label: string) {
-  let cached = TRACKED_CACHE.get(label)
-  if (cached === undefined) {
-    cached = label.split("").join(" ")
-    TRACKED_CACHE.set(label, cached)
-  }
-  return cached
-}
-
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
 })
 
+// afterglow sidebar: no left border, no rules-as-boxes. the panel separates
+// from the main column with air plus a backgroundPanel fill when the theme
+// has one (token .a > 0); transparent themes degrade to air + the sections'
+// own dissolving rules (specs/tui-redesign.md, transparent degradation).
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const project = useProject()
   const sync = useSync()
@@ -47,10 +36,10 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const session = createMemo(() => sync.session.get(props.sessionID))
   const messages = createMemo(() => sync.data.message[props.sessionID] ?? (EMPTY_MESSAGES as Message[]))
 
-  const workspaceStatus = () => {
+  const workspaceConnected = () => {
     const workspaceID = session()?.workspaceID
-    if (!workspaceID) return "error"
-    return project.workspace.status(workspaceID) ?? "error"
+    if (!workspaceID) return false
+    return project.workspace.status(workspaceID) === "connected"
   }
   const workspaceLabel = () => {
     const workspaceID = session()?.workspaceID
@@ -215,140 +204,180 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   // Cheap primitive check; doesn't allocate.
   const hasStats = createMemo(() => messageCount() > 0)
 
+  // the title's dissolving rule — primary heat, the head of the panel.
+  // memoized span array; rebuilt only when the theme moves (width is fixed
+  // by the 42-col contract).
+  const titleRule = createMemo(() => fadeRule(theme, theme.primary, clampRule(RULE.human, SIDEBAR_INNER)))
+
+  // the footer's rule cools to the section tone — same recipe as
+  // SidebarSection so the pinned edge reads as one more quiet section.
+  const footerRule = createMemo(() =>
+    fadeRule(theme, mix(theme.primary, fadeTarget(theme), 0.5), clampRule(20, SIDEBAR_INNER)),
+  )
+
+  // surfaces yes, borders no: the panel fill is allowed chrome, but a
+  // transparent theme (panel token a === 0) degrades to air + rules.
+  const panelFill = () => (theme.backgroundPanel.a > 0 ? theme.backgroundPanel : undefined)
+
   return (
     <Show when={session()}>
       <box
-        flexDirection="row"
         width={42}
         height="100%"
         position={props.overlay ? "absolute" : "relative"}
         flexShrink={0}
+        paddingTop={1}
+        paddingBottom={1}
+        paddingLeft={2}
+        paddingRight={2}
+        backgroundColor={panelFill()}
       >
-        {/* Native left border on the sidebar wrapper itself replaces the
-            previous gutter box that painted a 240-char vertical-bar string
-            inside a clipped 1-col box. opentui's border pass paints exactly
-            one column of the chosen char per row, no string allocation, no
-            measure, no clip. */}
-        <box
+        <scrollbox
           flexGrow={1}
-          paddingTop={1}
-          paddingBottom={1}
-          paddingLeft={2}
-          paddingRight={2}
-          border={["left"]}
-          customBorderChars={SIDEBAR_EDGE_CHARS}
-          borderColor={theme.border}
-          backgroundColor={props.overlay ? theme.backgroundPanel : undefined}
+          scrollAcceleration={scrollAcceleration()}
+          verticalScrollbarOptions={{
+            trackOptions: {
+              backgroundColor: panelFill() ?? theme.background,
+              foregroundColor: theme.borderActive,
+            },
+          }}
         >
-          <scrollbox
-            flexGrow={1}
-            scrollAcceleration={scrollAcceleration()}
-            verticalScrollbarOptions={{
-              trackOptions: {
-                backgroundColor: theme.background,
-                foregroundColor: theme.borderActive,
-              },
-            }}
-          >
-            <box flexShrink={0} paddingRight={1} gap={1}>
-              <TuiPluginRuntime.Slot
-                name="sidebar_title"
-                mode="single_winner"
-                session_id={props.sessionID}
-                title={session()!.title}
-                share_url={session()!.share?.url}
-              >
-                <box flexShrink={0}>
-                  <text fg={theme.text}>
-                    <b>{session()!.title}</b>
-                  </text>
-                  <Rule />
+          <box flexShrink={0} paddingRight={1} gap={1}>
+            <TuiPluginRuntime.Slot
+              name="sidebar_title"
+              mode="single_winner"
+              session_id={props.sessionID}
+              title={session()!.title}
+              share_url={session()!.share?.url}
+            >
+              <box flexShrink={0}>
+                <text fg={theme.text} wrapMode="none" flexShrink={0}>
+                  <b>
+                    {Session.isDefaultTitle(session()!.title)
+                      ? "new session"
+                      : inlineSafe(session()!.title, 40).toLowerCase()}
+                  </b>
+                </text>
+                <text wrapMode="none" flexShrink={0} selectable={false}>
+                  <Spans spans={titleRule()} />
+                </text>
+                {/* dim facts whisper under the title — indent rhythm puts
+                    section content at +2. */}
+                <box paddingLeft={2}>
                   <Show when={InstallationChannel !== "latest"}>
-                    <box paddingTop={1} flexDirection="row" justifyContent="space-between">
-                      <text fg={theme.textMuted}>id</text>
-                      <text fg={theme.text} wrapMode="none">
+                    <box flexDirection="row" justifyContent="space-between" gap={1}>
+                      <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
+                        id
+                      </text>
+                      <text fg={theme.text} wrapMode="none" flexShrink={1}>
                         {props.sessionID}
                       </text>
                     </box>
                   </Show>
                   <Show when={session()!.workspaceID}>
-                    <box paddingTop={1} flexDirection="row" justifyContent="space-between">
-                      <text fg={theme.textMuted}>workspace</text>
-                      <text wrapMode="none">
-                        <span style={{ fg: theme.text }}>{workspaceLabel()}</span>{" "}
-                        <span style={{ fg: workspaceStatus() === "connected" ? theme.success : theme.error }}>●</span>
+                    <box flexDirection="row" justifyContent="space-between" gap={1}>
+                      <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
+                        workspace
+                      </text>
+                      {/* status is the word's temperature, not a glyph: a
+                          connected workspace sits in plain text, a broken
+                          one burns (failed state = the name in error). */}
+                      <text fg={workspaceConnected() ? theme.text : theme.error} wrapMode="none" flexShrink={1}>
+                        {inlineSafe(workspaceLabel())}
                       </text>
                     </box>
                   </Show>
                   <Show when={session()!.share?.url}>
-                    <box paddingTop={1} flexDirection="row" justifyContent="space-between">
-                      <text fg={theme.textMuted}>shared</text>
-                      <text fg={theme.text} wrapMode="none">
+                    <box flexDirection="row" justifyContent="space-between" gap={1}>
+                      <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
+                        shared
+                      </text>
+                      <text fg={theme.text} wrapMode="none" flexShrink={1}>
                         {session()!.share!.url}
                       </text>
                     </box>
                   </Show>
                 </box>
-              </TuiPluginRuntime.Slot>
+              </box>
+            </TuiPluginRuntime.Slot>
 
-              {/* Session stats — only shown when there are messages. Each
-                  field is its own primitive memo so a streaming delta only
-                  invalidates the field that actually moved (typically just
-                  messageCount; tokens/cost/duration freeze during streaming
-                  and unfreeze on completion). */}
-              <Show when={hasStats()}>
-                <box flexShrink={0}>
-                  <text fg={theme.textMuted}>{tracked("session")}</text>
-                  <Rule />
-                  <box paddingTop={1} flexDirection="row" justifyContent="space-between">
-                    <text fg={theme.textMuted}>messages</text>
-                    <text fg={theme.text}>{messageCount()}</text>
+            {/* Session stats — only shown when there are messages. Each
+                field is its own primitive memo so a streaming delta only
+                invalidates the field that actually moved (typically just
+                messageCount; tokens/cost/duration freeze during streaming
+                and unfreeze on completion). */}
+            <Show when={hasStats()}>
+              <box flexShrink={0}>
+                <SidebarSection t={theme} label="session" />
+                <box paddingLeft={2}>
+                  <box flexDirection="row" justifyContent="space-between" gap={1}>
+                    <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
+                      messages
+                    </text>
+                    <text fg={theme.text} wrapMode="none" flexShrink={1}>
+                      {messageCount()}
+                    </text>
                   </box>
                   <Show when={tokenDisplay()}>
-                    <box flexDirection="row" justifyContent="space-between">
-                      <text fg={theme.textMuted}>tokens</text>
-                      <text wrapMode="none">
+                    <box flexDirection="row" justifyContent="space-between" gap={1}>
+                      <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
+                        tokens
+                      </text>
+                      <text wrapMode="none" flexShrink={1}>
                         <span style={{ fg: theme.text }}>{tokenDisplay()}</span>
                         <Show when={tokenPct() !== undefined}>
-                          <span style={{ fg: theme.textMuted }}> ({tokenPct()}%)</span>
+                          <span style={{ fg: theme.textMuted }}> {tokenPct()}%</span>
                         </Show>
                       </text>
                     </box>
                   </Show>
                   <Show when={costDisplay()}>
-                    <box flexDirection="row" justifyContent="space-between">
-                      <text fg={theme.textMuted}>cost</text>
-                      <text fg={theme.text}>{costDisplay()}</text>
+                    <box flexDirection="row" justifyContent="space-between" gap={1}>
+                      <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
+                        cost
+                      </text>
+                      <text fg={theme.text} wrapMode="none" flexShrink={1}>
+                        {costDisplay()}
+                      </text>
                     </box>
                   </Show>
                   <Show when={durationDisplay()}>
-                    <box flexDirection="row" justifyContent="space-between">
-                      <text fg={theme.textMuted}>duration</text>
-                      <text fg={theme.text}>{durationDisplay()}</text>
+                    <box flexDirection="row" justifyContent="space-between" gap={1}>
+                      <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
+                        duration
+                      </text>
+                      <text fg={theme.text} wrapMode="none" flexShrink={1}>
+                        {durationDisplay()}
+                      </text>
                     </box>
                   </Show>
                 </box>
-              </Show>
-
-              <box flexShrink={0}>
-                <TuiPluginRuntime.Slot name="sidebar_content" session_id={props.sessionID} />
               </box>
-            </box>
-          </scrollbox>
+            </Show>
 
-          <box flexShrink={0} paddingTop={1}>
-            <Rule />
-            <box paddingTop={1}>
-              <TuiPluginRuntime.Slot name="sidebar_footer" mode="single_winner" session_id={props.sessionID}>
-                <text fg={theme.textMuted}>
-                  <b>codema</b>
-                  <span style={{ fg: theme.text }}>
-                    <b>xxx</b>
-                  </span>
-                  <b>ing</b> <span style={{ fg: theme.textMuted }}>· clauseo</span>
-                </text>
-              </TuiPluginRuntime.Slot>
+            {/* plugin sections stack as siblings inside this box — gap={1}
+                is the "one blank row between sections" rule, applied here
+                once instead of per-plugin padding. */}
+            <box flexShrink={0} gap={1}>
+              <TuiPluginRuntime.Slot name="sidebar_content" session_id={props.sessionID} />
             </box>
+          </box>
+        </scrollbox>
+
+        <box flexShrink={0} paddingTop={1}>
+          <text wrapMode="none" flexShrink={0} selectable={false}>
+            <Spans spans={footerRule()} />
+          </text>
+          <box paddingTop={1}>
+            <TuiPluginRuntime.Slot name="sidebar_footer" mode="single_winner" session_id={props.sessionID}>
+              <text fg={theme.textMuted} wrapMode="none">
+                <b>codema</b>
+                <span style={{ fg: theme.text }}>
+                  <b>xxx</b>
+                </span>
+                <b>ing</b> <span style={{ fg: theme.textMuted }}>· clauseo</span>
+              </text>
+            </TuiPluginRuntime.Slot>
           </box>
         </box>
       </box>

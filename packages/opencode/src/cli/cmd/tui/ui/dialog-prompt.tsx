@@ -1,10 +1,9 @@
-import { TextareaRenderable, TextAttributes } from "@opentui/core"
+import { TextareaRenderable } from "@opentui/core"
 import { useTheme } from "../context/theme"
-import { useDialog, type DialogContext } from "./dialog"
-import { Show, createEffect, onMount, type JSX } from "solid-js"
+import { DialogHeader, useDialog, type DialogContext } from "./dialog"
+import { Show, createEffect, createMemo, onMount, type JSX } from "solid-js"
 import { useKeyboard } from "@opentui/solid"
-import { Spinner } from "../component/spinner"
-import { Rule } from "../component/border"
+import { Spans, type GlowSpan } from "@tui/ui/glow"
 
 export type DialogPromptProps = {
   title: string
@@ -17,6 +16,9 @@ export type DialogPromptProps = {
   onCancel?: () => void
 }
 
+// the afterglow prompt: title over a dissolving primary rule, the input at
+// +2 with the primary cursor, and a keyed action whisper. while busy the
+// input cools and a static dim "working…" sits under it — no spinners.
 export function DialogPrompt(props: DialogPromptProps) {
   const dialog = useDialog()
   const { theme } = useTheme()
@@ -62,22 +64,25 @@ export function DialogPrompt(props: DialogPromptProps) {
     textarea.focus()
   })
 
+  const actionSpans = createMemo<GlowSpan[]>(() =>
+    props.busy
+      ? [
+          { text: "esc", fg: theme.error, bold: true },
+          { text: " cancel", fg: theme.textMuted },
+        ]
+      : [
+          { text: "enter", fg: theme.success, bold: true },
+          { text: " submit · ", fg: theme.textMuted },
+          { text: "esc", fg: theme.error, bold: true },
+          { text: " cancel", fg: theme.textMuted },
+        ],
+  )
+
   return (
-    <box>
-      {/* Header */}
-      <box flexDirection="row" justifyContent="space-between" paddingLeft={3} paddingRight={3} paddingTop={1}>
-        <text attributes={TextAttributes.BOLD} fg={theme.text}>
-          {props.title}
-        </text>
-        <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
-          esc
-        </text>
-      </box>
-      <box paddingTop={1}>
-        <Rule color={theme.borderActive} />
-      </box>
-      {/* Body */}
-      <box paddingLeft={3} paddingRight={3} paddingTop={1} paddingBottom={1} gap={1}>
+    <box paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2}>
+      <DialogHeader title={props.title} />
+      <box height={1} flexShrink={0} />
+      <box paddingLeft={2} gap={1}>
         <Show when={props.description}>{props.description!()}</Show>
         <textarea
           onSubmit={() => {
@@ -94,35 +99,18 @@ export function DialogPrompt(props: DialogPromptProps) {
           placeholderColor={theme.textMuted}
           textColor={props.busy ? theme.textMuted : theme.text}
           focusedTextColor={props.busy ? theme.textMuted : theme.text}
-          cursorColor={props.busy ? theme.backgroundElement : theme.text}
+          cursorColor={props.busy ? theme.backgroundElement : theme.primary}
         />
         <Show when={props.busy}>
-          <Spinner color={theme.textMuted}>{props.busyText ?? "working..."}</Spinner>
+          {/* static dim working line — motion budget stays with the deck's
+              cursor; nothing in a dialog animates. */}
+          <text fg={theme.textMuted}>{props.busyText ?? "working…"}</text>
         </Show>
       </box>
-      <Rule color={theme.borderActive} />
-      {/* Footer hints */}
-      <box
-        paddingLeft={3}
-        paddingRight={3}
-        paddingTop={1}
-        paddingBottom={1}
-        flexDirection="row"
-        justifyContent="space-between"
-      >
-        <Show when={!props.busy} fallback={<text fg={theme.textMuted}>processing...</text>}>
-          <box flexDirection="row" gap={2}>
-            <text>
-              <span style={{ fg: theme.text, bold: true }}>enter</span>{" "}
-              <span style={{ fg: theme.textMuted }}>submit</span>
-            </text>
-            <text>
-              <span style={{ fg: theme.text, bold: true }}>esc</span>{" "}
-              <span style={{ fg: theme.textMuted }}>cancel</span>
-            </text>
-          </box>
-        </Show>
-      </box>
+      <box height={1} flexShrink={0} />
+      <text wrapMode="none" flexShrink={0}>
+        <Spans spans={actionSpans()} />
+      </text>
     </box>
   )
 }

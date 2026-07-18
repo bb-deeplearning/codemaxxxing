@@ -17,6 +17,7 @@ import {
   SubagentFooterView,
 } from "./subagent-footer"
 import { deriveSubagentStatus, type SubagentStatus } from "./subagent-status"
+import { modelWord } from "@tui/ui/glow"
 
 // Frozen empty messages sentinel — keeps reference identity stable when no
 // messages exist yet so downstream memos don't see a fresh `[]` per call.
@@ -60,16 +61,34 @@ export function SubagentFooter() {
   const { theme } = useTheme()
   const keybind = useKeybind()
   const command = useCommandDialog()
-  useTerminalDimensions()
+  const dimensions = useTerminalDimensions()
+
+  // the facts whisper: model from the child's latest assistant message
+  // (falls back to a per-spawn model override on the session), variant
+  // from the session's model ref when set.
+  const model = createMemo<string | undefined>(() => {
+    const source = usageSource()
+    if (source?.modelID) return modelWord(source.modelID)
+    const override = session()?.model
+    return override ? modelWord(override.id) : undefined
+  })
+  const variant = createMemo<string | undefined>(() => session()?.model?.variant)
 
   // Top rule reflects which agent owns this subagent. When we know the
-  // agent name, tint the rule toward that color (subtly — half-blend with
+  // agent, tint the rule toward that color (subtly — half-blend with
   // theme.border so it's still chrome, not body) so this surface carries
   // identity even before reading the label.
+  //
+  // Color lookup keys on the agent TYPE: session().agent is the real
+  // agent_type (set by control.ts at spawn). The title-parsed name is only
+  // a fallback — for v2 titles it is a NICKNAME, and local.agent.color
+  // silently returns the first palette color for any name that isn't a
+  // registered agent type, which would flatten every subagent to one
+  // color. The label keeps using the parsed name (nickname or type).
   const ruleColor = createMemo(() => {
-    const name = agentName()
-    if (!name) return theme.border
-    return tint(theme.border, local.agent.color(name), 0.6)
+    const key = session()?.agent ?? agentName()
+    if (!key) return theme.border
+    return tint(theme.border, local.agent.color(key), 0.6)
   })
 
   return (
@@ -82,6 +101,9 @@ export function SubagentFooter() {
       hasUsage={hasUsage()}
       usageContext={usageContext()}
       usageCost={usageCost()}
+      model={model()}
+      variant={variant()}
+      width={Math.max(0, dimensions().width - 4)}
       theme={theme}
       keybindParent={keybind.print("session_parent")}
       keybindPrev={keybind.print("session_child_cycle_reverse")}
