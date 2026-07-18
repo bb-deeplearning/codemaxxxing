@@ -1,22 +1,24 @@
-# codemaxxxing screenshot tape — captures a real session, no terminal noise.
+# codemaxxxing screenshot tape — captures a real session as a static still.
 #
-# What it captures (visible portion of the gif):
-#   - mid-session view of ses_2037c15efffe0oDsxc1175yfNh
-#     ("Codemaxxxing logo color & spacing fix")
-#   - caveman agent already active
-#   - toybox-noir theme
-#   - typing a recap question, the turbo-spool spinner mid-response, and
-#     the final landed response
+# What it captures (screenshot.png, the README's tui image):
+#   - mid-session view of ses_08ea04259ffevYZshiVDlutplR
+#     ("Understanding codemaxxxing itself")
+#   - caveman agent active, toybox-noir theme
+#   - a recap question fired live: bold human line with its dissolving
+#     rule, the landed response, and the afterglow bottom edge (fade rule,
+#     cursor, status whisper / return glance)
 #
-# Everything before the question (binary launch, theme/agent setup) runs
-# under Hide — commands still execute, just not recorded.
+# The gif recording is a vhs requirement, not an artifact — it renders to
+# cmx-screenshot-discard.gif; delete it after the run. Only the
+# final-frame Screenshot ships.
+#
+# Everything before the question (binary launch, agent setup) runs under
+# Hide — commands still execute, just not recorded.
 #
 # Run: vhs screenshot.tape
-# Output:
-#   - screenshot.gif — the recording (what README links to)
-#   - screenshot.png — final-frame still
+# Output: screenshot.png — final-frame still (what README embeds)
 #
-# IMPORTANT: rebuild the codemaxxxing binary before running so the gif
+# IMPORTANT: rebuild the codemaxxxing binary before running so the still
 # captures the latest UI. From repo root:
 #
 #   ./packages/opencode/script/build.ts --single
@@ -25,7 +27,7 @@
 # (Your ~/.local/bin/codemaxxxing symlink should already point at the
 # dist binary; rebuilding refreshes it in place.)
 
-Output screenshot.gif
+Output cmx-screenshot-discard.gif
 
 # Toybox-noir palette (dark mode), derived from
 # ~/.config/opencode/themes/toybox-noir.json. vhs takes a standard ANSI
@@ -47,7 +49,7 @@ Hide
 # binary (~/.local/bin/codemaxxxing), not the source dev server. The
 # --session flag (tui/attach.ts) opens the TUI directly into that
 # session's chat.
-Type "codemaxxxing --session ses_2037c15efffe0oDsxc1175yfNh"
+Type "codemaxxxing --session ses_08ea04259ffevYZshiVDlutplR"
 Enter
 Sleep 8s
 
@@ -63,25 +65,24 @@ Sleep 500ms
 Enter
 Sleep 1500ms
 
-# ── Recording starts here: the gif begins on a clean session view ────
+# ── Visible portion starts here ──────────────────────────────────────
 Show
 
 # Brief beat so the first frame isn't mid-action.
 Sleep 800ms
 
 # Fire a follow-up that needs the model to look back through the
-# conversation. The session is about logo color/spacing fixes; ask for
-# a recap so the spinner runs for several seconds.
-Type "give me a brief recap of what we fixed and what's still pending"
+# conversation. A recap keeps the kinetic busy sentence on screen for a
+# few seconds, then lands a terse caveman answer.
+Type "give me a brief recap of what we covered here"
 Sleep 300ms
 Enter
 
-# Hold on the spinner long enough to capture multiple spinner frames
-# before the response starts streaming.
+# Busy state: the kinetic gradient sentence + elapsed whisper.
 Sleep 6s
 
-# Wait for the response to land + animations to settle.
-Sleep 10s
+# Wait for the response to land and the return glance to settle.
+Sleep 14s
 
-# Final still — the conversation surface populated, response complete.
+# Final still — populated conversation, afterglow bottom edge.
 Screenshot screenshot.png

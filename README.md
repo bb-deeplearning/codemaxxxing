@@ -11,7 +11,7 @@ what I wanted that the upstream defaults didn't give:
 - a way to drive multi-hour, multi-session tasks without sitting on the keyboard. a finite state machine on disk with auto-retry, conversational user pauses, and a full git audit trail. → [**wave runner**](#wave-runner).
 - subagents that behave like real actors instead of fire-and-forget RPC calls — concurrent, addressable, supervisable, with mailboxes, links, bounded queues, and per-agent_type behavior contracts. erlang/otp/akka conceptual lineage adapted for LLM constraints. → [**multi-agent actor system**](#multi-agent-architecture).
 - shell tools that hold state between calls so REPLs keep their imports, dev servers stay running while I observe their logs, file watchers report new diagnostics as edits land. → [**persistent processes**](#persistent-processes).
-- a TUI that's readable on the setup I actually live in (mosh + tmux + iPad over hotel wifi on a long flight). lighter chrome, more density, a wave campaign dashboard so the FSM is observable. → [**drafting-table TUI**](#tui).
+- a TUI that's readable on the setup I actually live in (mosh + tmux + iPad over hotel wifi on a long flight). no borders anywhere, structure made of fades, information has temperature, a wave campaign dashboard so the FSM is observable. → [**afterglow TUI**](#tui).
 - system prompts that don't over-engineer, don't moralise, distinguish questions from action requests, and parallelize aggressively. constantly reworked — nine iterations and counting, because the right prompt for Opus 4.6 isn't the right prompt for Opus 4.7. → [**rewritten prompts**](#prompts).
 
 the rest of the README walks through each one and how to install. there's a separate [WAVES.md](./WAVES.md) for the full wave-runner algorithm, [GOTCHAS.md](./GOTCHAS.md) for the sharp edges accumulated along the way, and per-campaign engineering references in [specs/](./specs/).
@@ -67,7 +67,7 @@ I replaced it with a real actor system. ten tools, all backed by an `AgentContro
 
 | Tool | What it does |
 |---|---|
-| `spawn_agent` | fire-and-keep-running. returns immediately with the child's canonical path. parent keeps working. accepts `on_failure: respawn / escalate / ignore / kill_pool` and `pool_strategy: one_for_one / one_for_all / rest_for_one`. |
+| `spawn_agent` | fire-and-keep-running. returns immediately with the child's canonical path. parent keeps working. accepts `on_failure: respawn / escalate / ignore / kill_pool` and `pool_strategy: one_for_one / one_for_all / rest_for_one`. `model` overrides the child's model as `provider/model`, `reasoning_effort` picks a variant — both validated at spawn time (unknown model or invalid variant fails the call instead of silently spawning on the wrong model); unset means the child runs its agent type's configured model falling back to the global default, never the parent's. `files` attaches file contents to the child's first message; `fork_turns` controls inherited history (`all` / `none` / last-N). |
 | `close_agent` | release a slot. cascades through descendants. `target` is optional (self-close); returns `already_terminated` (success — child exited before close arrived) vs `path_invalid` (model bug — wrong path). |
 
 **messaging**
@@ -200,27 +200,42 @@ engineering reference: [specs/replace-bash-task.md](./specs/replace-bash-task.md
 
 ## tui
 
-![codemaxxxing](./screenshot.gif)
+![codemaxxxing](./screenshot.png)
 
-lighter, more information-dense chrome. shaped for the setup I actually live in: mosh + tmux over hotel wifi on an iPad, sometimes splitscreen with notes or a browser, sometimes a 60-column window because the keyboard takes half the screen. every wasted line is a line of session history I can't see. personal preference, not a feature — but the constraints drove the shape.
+shaped for the setup I actually live in: mosh + tmux over hotel wifi on an iPad, sometimes splitscreen with notes or a browser, sometimes a 60-column window because the keyboard takes half the screen. every wasted line is a line of session history I can't see. personal preference, not a feature — but the constraints drove the shape.
 
-most of it is subtraction. panels lose their backgrounds and become single-cell left rules. message blocks lose their closing rules. tool calls collapse to `label · target · meta` instead of labeled separator lines. speaker identity moves to a `u·1` / `a·1` mark in the left margin. sidebar gains a small live stats block (messages, tokens, cost, duration). prompt has a state-aware `▎` accent and a two-row status (identity + ephemeral hints) with a small usage meter.
+the current direction is **afterglow**: information has temperature. live things glow, finished things cool to embers, failures burn. no borders, boxes, badges, chips, meters, or spinner glyphs anywhere — structure is made of fades: rules dissolve, diff washes bleed out, collapsed output sinks into the dark. the cursor `█` is the only block glyph and the brightest thing on screen, except when an ask fires — one glow at a time: the busy line cools to `· paused` and the ask takes the heat. all chrome is lowercase. status is words-in-color, never glyphs — context pressure reads `84% full · compact soon` in warning past 70%, `compact now` in error past 90%, instead of a meter.
 
-logo is a `slant`-figlet wordmark with a subtle ignition to idle animation. prompt spinner is a turbo spool (two braille turbines plus a boost gauge) instead of the upstream V12. sidebar footer reads `codema(xxx)ing for clauseo`. home footer `by clauseo`. OSC terminal title `codemaxxxing` (home) or `cmx | <session>` (sessions).
+what the surfaces look like now:
 
-the recording above shows codemaxxxing in toybox-noir theme with the caveman agent active, mid-response. the spinner is the turbo spool.
+- my words render bold in `borderActive` with a dissolving rule under them; speaker gutter marks are gone
+- quiet/loud tool hierarchy: read/grep/glob coalesce into one dim `·`-joined line; edit/run/write/asks are objects — colored header word, bold title, right-edge whisper (verdict + duration), indented body, air above and below
+- diffs render as bleed washes (row bg strongest at the left, gone by the right edge; transparent themes skip the wash), collapsing past 12 changed rows into a sunk "n more" whisper
+- the busy state is a kinetic sentence — a gradient whose tail glows hotter than its head, colored by agent identity, with a traveling pulse as the single animated line the perf budget allows. static gradients doing the work of animation, because mosh
+- the return glance: coming back to a finished session, `done — changed token.ts · 31s · $0.04` sits right above the cursor — verdict word bold in success, the rest a dim whisper. never scroll to learn what happened
+- the bottom edge is sacred: fade rule → cursor → one status whisper (`agent · model · context words · cost today`)
+- home is a letter-spaced gradient wordmark over a dissolving rule (replaces the figlet ignition on purpose — static paint), one status sentence ("saturday. fable-5 is up."), recent session rows with identity-hashed colors and age whispers, `type to start`
+- dialogs are borderless floating panels — panel fill when the theme has one, fades and air inside, fade-rule headers; the command palette rides the same list template
+- the sidebar keeps its live stats block (messages, tokens, cost, duration) and gains sunk lowercase section headers with short dissolving rules; no left border
+- the subagent footer strip is per-child: identity-tinted rule, `agent · n of m · status word` (running / waiting / completed / errored), a facts whisper (model — including per-spawn overrides — variant, context, cost), parent/prev/next navigation at any depth
+
+the design is theme-token pure — zero hex literals in the ported surfaces, every color a token or an interpolation between two tokens. a gauntlet test renders every glow device across all bundled + user themes × dark/light × 100 and 64 cols, checks exact rule geometry, and asserts transparent themes (lucent-orng) degrade to fg-only. narrow-first: every surface holds at 64 cols.
+
+the design lives as a deck of frames in `design/deck/` — frames are the source of truth, the TUI is the port. the loop: edit the frame, `bun design/deck/verify.ts` (geometry + zero-hex across every theme/mode/width), `bun design/deck/render-html.ts`, screenshot, look, iterate, then port. engineering reference: [specs/tui-redesign.md](./specs/tui-redesign.md).
+
+the still above shows codemaxxxing in toybox-noir with the caveman agent active, mid-response — history cooling above the live edge. reproduce it with `vhs screenshot.tape`.
+
+sidebar footer still reads `codema(xxx)ing for clauseo`. home footer `by clauseo`. OSC terminal title `codemaxxxing` (home) or `cmx | <session>` (sessions).
 
 also:
 
 - collapsible web search and code search result displays
 - semantic rendering of multi-agent v2 tool calls (spawn / send / wait / list show as proper components, not just JSON blobs)
-- cross-agent mailbox messages render distinct from regular user input, prefixed with `[from <author_path>]`
-- per-session subagent status strip in the footer when concurrent siblings are live (4 fields: total, running, completed, errored)
-- subagent navigation works at any depth, not just direct children of root
-- **flush queued messages on demand.** hit Enter while a turn is running, the message lands in the session log with a ` queued ` badge as today. press `<leader> ⏎` (default `ctrl+x` then `return`) to interrupt the current model stream and process the whole queue immediately. partial assistant text and in-flight tool calls are preserved on the abort so the model sees what it was in the middle of doing, then the queued messages, then responds. footer hint reads `esc interrupt · <leader> ⏎ flush N queued` when applicable. configurable via `keybinds.session_flush_queued`. see [flush-queued change notes](./CHANGES/2026-05-18-flush-queued.md).
+- cross-agent mailbox messages render distinct from regular user input, prefixed with `[from <author_path>]`, click-to-expand
+- **flush queued messages on demand.** hit Enter while a turn is running, the message lands in the session log with a ` queued ` badge as today. press `<leader> ⏎` (default `ctrl+x` then `return`) to interrupt the current model stream and process the whole queue immediately. partial assistant text and in-flight tool calls are preserved on the abort so the model sees what it was in the middle of doing, then the queued messages, then responds. while a turn is running the busy line's whisper appends `· <leader> ⏎ flush N queued`, with `esc to stop` right-aligned on the same row. configurable via `keybinds.session_flush_queued`. see [flush-queued change notes](./CHANGES/2026-05-18-flush-queued.md).
 - `/wave` slash command for the wave campaign dashboard
 - `/wave-plan`, `/wave-run`, `/wave-pause`, `/wave-stop`, `/wave-next` slash commands for campaign control
-- wave footer pill on home shows active campaign + status when one exists
+- active campaign status on the home footer as words-in-color (`wave 3/7`, `waves done`)
 
 ## prompts
 
