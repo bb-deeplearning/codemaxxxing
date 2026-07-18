@@ -12,6 +12,7 @@
 import { Agent } from "@/agent/agent"
 import { AgentControl } from "@/agent/control"
 import { InstanceState } from "@/effect/instance-state"
+import { Provider } from "@/provider/provider"
 import { Effect, Schema } from "effect"
 import path from "path"
 import * as Tool from "../tool"
@@ -58,11 +59,11 @@ export const Parameters = Schema.Struct({
   }),
   model: Schema.optional(Schema.String).annotate({
     description:
-      "Optional model override for the new agent. Leave unset to inherit the parent's model — this is the preferred default. Only set when the user explicitly asks for a different model or the task clearly requires one.",
+      'Optional model override for the new agent, as "provider/model" (e.g. "anthropic/claude-sonnet-4-5"). Leave unset to use the agent type\'s configured model (or the global default). Only set when the user explicitly asks for a different model or the task clearly requires one. Unknown models fail the call.',
   }),
   reasoning_effort: Schema.optional(Schema.String).annotate({
     description:
-      "Optional reasoning effort override for the new agent. Leave unset to inherit the parent's reasoning effort. Only set when the task clearly requires more or less reasoning than the parent's default.",
+      "Optional reasoning-effort variant for the model override (e.g. \"low\", \"high\"). Requires `model` to be set and must be one of that model's variants — invalid values fail the call and list the valid ones. Leave unset to use the model's default effort.",
   }),
   on_failure: Schema.optional(
     Schema.Union([
@@ -161,6 +162,7 @@ export const AgentSpawnTool = Tool.define(
   Effect.gen(function* () {
     const control = yield* AgentControl.Service
     const agents = yield* Agent.Service
+    const provider = yield* Provider.Service
 
     return {
       description: DESCRIPTION,
@@ -189,6 +191,65 @@ export const AgentSpawnTool = Tool.define(
                     `agent_type "${params.agent_type}" is not a spawnable subagent. Available: ${available}.`,
                   )
                 }
+              }
+
+              // Bug 3 fix (specs/tui-redesign.md known bugs): `model` /
+              // `reasoning_effort` were declared but never forwarded.
+              // Resolve + validate here, then thread the ref through
+              // SpawnAgentInput.model → sessions.create → the child's
+              // first-turn model selection (prompt.ts
+              // injectMailboxMessages fresh-child fallback). Invalid
+              // input fails the call — silently spawning a child on the
+              // wrong model produces confidently wrong work.
+              let modelOverride: AgentControl.SpawnAgentInput["model"] = undefined
+              if (params.model !== undefined) {
+                const parsed = Provider.parseModel(params.model)
+                if (!parsed.providerID || !parsed.modelID) {
+                  return errorOutput(
+                    params.task_name,
+                    "model_invalid",
+                    `model must be a "provider/model" string (e.g. "anthropic/claude-sonnet-4-5"), got "${params.model}".`,
+                  )
+                }
+                // getModel raises a defect on unknown provider/model —
+                // catchCause folds any failure into the sentinel.
+                const resolved = yield* provider.getModel(parsed.providerID, parsed.modelID).pipe(
+                  Effect.map((m) => ({ ok: true as const, model: m })),
+                  Effect.catchCause(() => Effect.succeed({ ok: false as const, model: undefined })),
+                )
+                if (!resolved.ok || resolved.model === undefined) {
+                  return errorOutput(
+                    params.task_name,
+                    "model_unknown",
+                    `Unknown model "${params.model}". Use "provider/model" for a configured provider, or leave model unset to use the agent type's default.`,
+                  )
+                }
+                if (params.reasoning_effort !== undefined) {
+                  // Same validation idiom as createUserMessage
+                  // (prompt.ts): a variant is only valid when it exists
+                  // on the resolved model's variants map.
+                  const variants = Object.keys(resolved.model.variants ?? {})
+                  if (!variants.includes(params.reasoning_effort)) {
+                    return errorOutput(
+                      params.task_name,
+                      "reasoning_effort_invalid",
+                      variants.length > 0
+                        ? `reasoning_effort "${params.reasoning_effort}" is not a variant of ${params.model}. Valid values: ${variants.join(", ")}.`
+                        : `model ${params.model} has no reasoning-effort variants; leave reasoning_effort unset.`,
+                    )
+                  }
+                }
+                modelOverride = {
+                  providerID: parsed.providerID,
+                  modelID: parsed.modelID,
+                  variant: params.reasoning_effort,
+                }
+              } else if (params.reasoning_effort !== undefined) {
+                return errorOutput(
+                  params.task_name,
+                  "reasoning_effort_invalid",
+                  `reasoning_effort requires model to be set ("provider/model") so the value can be validated against that model's variants.`,
+                )
               }
 
               const parentPath = yield* AgentToolContext.currentAgentPath(control, ctx.sessionID)
@@ -243,6 +304,7 @@ export const AgentSpawnTool = Tool.define(
                   task_name: params.task_name,
                   agent_type: params.agent_type,
                   initial_message: initialMessage,
+                  model: modelOverride,
                   options: { fork_turns: fork.value },
                   on_failure: params.on_failure,
                   pool_strategy: params.pool_strategy,

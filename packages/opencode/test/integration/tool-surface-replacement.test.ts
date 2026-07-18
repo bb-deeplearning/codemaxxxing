@@ -42,6 +42,7 @@ import { disposeAllInstances } from "../fixture/fixture"
 import { loadPermissionConfig, loadScannerCorpus } from "../fixtures/load-config"
 import { generateCommand, makeRng, scanEqual } from "../fixtures/fuzz"
 import { testEffect } from "../lib/effect"
+import { ProviderTest } from "../fake/provider"
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -62,6 +63,10 @@ const it = testEffect(
     Session.defaultLayer,
     Truncate.defaultLayer,
     ToolRegistry.defaultLayer,
+    // spawn_agent resolves Provider.Service to validate its model /
+    // reasoning_effort params (bug 3 wiring). These tests never pass
+    // either param, so the fake is inert.
+    ProviderTest.fake().layer,
   ),
 )
 

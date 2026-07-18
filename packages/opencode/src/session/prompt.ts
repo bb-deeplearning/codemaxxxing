@@ -1474,8 +1474,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       } else {
         const sess = yield* sessions.get(sessionID)
         agentName = sess.agent ?? (yield* agents.defaultAgent())
-        const ag = yield* agents.get(agentName)
-        modelRef = ag?.model ?? (yield* lastModel(sessionID))
+        if (sess.model) {
+          // Spawn-time model override (spawn_agent's model /
+          // reasoning_effort → SpawnAgentInput.model → Session.create):
+          // the session's own model wins over the agent-type default.
+          // Session-side model refs use `id`; message-side use `modelID`.
+          modelRef = {
+            providerID: sess.model.providerID,
+            modelID: sess.model.id,
+            variant: sess.model.variant,
+          }
+        } else {
+          const ag = yield* agents.get(agentName)
+          modelRef = ag?.model ?? (yield* lastModel(sessionID))
+        }
       }
 
       const userMsg: MessageV2.User = {

@@ -39,6 +39,7 @@ import { Schema } from "effect"
 import { disposeAllInstances, provideTmpdirInstance } from "../fixture/fixture"
 import { loadPermissionConfig } from "../fixtures/load-config"
 import { testEffect } from "../lib/effect"
+import { ProviderTest } from "../fake/provider"
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -57,6 +58,10 @@ const it = testEffect(
     Pty.defaultLayer,
     Session.defaultLayer,
     Truncate.defaultLayer,
+    // spawn_agent resolves Provider.Service to validate its model /
+    // reasoning_effort params (bug 3 wiring). These tests never pass
+    // either param, so the fake is inert.
+    ProviderTest.fake().layer,
   ),
 )
 

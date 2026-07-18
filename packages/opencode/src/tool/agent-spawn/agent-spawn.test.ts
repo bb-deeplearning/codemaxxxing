@@ -14,9 +14,18 @@ import * as Tool from "../tool"
 import { AgentSpawnTool, errorTagFor, Parameters } from "./agent-spawn"
 import { disposeAllInstances, provideTmpdirInstance } from "../../../test/fixture/fixture"
 import { testEffect } from "../../../test/lib/effect"
+import { ProviderTest } from "../../../test/fake/provider"
 
 afterEach(async () => {
   await disposeAllInstances()
+})
+
+// Bug 3 fix wiring — AgentSpawnTool now resolves Provider.Service to
+// validate the `model` / `reasoning_effort` params. The fake provider
+// exposes exactly one model (openai/gpt-5.2) with two reasoning variants
+// so the tests below can exercise the valid / unknown / invalid paths.
+const providerFake = ProviderTest.fake({
+  model: ProviderTest.model({ variants: { low: {}, high: {} } }),
 })
 
 const it = testEffect(
@@ -28,6 +37,7 @@ const it = testEffect(
     Session.defaultLayer,
     Truncate.defaultLayer,
     ToolRegistry.defaultLayer,
+    providerFake.layer,
   ),
 )
 
@@ -582,6 +592,163 @@ describe("tool.spawn_agent", () => {
         )
         expect(result.metadata.task_name).toBe("/root/combo")
         expect(result.metadata.error).toBeUndefined()
+      }),
+    ),
+  )
+
+  // Bug 3 fix (specs/tui-redesign.md known bugs) — model / reasoning_effort
+  // were declared but never forwarded. The tests below assert the wire-through
+  // path: params → SpawnAgentInput.model → sessions.create (Session.Info.model,
+  // whose field is `id`, not `modelID`) — plus the validation guards.
+
+  it.live("model override lands on the created child session", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const root = yield* sessions.create({ title: "root" })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+
+        const result = yield* def.execute(
+          { message: "x", task_name: "modeled", agent_type: "explore", model: "openai/gpt-5.2" },
+          ctx,
+        )
+        expect(result.metadata.error).toBeUndefined()
+        const child = yield* sessions.get(result.metadata.child_session_id as SessionID)
+        expect(String(child.model?.providerID)).toBe("openai")
+        expect(String(child.model?.id)).toBe("gpt-5.2")
+        expect(child.model?.variant).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("model + reasoning_effort forward the variant onto the child session", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const root = yield* sessions.create({ title: "root" })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+
+        const result = yield* def.execute(
+          {
+            message: "x",
+            task_name: "modeled_hi",
+            agent_type: "explore",
+            model: "openai/gpt-5.2",
+            reasoning_effort: "high",
+          },
+          ctx,
+        )
+        expect(result.metadata.error).toBeUndefined()
+        const child = yield* sessions.get(result.metadata.child_session_id as SessionID)
+        expect(String(child.model?.providerID)).toBe("openai")
+        expect(String(child.model?.id)).toBe("gpt-5.2")
+        expect(child.model?.variant).toBe("high")
+      }),
+    ),
+  )
+
+  it.live("no model param → child session created without a model override", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const root = yield* sessions.create({ title: "root" })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+
+        const result = yield* def.execute({ message: "x", task_name: "nomodel", agent_type: "explore" }, ctx)
+        expect(result.metadata.error).toBeUndefined()
+        const child = yield* sessions.get(result.metadata.child_session_id as SessionID)
+        expect(child.model).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("unknown model returns model_unknown and spawns nothing", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const root = yield* sessions.create({ title: "root" })
+        const def = yield* initTool()
+        const { ctx, record } = makeCtx(root.id)
+
+        const result = yield* def.execute(
+          { message: "x", task_name: "badmodel", agent_type: "explore", model: "openai/nope" },
+          ctx,
+        )
+        expect(result.metadata.error).toBe("model_unknown")
+        expect(result.output.toLowerCase()).toMatch(/unknown model/)
+        // Fails before the permission ask and before any spawn.
+        expect(record.asks.length).toBe(0)
+      }),
+    ),
+  )
+
+  it.live("model without a provider/model separator returns model_invalid", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const root = yield* sessions.create({ title: "root" })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+
+        const result = yield* def.execute(
+          { message: "x", task_name: "noslash", agent_type: "explore", model: "claude-x" },
+          ctx,
+        )
+        expect(result.metadata.error).toBe("model_invalid")
+        expect(result.output).toMatch(/provider\/model/)
+      }),
+    ),
+  )
+
+  it.live("invalid reasoning_effort fails and lists the valid variants", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const root = yield* sessions.create({ title: "root" })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+
+        const result = yield* def.execute(
+          {
+            message: "x",
+            task_name: "badeffort",
+            agent_type: "explore",
+            model: "openai/gpt-5.2",
+            reasoning_effort: "maximum",
+          },
+          ctx,
+        )
+        expect(result.metadata.error).toBe("reasoning_effort_invalid")
+        expect(result.output).toContain("low")
+        expect(result.output).toContain("high")
+      }),
+    ),
+  )
+
+  it.live("reasoning_effort without model returns reasoning_effort_invalid", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installNeverLoop
+        const sessions = yield* Session.Service
+        const root = yield* sessions.create({ title: "root" })
+        const def = yield* initTool()
+        const { ctx } = makeCtx(root.id)
+
+        const result = yield* def.execute(
+          { message: "x", task_name: "effortonly", agent_type: "explore", reasoning_effort: "high" },
+          ctx,
+        )
+        expect(result.metadata.error).toBe("reasoning_effort_invalid")
+        expect(result.output.toLowerCase()).toMatch(/requires model/)
       }),
     ),
   )

@@ -23,12 +23,21 @@ perspective you can refer to the child as `worker_a` (relative) or
 only refer to it by the canonical form. Pick names that mean something —
 they show up in `list_agents` and in every cross-agent message.
 
-## Inheritance
+## Inheritance and model selection
 
-The child inherits your model, reasoning effort, workspace, tool set, and
-permission ruleset by default. Leave `model` and `reasoning_effort` unset
-unless the user explicitly asks for an override or the task clearly demands
-one. `agent_type` selects which subagent definition to spawn — see the
+The child inherits your workspace and permission ruleset. Its model is NOT
+inherited from you: when `model` is unset, the child runs on its agent
+type's configured model, falling back to the global default model.
+
+To pin the child to a specific model, pass `model` as `provider/model`
+(e.g. `anthropic/claude-sonnet-4-5`). Add `reasoning_effort` to select one
+of that model's reasoning variants (e.g. `low`, `high`); it requires
+`model` to be set. Both are validated at spawn time — an unknown model or
+an invalid variant fails the call (listing valid variants) instead of
+silently spawning the child on the wrong model. Leave both unset unless
+the user explicitly asks for an override or the task clearly demands one.
+
+`agent_type` selects which subagent definition to spawn — see the
 Subagents section below.
 
 ## When to delegate

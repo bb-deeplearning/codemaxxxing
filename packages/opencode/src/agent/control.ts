@@ -16,6 +16,7 @@ import {
 import { Identifier } from "@/id/id"
 import { Session } from "@/session/session"
 import { SessionID } from "@/session/schema"
+import type { ModelID, ProviderID } from "@/provider/schema"
 import { Bus } from "@/bus"
 import { BusEvent } from "@/bus/bus-event"
 import { EventV2 } from "@/v2/event"
@@ -356,6 +357,19 @@ export interface SpawnAgentInput {
   readonly agent_type?: string
   readonly initial_message: string
   readonly options?: SpawnAgentOptions
+  // Bug 3 fix (specs/tui-redesign.md known bugs) — spawn_agent's `model` /
+  // `reasoning_effort` params. When set, the child session is created with
+  // this model, so its first turn (injectMailboxMessages' fresh-child
+  // fallback in prompt.ts) runs on the override instead of the agent
+  // type's configured model / global default. `variant` carries the
+  // reasoning-effort preset name, pre-validated by the tool against the
+  // resolved model's variants. Survives supervised respawns for free via
+  // respawnInputByPath.
+  readonly model?: {
+    readonly providerID: ProviderID
+    readonly modelID: ModelID
+    readonly variant?: string
+  }
   readonly max_threads?: number
   // D12 (actor-discipline-2026-05-20 Wave 5) — defaults preserve current
   // behavior. `on_failure` defaults to "escalate" (today's implicit
@@ -1030,6 +1044,16 @@ export const layer = Layer.effect(
               parentID: input.parentID,
               title: `${input.task_name} (@${nickname})`,
               agent: input.agent_type,
+              // Session.create's Model field is `id`, NOT `modelID` —
+              // message-side model refs use `modelID`, session-side use
+              // `id`. Transposing them is a silent bug.
+              model: input.model
+                ? {
+                    id: input.model.modelID,
+                    providerID: input.model.providerID,
+                    variant: input.model.variant,
+                  }
+                : undefined,
               permission: parent.permission,
             })
 
