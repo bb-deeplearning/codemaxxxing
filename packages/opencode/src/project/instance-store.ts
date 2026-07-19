@@ -20,8 +20,11 @@ export interface Interface {
   readonly dispose: (ctx: InstanceContext) => Effect.Effect<void>
   readonly disposeAll: () => Effect.Effect<void>
   readonly provide: <A, E, R>(input: LoadInput, effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
-  /** Directories with a live (or in-flight) instance. Read-only snapshot for
-   * fan-outs like config hot-reload; never spawns anything. */
+  /** Directories with a live instance. Read-only snapshot for fan-outs like
+   * config hot-reload; never spawns anything. Only SETTLED entries are
+   * returned: invalidating a directory whose bootstrap is still in flight
+   * deadlocks the ScopedCache key lock (invalidate waits on the in-flight
+   * lookup, the bootstrap's next config read waits on the invalidate). */
   readonly directories: () => Effect.Effect<string[]>
 }
 
@@ -185,7 +188,10 @@ export const layer: Layer.Layer<Service, never, Project.Service | InstanceBootst
       dispose,
       disposeAll,
       provide,
-      directories: () => Effect.sync(() => [...cache.keys()]),
+      directories: () =>
+        Effect.forEach([...cache.entries()], ([directory, entry]) =>
+          Deferred.isDone(entry.deferred).pipe(Effect.map((done) => (done ? [directory] : []))),
+        ).pipe(Effect.map((chunks) => chunks.flat())),
     })
   }),
 )

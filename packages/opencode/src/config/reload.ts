@@ -40,6 +40,7 @@ import type { Info } from "./config"
 const log = Log.create({ service: "config.reload" })
 
 const DEBOUNCE = Duration.millis(300)
+const RETRY_AFTER = Duration.seconds(3)
 
 export const Event = {
   Updated: BusEvent.define(
@@ -78,6 +79,11 @@ export function computeChangedSlices(previous: Info, next: Info): ChangedSlices 
 
 type Trigger =
   | { kind: "global"; paths: string[] }
+  /** one bounded follow-up per global pass: instances whose bootstrap was
+   * in flight during the pass are invisible to directories() (flushing an
+   * in-flight boot deadlocks the ScopedCache key lock) and may have booted
+   * on the pre-edit config. the retry flushes exactly the late arrivals. */
+  | { kind: "global-retry"; changed: ChangedSlices; flushed: string[] }
   | { kind: "project"; directory: string }
 
 const isProjectConfigPath = (file: string) =>
@@ -112,13 +118,22 @@ export const layer = Layer.effect(
       )
       yield* Effect.forEach(directories, (dir) => publish(dir, names), { discard: true })
       log.info("config reloaded", { trigger: label, changed: names, instances: directories.length })
+      return directories
     })
+
+    const scheduleRetry = (changed: ChangedSlices, flushed: string[]) =>
+      Effect.sleep(RETRY_AFTER).pipe(
+        Effect.andThen(Queue.offer(queue, { kind: "global-retry", changed, flushed })),
+        Effect.forkScoped,
+      )
 
     const handleGlobal = Effect.fnUntraced(function* (paths: string[]) {
       // SKILL.md edits are not config parses; flush the blanket channel
       // (skill caches live there) without probing the config files.
       if (paths.length > 0 && paths.every(isSkillPath)) {
-        yield* flushAll({ core: true, gated: [] }, "skills")
+        const changed = { core: true, gated: [] as ConfigInvalidateScope[] }
+        const flushed = yield* flushAll(changed, "skills")
+        yield* scheduleRetry(changed, flushed)
         return
       }
       const result = yield* config.reloadGlobal()
@@ -130,7 +145,19 @@ export const layer = Layer.effect(
       }
       const changed = computeChangedSlices(result.previous, result.next)
       if (!changed.core && changed.gated.length === 0) return
-      yield* flushAll(changed, "global")
+      const flushed = yield* flushAll(changed, "global")
+      yield* scheduleRetry(changed, flushed)
+    })
+
+    const handleRetry = Effect.fnUntraced(function* (changed: ChangedSlices, flushed: string[]) {
+      const lateArrivals = (yield* store.directories()).filter((dir) => !flushed.includes(dir))
+      if (lateArrivals.length === 0) return
+      const names = [...(changed.core ? ["core"] : []), ...changed.gated]
+      yield* Effect.promise(() =>
+        Promise.all(lateArrivals.map((dir) => invalidateConfigDependents(dir, changed.gated))),
+      )
+      yield* Effect.forEach(lateArrivals, (dir) => publish(dir, names), { discard: true })
+      log.info("config reloaded", { trigger: "late-boot", changed: names, instances: lateArrivals.length })
     })
 
     const handleProject = Effect.fnUntraced(function* (directory: string) {
@@ -165,6 +192,9 @@ export const layer = Layer.effect(
           const batch = [first, ...rest]
           const globalPaths = batch.flatMap((t) => (t.kind === "global" ? t.paths : []))
           if (batch.some((t) => t.kind === "global")) yield* handleGlobal(globalPaths)
+          for (const t of batch) {
+            if (t.kind === "global-retry") yield* handleRetry(t.changed, t.flushed)
+          }
           for (const dir of new Set(batch.flatMap((t) => (t.kind === "project" ? [t.directory] : [])))) {
             yield* handleProject(dir)
           }
@@ -186,13 +216,12 @@ export const layer = Layer.effect(
             root,
             (err, events) => {
               if (err || events.length === 0) return
-              const paths = events
-                .map((e) => e.path)
-                .filter((p) => !p.includes(`${path.sep}node_modules${path.sep}`) && !p.endsWith("tui.json"))
+              const noise = /(\/node_modules\/|\.DS_Store$|tui\.json$|bun\.lock[b]?$|package(-lock)?\.json$)/
+              const paths = events.map((e) => e.path).filter((p) => !noise.test(p))
               if (paths.length === 0) return
               bridge.fork(Queue.offer(queue, { kind: "global", paths }))
             },
-            { ignore: ["node_modules", ".git", "cache"] },
+            { ignore: [path.join(root, "node_modules"), path.join(root, ".git"), path.join(root, "cache")] },
           ),
         ).pipe(
           Effect.catch((error) => {
