@@ -93,7 +93,17 @@ const isProjectConfigPath = (file: string) =>
 
 const isSkillPath = (file: string) => /(^|\/)skills?\//.test(file)
 
-export class Service extends Context.Service<Service, {}>()("@opencode/ConfigReload") {}
+export interface Interface {
+  /** Manual full reload, the API-button path: flush EVERY config-derived
+   * cache (gated slices included — the user asked, so mcp/lsp/plugin
+   * genuinely restart) on every settled instance, republish
+   * config.updated. Also the only on-demand rescan for external skill
+   * dirs (~/.claude/skills, ~/.agents/skills), which the file watcher
+   * does not cover. */
+  readonly reloadNow: () => Effect.Effect<{ instances: number }>
+}
+
+export class Service extends Context.Service<Service, Interface>()("@opencode/ConfigReload") {}
 
 export const layer = Layer.effect(
   Service,
@@ -250,7 +260,28 @@ export const layer = Layer.effect(
     GlobalBus.on("event", onFrame)
     yield* Effect.addFinalizer(() => Effect.sync(() => GlobalBus.off("event", onFrame)))
 
-    return Service.of({})
+    const reloadNow = Effect.fn("ConfigReload.reloadNow")(function* () {
+      yield* config.invalidate()
+      const directories = yield* store.directories()
+      yield* Effect.promise(() =>
+        Promise.all(directories.map((dir) => invalidateConfigDependents(dir, ["mcp", "lsp", "plugin"]))),
+      )
+      yield* Effect.forEach(
+        directories,
+        (directory) =>
+          store
+            .provide(
+              { directory },
+              bus.publish(Event.Updated, { directory, changed: ["core", "mcp", "lsp", "plugin"] }),
+            )
+            .pipe(Effect.ignore),
+        { discard: true },
+      )
+      log.info("config reloaded", { trigger: "api", instances: directories.length })
+      return { instances: directories.length }
+    })
+
+    return Service.of({ reloadNow })
   }),
 )
 
@@ -267,5 +298,8 @@ const { runPromise } = makeRuntime(Service, defaultLayer.pipe(Layer.provide(Inst
  * Call once from server boot; failures log, never block listen. */
 export const init = () =>
   runPromise(() => Effect.void).catch((error) => log.error("config hot-reload failed to start", { error: String(error) }))
+
+/** Manual full reload via the facade runtime — see Interface.reloadNow. */
+export const reloadNow = () => runPromise((svc) => svc.reloadNow())
 
 export * as ConfigReload from "./reload"

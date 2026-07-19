@@ -34,4 +34,20 @@ export const disposeAllInstancesAndEmitGlobalDisposed = Effect.fn("Server.dispos
   },
 )
 
+/** The restart button: respond first, then dispose cleanly (bounded — a
+ * wedged instance must not block the exit) and leave. the process
+ * supervisor (systemd Restart=always / launchd KeepAlive) brings the serve
+ * back; clients resync over sse. this is the ONLY sanctioned way to
+ * restart a serve remotely — no ssh, no new trust surface. */
+export function scheduleProcessExit(runPromise: (effect: Effect.Effect<void, never, InstanceStore.Service>) => Promise<void>) {
+  setTimeout(() => {
+    const graceful = runPromise(disposeAllInstancesAndEmitGlobalDisposed({ swallowErrors: true })).catch(() => undefined)
+    const deadline = new Promise((resolve) => setTimeout(resolve, 3000))
+    void Promise.race([graceful, deadline]).then(() => {
+      log.info("restart requested via api; exiting for supervisor relaunch")
+      process.exit(0)
+    })
+  }, 200)
+}
+
 export * as GlobalLifecycle from "./global-lifecycle"

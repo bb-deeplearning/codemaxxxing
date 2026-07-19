@@ -113,6 +113,34 @@ describe("HttpApi raw route authorization", () => {
     }
   })
 
+  test("requires configured auth on reload + restart; reload executes, restart is never run authed in-process", async () => {
+    const server = app({ password: "secret" })
+
+    /* both are POSTs with side effects. restart's authed path schedules
+       process.exit — executing it here kills the test runner, so restart
+       pins the two 401s only; its 200 path is fleet-verified. reload is
+       safe to run and pins the full triple. */
+    for (const route of [GlobalPaths.reload, GlobalPaths.restart]) {
+      const missing = await server.request(route, { method: "POST" })
+      await cancelBody(missing)
+      expect(missing.status).toBe(401)
+
+      const bad = await server.request(route, {
+        method: "POST",
+        headers: { authorization: basic("opencode", "wrong") },
+      })
+      await cancelBody(bad)
+      expect(bad.status).toBe(401)
+    }
+
+    const reload = await server.request(GlobalPaths.reload, {
+      method: "POST",
+      headers: { authorization: basic("opencode", "secret") },
+    })
+    expect(reload.status).toBe(200)
+    expect((await reload.json()) as { instances: number }).toEqual({ instances: expect.any(Number) })
+  })
+
   test("authed global fs listing serves home and rejects bad paths", async () => {
     const server = app({ password: "secret" })
     const headers = { authorization: basic("opencode", "secret") }

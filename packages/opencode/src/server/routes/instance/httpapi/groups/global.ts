@@ -57,7 +57,13 @@ export const GlobalPaths = {
   config: "/global/config",
   dispose: "/global/dispose",
   upgrade: "/global/upgrade",
+  reload: "/global/reload",
+  restart: "/global/restart",
 } as const
+
+const GlobalReloadResult = Schema.Struct({
+  instances: Schema.Number,
+})
 
 export const GlobalApi = HttpApi.make("global").add(
   HttpApiGroup.make("global")
@@ -130,6 +136,26 @@ export const GlobalApi = HttpApi.make("global").add(
           identifier: "global.upgrade",
           summary: "Upgrade opencode",
           description: "Upgrade opencode to the specified version or latest if not specified.",
+        }),
+      ),
+      HttpApiEndpoint.post("reload", GlobalPaths.reload, {
+        success: described(GlobalReloadResult, "Reload result"),
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "global.reload",
+          summary: "Reload config, skills, and MCP servers",
+          description:
+            "Flush every config-derived cache (skills, MCP, providers, agents) on all live instances and rescan from disk. MCP and LSP servers reconnect. Sessions and PTYs are untouched.",
+        }),
+      ),
+      HttpApiEndpoint.post("restart", GlobalPaths.restart, {
+        success: described(Schema.Boolean, "Restart scheduled"),
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "global.restart",
+          summary: "Restart the serve process",
+          description:
+            "Respond, dispose instances cleanly, then exit; the process supervisor relaunches the serve. In-flight turns on this host abort. Clients resync over SSE.",
         }),
       ),
     )

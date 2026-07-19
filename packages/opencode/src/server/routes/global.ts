@@ -14,8 +14,9 @@ import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import * as Log from "@opencode-ai/core/util/log"
 import { lazy } from "../../util/lazy"
 import { Config } from "@/config/config"
+import { ConfigReload } from "@/config/reload"
 import { errors } from "../error"
-import { disposeAllInstancesAndEmitGlobalDisposed } from "../global-lifecycle"
+import { disposeAllInstancesAndEmitGlobalDisposed, scheduleProcessExit } from "../global-lifecycle"
 import { GlobalFsError, listGlobalDirs } from "../global-fs"
 
 const log = Log.create({ service: "server" })
@@ -261,6 +262,51 @@ export const GlobalRoutes = lazy(() =>
       }),
       async (c) => {
         await AppRuntime.runPromise(disposeAllInstancesAndEmitGlobalDisposed())
+        return c.json(true)
+      },
+    )
+    .post(
+      "/reload",
+      describeRoute({
+        summary: "Reload config, skills, and MCP servers",
+        description:
+          "Flush every config-derived cache (skills, MCP, providers, agents) on all live instances and rescan from disk. MCP and LSP servers reconnect. Sessions and PTYs are untouched.",
+        operationId: "global.reload",
+        responses: {
+          200: {
+            description: "Reload result",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ instances: z.number() })),
+              },
+            },
+          },
+        },
+      }),
+      async (c) => {
+        return c.json(await ConfigReload.reloadNow())
+      },
+    )
+    .post(
+      "/restart",
+      describeRoute({
+        summary: "Restart the serve process",
+        description:
+          "Respond, dispose instances cleanly, then exit; the process supervisor relaunches the serve. In-flight turns on this host abort. Clients resync over SSE.",
+        operationId: "global.restart",
+        responses: {
+          200: {
+            description: "Restart scheduled",
+            content: {
+              "application/json": {
+                schema: resolver(z.boolean()),
+              },
+            },
+          },
+        },
+      }),
+      async (c) => {
+        scheduleProcessExit((effect) => AppRuntime.runPromise(effect))
         return c.json(true)
       },
     )

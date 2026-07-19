@@ -1,9 +1,10 @@
 import { Config } from "@/config/config"
+import { ConfigReload } from "@/config/reload"
 import { GlobalBus, type GlobalEvent as GlobalBusEvent } from "@/bus/global"
 import { EffectBridge } from "@/effect/bridge"
 import { Bus } from "@/bus"
 import { Installation } from "@/installation"
-import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
+import { disposeAllInstancesAndEmitGlobalDisposed, scheduleProcessExit } from "@/server/global-lifecycle"
 import { GlobalFsError, listGlobalDirs } from "@/server/global-fs"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import * as Log from "@opencode-ai/core/util/log"
@@ -115,6 +116,15 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
       return true
     })
 
+    const reload = Effect.fn("GlobalHttpApi.reload")(function* () {
+      return yield* Effect.promise(() => ConfigReload.reloadNow())
+    })
+
+    const restart = Effect.fn("GlobalHttpApi.restart")(function* () {
+      scheduleProcessExit((effect) => bridge.promise(effect))
+      return true
+    })
+
     const upgrade = Effect.fn("GlobalHttpApi.upgrade")(function* (ctx: { payload: typeof GlobalUpgradeInput.Type }) {
       const method = yield* installation.method()
       if (method === "unknown") {
@@ -173,6 +183,8 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
       .handle("configGet", configGet)
       .handle("configUpdate", configUpdate)
       .handle("dispose", dispose)
+      .handle("reload", reload)
+      .handle("restart", restart)
       .handleRaw("upgrade", upgradeRaw)
   }),
 )
