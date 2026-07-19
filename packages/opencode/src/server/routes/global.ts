@@ -16,6 +16,7 @@ import { lazy } from "../../util/lazy"
 import { Config } from "@/config/config"
 import { errors } from "../error"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "../global-lifecycle"
+import { GlobalFsError, listGlobalDirs } from "../global-fs"
 
 const log = Log.create({ service: "server" })
 
@@ -92,6 +93,59 @@ export const GlobalRoutes = lazy(() =>
       }),
       async (c) => {
         return c.json({ healthy: true, version: InstallationVersion })
+      },
+    )
+    .get(
+      "/fs",
+      describeRoute({
+        summary: "List directories",
+        description:
+          "List the subdirectories of a directory on the server host. Defaults to the server user's home directory. Read-only; directories only.",
+        operationId: "global.fs.list",
+        responses: {
+          200: {
+            description: "Directory listing",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z
+                    .object({
+                      path: z.string(),
+                      parent: z.string().nullable(),
+                      home: z.string(),
+                      entries: z.array(
+                        z.object({
+                          name: z.string(),
+                          absolute: z.string(),
+                          hidden: z.boolean(),
+                        }),
+                      ),
+                    })
+                    .meta({
+                      ref: "GlobalFsListing",
+                    }),
+                ),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator(
+        "query",
+        z.object({
+          path: z.string().optional(),
+        }),
+      ),
+      async (c) => {
+        try {
+          return c.json(await listGlobalDirs(c.req.valid("query").path))
+        } catch (error) {
+          if (error instanceof GlobalFsError) {
+            return c.json({ success: false as const, error: error.message }, 400)
+          }
+          throw error
+        }
       },
     )
     .get(

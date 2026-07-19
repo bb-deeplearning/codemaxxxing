@@ -97,7 +97,15 @@ const cors = (corsOptions?: CorsOptions) =>
     { global: true },
   )
 
-const rootApiRoutes = HttpApiBuilder.layer(RootHttpApi).pipe(Layer.provide([controlHandlers, globalHandlers]))
+/* the root api family (control + global groups) carries no instance router
+   layer, so it must mount the auth router middleware itself — without it
+   /global/* (config rewrite, dispose, upgrade, fs, the global event stream)
+   is reachable with no password. hono parity: AuthMiddleware covers every
+   route there, /global included. */
+const rootApiRoutes = HttpApiBuilder.layer(RootHttpApi).pipe(
+  Layer.provide([controlHandlers, globalHandlers]),
+  Layer.provide(authorizationRouterMiddleware.layer.pipe(Layer.provide(ServerAuth.Config.defaultLayer))),
+)
 const instanceRouterLayer = authorizationRouterMiddleware
   .combine(instanceRouterMiddleware)
   .combine(workspaceRouterMiddleware)

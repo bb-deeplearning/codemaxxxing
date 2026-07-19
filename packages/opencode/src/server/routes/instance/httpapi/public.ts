@@ -173,14 +173,18 @@ function matchLegacyOpenApi(input: Record<string, unknown>) {
           },
         }
       }
-      if (!isInstanceRoute) continue
-      operation.parameters = [
-        ...InstanceQueryParameters,
-        ...(operation.parameters ?? []).filter(
-          (param) => param.in !== "query" || (param.name !== "directory" && param.name !== "workspace"),
-        ),
-      ]
-      for (const param of operation.parameters) normalizeParameter(param, `${method.toUpperCase()} ${path}`)
+      if (isInstanceRoute) {
+        operation.parameters = [
+          ...InstanceQueryParameters,
+          ...(operation.parameters ?? []).filter(
+            (param) => param.in !== "query" || (param.name !== "directory" && param.name !== "workspace"),
+          ),
+        ]
+      }
+      // normalize ALL routes' parameters (global routes included): Effect's
+      // Schema.optional emits `anyOf: [T, null]` on query params, the legacy
+      // Hono spec emits plain `T`.
+      for (const param of operation.parameters ?? []) normalizeParameter(param, `${method.toUpperCase()} ${path}`)
     }
   }
   return input

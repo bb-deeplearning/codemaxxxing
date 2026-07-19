@@ -67,6 +67,7 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | Reconstructing an `edit` oldString from memory instead of a fresh read | `edit-tool-fuzzy-match-can-apply-nonexistent-oldstring` |
 | Parsing binary headers at fixed offsets (image sniffing) | `image-header-parsers-must-validate-magic-bytes` |
 | Scripting `bun test` with explicit file paths | `bun-test-nonexistent-path-exits-zero` |
+| Adding a route family to the effect-httpapi server assembly | `httpapi-root-api-family-needs-auth-router-middleware` |
 
 ## By category — slugs with one-line summaries and line offsets
 
@@ -158,6 +159,9 @@ Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offs
 
 ### Scripts / runtime lifecycle
 - L587 `managed-runtime-script-needs-process-exit` — Bun scripts using `ManagedRuntime` hang after `dispose()`; explicit `process.exit(0)` required.
+
+### Server routes / auth
+- `httpapi-root-api-family-needs-auth-router-middleware` — effect-backend auth is per-route-layer; a new top-level family (e.g. `/global/*`) ships password-free unless it mounts `authorizationRouterMiddleware`. Hono's `Server.Legacy()` hides the hole in-process.
 
 ---
 
@@ -1445,5 +1449,24 @@ permission: Permission.merge(
 **Fix:** Add the id to `POST_BASELINE_ADDITIONS` in that test with a dated comment. Do NOT re-freeze the campaign baseline artifact and do NOT loosen the core comparison — forcing this declaration is the test's entire job.
 **Why:** The snapshot separates the frozen May-15 core (must match the baseline exactly) from declared additions; anything in neither set is treated as a leaked tool. Pre-2026-07-18 the test used a single asymmetric `toEqual` and had been silently red since actor-discipline added four tools.
 **See:** `test/integration/tool-surface-replacement.test.ts` (`POST_BASELINE_ADDITIONS`).
+
+---
+
+### `httpapi-root-api-family-needs-auth-router-middleware`
+
+**Severity:** correctness-bug (security)
+**When:** Adding a route family to the effect-httpapi server assembly (`httpapi/server.ts`), or investigating auth on any serve built from the codemaxxxing channel.
+**Symptom:** Routes in the new family answer 200 with no credentials while instance routes 401 correctly. Shipped for real: the whole `/global/*` family (config GET/PATCH, dispose, upgrade, the global event stream, later fs) was password-free until 2026-07-19.
+**Fix:** Every top-level route layer in `createRoutes` must mount `authorizationRouterMiddleware` (with `ServerAuth.Config.defaultLayer`) unless it is deliberately public. `rootApiRoutes` now does; `uiRoute` and `instanceRouterLayer` already did. Pin new families in `test/server/httpapi-raw-route-auth.test.ts` (401 missing, 401 wrong, 200 right).
+
+```ts
+const rootApiRoutes = HttpApiBuilder.layer(RootHttpApi).pipe(
+  Layer.provide([controlHandlers, globalHandlers]),
+  Layer.provide(authorizationRouterMiddleware.layer.pipe(Layer.provide(ServerAuth.Config.defaultLayer))),
+)
+```
+
+**Why:** Auth in the effect backend is per-route-layer, not global: `authorizationRouterMiddleware` only guards the layers it is provided to, and the `global` group declares no `Authorization` API middleware (mirroring hono, where auth is runtime middleware). A family provided to none of the auth'd layers ships open. The trap compounds when debugging: `Server.Legacy()` forces hono (where app-level `AuthMiddleware` covers everything including `/global`), so the hole "doesn't reproduce" in-process — `Flag.OPENCODE_EXPERIMENTAL_HTTPAPI` defaults ON for channels dev/beta/local/codemaxxxing (`flag.ts`), so real serves run the effect backend where it was open.
+**See:** `packages/opencode/src/server/routes/instance/httpapi/server.ts` (`rootApiRoutes`). Test: `packages/opencode/test/server/httpapi-raw-route-auth.test.ts` (`requires configured auth on every root api route`). Related: [pty-leader-exit-sighup-vs-nohup-race] (same detach discipline used to verify it live).
 
 ---

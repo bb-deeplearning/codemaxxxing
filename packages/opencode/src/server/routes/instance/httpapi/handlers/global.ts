@@ -4,6 +4,7 @@ import { EffectBridge } from "@/effect/bridge"
 import { Bus } from "@/bus"
 import { Installation } from "@/installation"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
+import { GlobalFsError, listGlobalDirs } from "@/server/global-fs"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import * as Log from "@opencode-ai/core/util/log"
 import { Effect, Queue, Schema } from "effect"
@@ -80,6 +81,25 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
       return eventResponse()
     })
 
+    /* raw for status parity with the hono route: 200 listing / 400
+       {success:false,error}. the shared listGlobalDirs owns all behavior. */
+    const fsRaw = Effect.fn("GlobalHttpApi.fs")(function* (ctx: {
+      request: HttpServerRequest.HttpServerRequest
+    }) {
+      const requested = new URL(ctx.request.url, "http://localhost").searchParams.get("path") ?? undefined
+      return yield* Effect.promise(() =>
+        listGlobalDirs(requested).then(
+          (listing) => HttpServerResponse.jsonUnsafe(listing),
+          (error) => {
+            if (error instanceof GlobalFsError) {
+              return HttpServerResponse.jsonUnsafe({ success: false, error: error.message }, { status: 400 })
+            }
+            throw error
+          },
+        ),
+      )
+    })
+
     const configGet = Effect.fn("GlobalHttpApi.configGet")(function* () {
       return yield* config.getGlobal()
     })
@@ -148,6 +168,7 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
 
     return handlers
       .handle("health", health)
+      .handleRaw("fs", fsRaw)
       .handleRaw("event", event)
       .handle("configGet", configGet)
       .handle("configUpdate", configUpdate)

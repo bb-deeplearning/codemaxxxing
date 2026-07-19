@@ -22,6 +22,23 @@ export const GlobalUpgradeInput = Schema.Struct({
   target: Schema.optional(Schema.String),
 })
 
+export const GlobalFsQuery = Schema.Struct({
+  path: Schema.optional(Schema.String),
+})
+
+const GlobalFsEntry = Schema.Struct({
+  name: Schema.String,
+  absolute: Schema.String,
+  hidden: Schema.Boolean,
+})
+
+const GlobalFsListing = Schema.Struct({
+  path: Schema.String,
+  parent: Schema.NullOr(Schema.String),
+  home: Schema.String,
+  entries: Schema.Array(GlobalFsEntry),
+}).annotate({ identifier: "GlobalFsListing" })
+
 const GlobalUpgradeResult = Schema.Union([
   Schema.Struct({
     success: Schema.Literal(true),
@@ -35,6 +52,7 @@ const GlobalUpgradeResult = Schema.Union([
 
 export const GlobalPaths = {
   health: "/global/health",
+  fs: "/global/fs",
   event: "/global/event",
   config: "/global/config",
   dispose: "/global/dispose",
@@ -51,6 +69,18 @@ export const GlobalApi = HttpApi.make("global").add(
           identifier: "global.health",
           summary: "Get health",
           description: "Get health information about the OpenCode server.",
+        }),
+      ),
+      HttpApiEndpoint.get("fs", GlobalPaths.fs, {
+        query: GlobalFsQuery,
+        success: described(GlobalFsListing, "Directory listing"),
+        error: HttpApiError.BadRequest,
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "global.fs.list",
+          summary: "List directories",
+          description:
+            "List the subdirectories of a directory on the server host. Defaults to the server user's home directory. Read-only; directories only.",
         }),
       ),
       HttpApiEndpoint.get("event", GlobalPaths.event, {

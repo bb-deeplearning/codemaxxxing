@@ -4,6 +4,7 @@ import { HttpRouter } from "effect/unstable/http"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { Instance } from "../../src/project/instance"
 import { EventPaths } from "../../src/server/routes/instance/httpapi/event"
+import { GlobalPaths } from "../../src/server/routes/instance/httpapi/groups/global"
 import { PtyPaths } from "../../src/server/routes/instance/httpapi/groups/pty"
 import { ExperimentalHttpApiServer } from "../../src/server/routes/instance/httpapi/server"
 import { PtyID } from "../../src/pty/schema"
@@ -85,5 +86,44 @@ describe("HttpApi raw route authorization", () => {
     })
     await cancelBody(authed)
     expect(authed.status).toBe(404)
+  })
+
+  test("requires configured auth on every root api route (/global family)", async () => {
+    const server = app({ password: "secret" })
+
+    /* the root api family has no instance router layer: without its own
+       auth middleware, config rewrite / dispose / upgrade / fs listing /
+       the global event stream are open. pin every GET in the family. */
+    for (const route of [GlobalPaths.health, GlobalPaths.fs, GlobalPaths.config, GlobalPaths.event]) {
+      const missing = await server.request(route)
+      await cancelBody(missing)
+      expect(missing.status).toBe(401)
+
+      const bad = await server.request(route, {
+        headers: { authorization: basic("opencode", "wrong") },
+      })
+      await cancelBody(bad)
+      expect(bad.status).toBe(401)
+
+      const authed = await server.request(route, {
+        headers: { authorization: basic("opencode", "secret") },
+      })
+      await cancelBody(authed)
+      expect(authed.status).toBe(200)
+    }
+  })
+
+  test("authed global fs listing serves home and rejects bad paths", async () => {
+    const server = app({ password: "secret" })
+    const headers = { authorization: basic("opencode", "secret") }
+
+    const listing = await server.request(GlobalPaths.fs, { headers })
+    expect(listing.status).toBe(200)
+    const body = (await listing.json()) as { path: string; home: string }
+    expect(body.path).toBe(body.home)
+
+    const bad = await server.request(`${GlobalPaths.fs}?path=relative/nope`, { headers })
+    expect(bad.status).toBe(400)
+    expect(await bad.json()).toMatchObject({ success: false })
   })
 })

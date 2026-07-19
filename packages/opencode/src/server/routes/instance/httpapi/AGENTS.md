@@ -33,3 +33,5 @@ Avoid `HttpRouter.provideRequest(...)` unless the dependency is intentionally re
 Use `Effect.provideService(...)` in middleware only for request-derived context, such as `WorkspaceRouteContext`, `InstanceRef`, or `WorkspaceRef`. Do not use it to smuggle stable services through request effects when they can be yielded at layer construction.
 
 When adding middleware, compose it at the layer boundary and keep the route tree explicit in `server.ts`. Shared router middleware such as auth, workspace routing, and instance context should stay visible where routes are assembled.
+
+Auth is per-route-layer, not global. `authorizationRouterMiddleware` only guards the layers it is provided to, and API-level `Authorization` middleware lives on each group that opts in. A new top-level route family (e.g. a sibling of `rootApiRoutes`) ships password-free unless it either mounts `authorizationRouterMiddleware` (with `ServerAuth.Config.defaultLayer`) or declares `Authorization` on its group. Pin every new family with 401-missing / 401-wrong / 200-right cases in `test/server/httpapi-raw-route-auth.test.ts`. See GOTCHAS `httpapi-root-api-family-needs-auth-router-middleware`.

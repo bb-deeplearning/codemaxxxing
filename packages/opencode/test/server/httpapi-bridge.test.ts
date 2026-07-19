@@ -397,6 +397,22 @@ describe("HttpApi server", () => {
     expect(await response.json()).toMatchObject({ healthy: true })
   })
 
+  test("serves global fs listing from Effect HttpApi", async () => {
+    const response = await app().request(GlobalPaths.fs)
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { path: string; home: string; entries: unknown[] }
+    expect(body.path).toBe(body.home)
+    expect(Array.isArray(body.entries)).toBe(true)
+  })
+
+  test("maps global fs errors to 400 in Effect HttpApi", async () => {
+    const response = await app().request(`${GlobalPaths.fs}?path=relative/nope`)
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({ success: false })
+  })
+
   test("serves global event stream from Effect HttpApi", async () => {
     const response = await app().request(GlobalPaths.event)
     if (!response.body) throw new Error("missing event stream body")
