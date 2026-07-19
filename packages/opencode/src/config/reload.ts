@@ -33,7 +33,9 @@ import { GlobalBus } from "@/bus/global"
 import { EffectBridge } from "@/effect/bridge"
 import { FileWatcher } from "@/file/watcher"
 import { InstanceStore } from "@/project/instance-store"
+import { InstanceLayer } from "@/project/instance-layer"
 import { invalidateConfigDependents, type ConfigInvalidateScope } from "@/effect/instance-registry"
+import { makeRuntime } from "@/effect/run-service"
 import { Config } from "./config"
 import type { Info } from "./config"
 
@@ -253,5 +255,17 @@ export const layer = Layer.effect(
 )
 
 export const defaultLayer = layer.pipe(Layer.provide(Config.defaultLayer), Layer.provide(Bus.defaultLayer))
+
+/* the facade runtime provides InstanceLayer itself; memoMap dedupes, so this
+   is the SAME InstanceStore instance every route handler uses. */
+const { runPromise } = makeRuntime(Service, defaultLayer.pipe(Layer.provide(InstanceLayer.layer)))
+
+/** Force the watcher layer to construct. Services in this codebase build
+ * lazily on first facade use and NOTHING consumes ConfigReload — without
+ * this call a serve process never starts the watcher (bit the first
+ * deploy: tests passed via AppRuntime while real serves never reloaded).
+ * Call once from server boot; failures log, never block listen. */
+export const init = () =>
+  runPromise(() => Effect.void).catch((error) => log.error("config hot-reload failed to start", { error: String(error) }))
 
 export * as ConfigReload from "./reload"

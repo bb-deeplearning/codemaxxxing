@@ -2,6 +2,7 @@ import { generateSpecs } from "hono-openapi"
 import { Hono } from "hono"
 import { adapter } from "#hono"
 import { lazy } from "@/util/lazy"
+import { ConfigReload } from "@/config/reload"
 import * as Log from "@opencode-ai/core/util/log"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { WorkspaceID } from "@/control-plane/schema"
@@ -184,6 +185,9 @@ export let url: URL
 export async function listen(opts: ListenOptions): Promise<Listener> {
   const built = create(opts)
   const server = await built.runtime.listen(opts)
+  // config hot-reload rides its own lazy runtime; force it alive for every
+  // serving process (fire-and-forget, logs its own failures)
+  void ConfigReload.init()
 
   const next = new URL("http://localhost")
   next.hostname = opts.hostname
