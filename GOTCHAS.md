@@ -68,6 +68,8 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | Parsing binary headers at fixed offsets (image sniffing) | `image-header-parsers-must-validate-magic-bytes` |
 | Scripting `bun test` with explicit file paths | `bun-test-nonexistent-path-exits-zero` |
 | Adding a route family to the effect-httpapi server assembly | `httpapi-root-api-family-needs-auth-router-middleware` |
+| Adding an always-on background service (watcher/poller) as a Layer | `configreload-lazy-service-runtime-never-constructs` |
+| Invalidating per-directory caches from outside the instance lifecycle | `scopedcache-invalidate-during-inflight-boot-deadlocks` |
 
 ## By category — slugs with one-line summaries and line offsets
 
@@ -554,6 +556,25 @@ Mechanical pattern: enumerate valid host values via a runtime describer (e.g. `d
 
 ---
 
+### `configreload-lazy-service-runtime-never-constructs`
+
+**Severity:** correctness-bug
+**When:** Adding a background/always-on service (watcher, poller, subscriber) as an Effect Layer, expecting it to run in real serve/tui processes.
+**Symptom:** The feature works in every test but does nothing in a real serve. Tests pass because they run through `AppRuntime` (whose `AppLayer` eagerly merges everything); real processes build per-service lazy runtimes (`makeRuntime(Service, layer)` with the shared `memoMap`), and a layer NOBODY yields never constructs. Shipped for real: config hot-reload deployed to the whole fleet, watcher never started, first live verification failed (2026-07-19).
+**Fix:** Give the module its own `makeRuntime` facade plus an explicit `init()` that runs a no-op effect to force layer construction, and call it from the process spine (`Server.listen` — every serving process passes through it). Keep the `AppLayer` merge too; `memoMap` dedupes so both paths share one instance.
+
+```ts
+const { runPromise } = makeRuntime(Service, defaultLayer.pipe(Layer.provide(InstanceLayer.layer)))
+export const init = () => runPromise(() => Effect.void).catch(...)
+// server.ts listen():
+void ConfigReload.init()
+```
+
+**Why:** There is no single app runtime in a serve: each service facade lazily builds its own `ManagedRuntime` on first use, and construction is demand-driven through service references. An always-on service is by definition referenced by no consumer, so demand never arrives. `AppLayer` is an aggregate used by tests and some entry paths, not the serve's spine — passing tests through it proves the pipeline, not the wiring.
+**See:** `packages/opencode/src/config/reload.ts` (`init`), `packages/opencode/src/server/server.ts` (`listen`). Related: [agentcontrol-providerref-must-live-in-layer-not-instancestate] (the general layer-vs-instance state rule).
+
+---
+
 ### `e2e-perf-sibling-fanout-needs-median-of-n`
 
 **Severity:** DX-trap
@@ -901,6 +922,17 @@ If a future bench is suspiciously fast (e.g. -50% vs baseline) AND introduces ne
 **Symptom:** Function% stuck at ~92% even after every observable behavior is tested. Bun's `--coverage` shows `91.67 | 100.00`.
 **Fix:** Target 100% **line** coverage rather than function coverage. Function% is a lossy proxy. If a wave's verification checks "100% on file X" and you see 100% lines + ~90% functions because of a TaggedErrorClass, it's passing the real constraint.
 **Why:** `Schema.TaggedErrorClass()` synthesizes class members at definition time (internal `_tag` accessors, `pipe`, equality helpers). Bun's V8 coverage counts them as functions but they aren't directly callable from user code. Function% ceiling is roughly `(N - 1) / N`.
+
+---
+
+### `scopedcache-invalidate-during-inflight-boot-deadlocks`
+
+**Severity:** correctness-bug (full instance wedge)
+**When:** Invalidating `InstanceState`/`ScopedCache` entries for a directory from OUTSIDE the instance's own lifecycle (hot-reload fan-outs, admin sweeps) while that directory's bootstrap may still be in flight.
+**Symptom:** Every instance-scoped route for the affected directory hangs forever at 0% CPU (deadlock, not livelock); non-instance routes keep answering. Shipped for real: the mac serve wedged the first time a skill file was written 3s after a `/skill` request started booting the default instance (2026-07-19).
+**Fix:** Only fan out to SETTLED instances. `InstanceStore.directories()` filters entries through `Deferred.isDone` for exactly this reason. Pair it with a bounded late-boot retry (re-flush directories that settle within a few seconds) so an edit that lands mid-boot still propagates.
+**Why:** `ScopedCache.invalidate` on a key with an in-progress lookup queues behind that lookup to run finalizers; the bootstrap's own next read of the same key then queues behind the invalidate. Cycle: boot waits on invalidate, invalidate waits on boot. Nothing spins, nothing errors, the key lock just never releases.
+**See:** `packages/opencode/src/project/instance-store.ts` (`directories`), `packages/opencode/src/config/reload.ts` (`scheduleRetry`/`handleRetry`).
 
 ---
 
