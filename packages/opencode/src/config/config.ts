@@ -297,6 +297,13 @@ export interface Interface {
   readonly invalidate: () => Effect.Effect<void>
   readonly directories: () => Effect.Effect<string[]>
   readonly waitForDependencies: () => Effect.Effect<void>
+  /** Probe-then-swap for hot-reload: load the global config fresh WITHOUT
+   * touching the cache; only on a clean parse invalidate the cached value.
+   * A broken file mid-edit therefore never downgrades a live serve to `{}` —
+   * previous config stays active and the caller gets the error. */
+  readonly reloadGlobal: () => Effect.Effect<
+    { ok: true; previous: Info; next: Info } | { ok: false; error: string; previous: Info }
+  >
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Config") {}
@@ -705,6 +712,7 @@ export const layer = Layer.effect(
       Effect.fn("Config.state")(function* (ctx) {
         return yield* loadInstanceState(ctx).pipe(Effect.orDie)
       }),
+      { configDependent: true },
     )
 
     const get = Effect.fn("Config.get")(function* () {
@@ -736,6 +744,16 @@ export const layer = Layer.effect(
 
     const invalidate = Effect.fn("Config.invalidate")(function* () {
       yield* invalidateGlobal
+    })
+
+    const reloadGlobal = Effect.fn("Config.reloadGlobal")(function* () {
+      const previous = yield* cachedGlobal
+      const probe = yield* loadGlobal().pipe(Effect.exit)
+      if (Exit.isFailure(probe)) {
+        return { ok: false as const, error: String(probe.cause), previous }
+      }
+      yield* invalidateGlobal
+      return { ok: true as const, previous, next: probe.value }
     })
 
     const updateGlobal = Effect.fn("Config.updateGlobal")(function* (config: Info) {
@@ -772,6 +790,7 @@ export const layer = Layer.effect(
       invalidate,
       directories,
       waitForDependencies,
+      reloadGlobal,
     })
   }),
 )

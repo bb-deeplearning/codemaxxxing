@@ -170,6 +170,7 @@ export const layer = Layer.effect(
           formatFile,
         }
       }),
+      { configDependent: true },
     )
 
     const init = Effect.fn("Format.init")(function* () {

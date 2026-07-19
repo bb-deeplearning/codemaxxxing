@@ -217,6 +217,7 @@ export const layer = Layer.effect(
 
         return s
       }),
+      { configDependent: "lsp" },
     )
 
     const getClients = Effect.fnUntraced(function* (file: string) {

@@ -226,6 +226,7 @@ export const layer = Layer.effect(
       Effect.fn("Skill.discovery")(function* (ctx) {
         return yield* discoverSkills(config, discovery, fsys, global, ctx.directory, ctx.worktree)
       }),
+      { configDependent: true },
     )
     const state = yield* InstanceState.make(
       Effect.fn("Skill.state")(function* () {
@@ -233,6 +234,7 @@ export const layer = Layer.effect(
         yield* loadSkills(s, yield* InstanceState.get(discovered), bus)
         return s
       }),
+      { configDependent: true },
     )
 
     const get = Effect.fn("Skill.get")(function* (name: string) {

@@ -305,6 +305,7 @@ export const layer: Layer.Layer<
           read: tool.read,
         }
       }),
+      { configDependent: true },
     )
 
     const all: Interface["all"] = Effect.fn("ToolRegistry.all")(function* () {

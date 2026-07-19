@@ -3,6 +3,7 @@ import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { $ } from "bun"
 import { Context, Deferred, Duration, Effect, Exit, Fiber, Layer } from "effect"
 import { InstanceState } from "@/effect/instance-state"
+import { invalidateConfigDependents } from "@/effect/instance-registry"
 import { Instance } from "../../src/project/instance"
 import { disposeAllInstances, provideInstance, reloadTestInstance, tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -389,5 +390,75 @@ it.live("InstanceState survives deferred resume outside ALS when InstanceRef is 
       expect(Exit.isSuccess(exit)).toBe(true)
       if (Exit.isSuccess(exit)) expect(exit.value).toBe(dir)
     }).pipe(Effect.provide(Test.layer))
+  }),
+)
+
+/* config hot-reload channel: flushes are SELECTIVE. only opted-in states
+   drop; everything else (sessions, ptys, pending permissions in the real
+   tree) must survive a config change untouched. */
+
+it.live("configDependent state flushes on config invalidation; plain state survives", () =>
+  Effect.gen(function* () {
+    const dir = yield* tmpdirScoped()
+    const released: string[] = []
+    let dependents = 0
+    let bystanders = 0
+    const dependent = yield* InstanceState.make(
+      () =>
+        Effect.acquireRelease(
+          Effect.sync(() => ({ n: ++dependents })),
+          (value) => Effect.sync(() => void released.push(`dependent:${value.n}`)),
+        ),
+      { configDependent: true },
+    )
+    const bystander = yield* InstanceState.make(() => Effect.sync(() => ({ n: ++bystanders })))
+
+    const d1 = yield* access(dependent, dir)
+    const b1 = yield* access(bystander, dir)
+    yield* Effect.promise(() => invalidateConfigDependents(dir, []))
+    const d2 = yield* access(dependent, dir)
+    const b2 = yield* access(bystander, dir)
+
+    expect(d2).not.toBe(d1)
+    expect(dependents).toBe(2)
+    expect(released).toEqual(["dependent:1"])
+    expect(b2).toBe(b1)
+    expect(bystanders).toBe(1)
+  }),
+)
+
+it.live("gated scope flushes only when its slice changed", () =>
+  Effect.gen(function* () {
+    const dir = yield* tmpdirScoped()
+    let n = 0
+    const gated = yield* InstanceState.make(() => Effect.sync(() => ({ n: ++n })), { configDependent: "mcp" })
+
+    const a = yield* access(gated, dir)
+    yield* Effect.promise(() => invalidateConfigDependents(dir, []))
+    const b = yield* access(gated, dir)
+    expect(b).toBe(a)
+
+    yield* Effect.promise(() => invalidateConfigDependents(dir, ["mcp"]))
+    const c = yield* access(gated, dir)
+    expect(c).not.toBe(a)
+    expect(n).toBe(2)
+  }),
+)
+
+it.live("config invalidation is per-directory", () =>
+  Effect.gen(function* () {
+    const one = yield* tmpdirScoped()
+    const two = yield* tmpdirScoped()
+    let n = 0
+    const state = yield* InstanceState.make(() => Effect.sync(() => ({ n: ++n })), { configDependent: true })
+
+    const a1 = yield* access(state, one)
+    const a2 = yield* access(state, two)
+    yield* Effect.promise(() => invalidateConfigDependents(one, []))
+    const b1 = yield* access(state, one)
+    const b2 = yield* access(state, two)
+
+    expect(b1).not.toBe(a1)
+    expect(b2).toBe(a2)
   }),
 )

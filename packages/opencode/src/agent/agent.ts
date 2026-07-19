@@ -439,6 +439,7 @@ export const layer = Layer.effect(
           defaultAgent,
         } satisfies State
       }),
+      { configDependent: true },
     )
 
     return Service.of({

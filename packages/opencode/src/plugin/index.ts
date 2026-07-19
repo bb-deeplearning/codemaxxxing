@@ -253,6 +253,7 @@ export const layer = Layer.effect(
 
         return { hooks }
       }),
+      { configDependent: "plugin" },
     )
 
     const trigger = Effect.fn("Plugin.trigger")(function* <

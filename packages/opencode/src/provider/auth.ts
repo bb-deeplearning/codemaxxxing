@@ -125,6 +125,7 @@ export const layer: Layer.Layer<Service, never, Auth.Service | Plugin.Service> =
           pending: new Map<ProviderID, AuthOAuthResult>(),
         }
       }),
+      { configDependent: true },
     )
 
     const decode = Schema.decodeUnknownSync(Methods)

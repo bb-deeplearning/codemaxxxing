@@ -75,6 +75,9 @@ delete process.env["CEREBRAS_API_KEY"]
 delete process.env["SAMBANOVA_API_KEY"]
 delete process.env["OPENCODE_SERVER_PASSWORD"]
 delete process.env["OPENCODE_SERVER_USERNAME"]
+// channel-db selection must come from the test env, not the developer's
+// shell (rohan's zshrc exports this; it flips Database.Path assertions)
+delete process.env["OPENCODE_DISABLE_CHANNEL_DB"]
 
 // Use in-memory sqlite
 process.env["OPENCODE_DB"] = ":memory:"

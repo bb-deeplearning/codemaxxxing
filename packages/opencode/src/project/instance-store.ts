@@ -20,6 +20,9 @@ export interface Interface {
   readonly dispose: (ctx: InstanceContext) => Effect.Effect<void>
   readonly disposeAll: () => Effect.Effect<void>
   readonly provide: <A, E, R>(input: LoadInput, effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
+  /** Directories with a live (or in-flight) instance. Read-only snapshot for
+   * fan-outs like config hot-reload; never spawns anything. */
+  readonly directories: () => Effect.Effect<string[]>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/InstanceStore") {}
@@ -182,6 +185,7 @@ export const layer: Layer.Layer<Service, never, Project.Service | InstanceBootst
       dispose,
       disposeAll,
       provide,
+      directories: () => Effect.sync(() => [...cache.keys()]),
     })
   }),
 )

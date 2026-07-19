@@ -3,7 +3,7 @@ import * as EffectLogger from "@opencode-ai/core/effect/logger"
 import { Instance, type InstanceContext } from "@/project/instance"
 import { LocalContext } from "@/util/local-context"
 import { InstanceRef, WorkspaceRef } from "./instance-ref"
-import { registerDisposer } from "./instance-registry"
+import { registerDisposer, registerConfigInvalidator, type ConfigInvalidateScope } from "./instance-registry"
 import { WorkspaceContext } from "@/control-plane/workspace-context"
 
 const TypeId = "~opencode/InstanceState"
@@ -37,6 +37,14 @@ export const directory = Effect.map(context, (ctx) => ctx.directory)
 
 export const make = <A, E = never, R = never>(
   init: (ctx: InstanceContext) => Effect.Effect<A, E, R | Scope.Scope>,
+  options?: {
+    /** Opt this state into config hot-reload. `true` flushes on any config
+     * change; a named scope ("mcp" | "lsp" | "plugin") flushes only when
+     * that slice of the config changed. Flushing drops the ScopedCache
+     * entry (running scope finalizers) and rebuilds lazily on next access —
+     * running turns keep the references they already resolved. */
+    configDependent?: true | Exclude<ConfigInvalidateScope, "always">
+  },
 ): Effect.Effect<InstanceState<A, E, Exclude<R, Scope.Scope>>, never, R | Scope.Scope> =>
   Effect.gen(function* () {
     const cache = yield* ScopedCache.make<string, A, E, R>({
@@ -47,10 +55,18 @@ export const make = <A, E = never, R = never>(
         }),
     })
 
-    const off = registerDisposer((directory) =>
-      Effect.runPromise(ScopedCache.invalidate(cache, directory).pipe(Effect.provide(EffectLogger.layer))),
-    )
+    const invalidateDirectory = (directory: string) =>
+      Effect.runPromise(ScopedCache.invalidate(cache, directory).pipe(Effect.provide(EffectLogger.layer)))
+    const off = registerDisposer(invalidateDirectory)
     yield* Effect.addFinalizer(() => Effect.sync(off))
+
+    if (options?.configDependent) {
+      const offConfig = registerConfigInvalidator(
+        options.configDependent === true ? "always" : options.configDependent,
+        invalidateDirectory,
+      )
+      yield* Effect.addFinalizer(() => Effect.sync(offConfig))
+    }
 
     return {
       [TypeId]: TypeId,

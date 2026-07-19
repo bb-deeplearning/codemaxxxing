@@ -546,6 +546,7 @@ export const layer = Layer.effect(
 
         return s
       }),
+      { configDependent: "mcp" },
     )
 
     function closeClient(s: State, name: string) {

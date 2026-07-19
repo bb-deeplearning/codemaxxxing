@@ -58,6 +58,10 @@ function protecteds(dir: string) {
 
 export const hasNativeBinding = () => !!watcher()
 
+/** The platform-keyed @parcel/watcher binding, shared with ConfigReload's
+ * process-level config-dir watcher. */
+export const native = watcher
+
 export interface Interface {
   readonly init: () => Effect.Effect<void>
 }

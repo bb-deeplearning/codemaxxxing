@@ -1432,6 +1432,7 @@ const layer: Layer.Layer<
           varsLoaders,
         }
       }),
+      { configDependent: true },
     )
 
     const list = Effect.fn("Provider.list")(() => InstanceState.use(state, (s) => s.providers))
