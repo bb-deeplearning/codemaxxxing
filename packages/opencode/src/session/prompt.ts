@@ -981,11 +981,18 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
       const model = input.model ?? ag.model ?? (yield* lastModel(input.sessionID))
       const same = ag.model && model.providerID === ag.model.providerID && model.modelID === ag.model.modelID
-      const full =
-        !input.variant && ag.variant && same
-          ? yield* provider.getModel(model.providerID, model.modelID).pipe(Effect.catchDefect(() => Effect.void))
-          : undefined
-      const variant = input.variant ?? (ag.variant && full?.variants?.[ag.variant] ? ag.variant : undefined)
+      const full = !input.variant
+        ? yield* provider.getModel(model.providerID, model.modelID).pipe(Effect.catchDefect(() => Effect.void))
+        : undefined
+      const agentVariant = ag.variant && same && full?.variants?.[ag.variant] ? ag.variant : undefined
+      // Last resort: the TUI's per-model variant memory (model.json). A
+      // variant-less prompt on an adaptive-thinking model produces a signed
+      // but EMPTY reasoning envelope (no thinking body param → no thinking
+      // deltas; live-pinned 2026-07-20), so "the variant I always run" must
+      // ride every surface, not just the TUI picker. Validated against the
+      // model's own ladder, same rule as the agent fallback above.
+      const remembered = !input.variant && !agentVariant ? yield* provider.recentVariant(model) : undefined
+      const variant = input.variant ?? agentVariant ?? (remembered && full?.variants?.[remembered] ? remembered : undefined)
 
       const info: MessageV2.User = {
         id: input.messageID ?? MessageID.ascending(),
@@ -1487,6 +1494,30 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         } else {
           const ag = yield* agents.get(agentName)
           modelRef = ag?.model ?? (yield* lastModel(sessionID))
+        }
+      }
+
+      // A turn without a variant on an adaptive-thinking model produces a
+      // signed but EMPTY reasoning envelope (live-pinned 2026-07-20), so a
+      // still-bare modelRef walks the same fallback ladder createUserMessage
+      // uses: agent-declared variant (only on the agent's own model), then
+      // the TUI's per-model memory. Both validated against the model's
+      // actual ladder before riding.
+      if (!modelRef.variant) {
+        const ag = yield* agents.get(agentName)
+        const declared =
+          ag?.variant &&
+          ag.model &&
+          modelRef.providerID === ag.model.providerID &&
+          modelRef.modelID === ag.model.modelID
+            ? ag.variant
+            : undefined
+        const candidate = declared ?? (yield* provider.recentVariant(modelRef))
+        if (candidate) {
+          const full = yield* provider
+            .getModel(modelRef.providerID, modelRef.modelID)
+            .pipe(Effect.catchDefect(() => Effect.void))
+          if (full?.variants?.[candidate]) modelRef = { ...modelRef, variant: candidate }
         }
       }
 

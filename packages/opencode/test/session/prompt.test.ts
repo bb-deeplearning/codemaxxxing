@@ -2082,6 +2082,100 @@ it.live("applies agent variant only when using agent model", () =>
   ),
 )
 
+// TUI variant memory fallback (model.json). A variant-less turn on an
+// adaptive-thinking model produces a signed but EMPTY reasoning envelope
+// (no thinking body param → zero thinking deltas; live-pinned 2026-07-20),
+// so the per-model variant the user last picked must ride every surface.
+
+const cfgWithLadder = {
+  ...cfg,
+  provider: {
+    ...cfg.provider,
+    test: {
+      ...cfg.provider.test,
+      models: {
+        "test-model": {
+          ...cfg.provider.test.models["test-model"],
+          variants: { max: {}, high: {} },
+        },
+      },
+    },
+  },
+}
+
+function writeVariantMemory(value: string) {
+  return Effect.promise(async () => {
+    const fs = await import("fs/promises")
+    const { Global } = await import("@opencode-ai/core/global")
+    await fs.mkdir(Global.Path.state, { recursive: true })
+    await fs.writeFile(
+      path.join(Global.Path.state, "model.json"),
+      JSON.stringify({ variant: { "test/test-model": value } }),
+    )
+  })
+}
+
+it.live("variant-less prompt rides the tui's per-model variant memory", () =>
+  provideTmpdirInstance(
+    (_dir) =>
+      Effect.gen(function* () {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        /* the test preload isolates XDG_STATE_HOME: this writes the test
+           run's own state dir, never the developer's real model.json */
+        yield* writeVariantMemory("max")
+        const session = yield* sessions.create({})
+
+        const bare = yield* prompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          noReply: true,
+          parts: [{ type: "text", text: "hello" }],
+        })
+        if (bare.info.role !== "user") throw new Error("expected user message")
+        expect(bare.info.model.variant).toBe("max")
+
+        /* an explicit variant always outranks the memory */
+        const explicit = yield* prompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          noReply: true,
+          variant: "high",
+          parts: [{ type: "text", text: "hello again" }],
+        })
+        if (explicit.info.role !== "user") throw new Error("expected user message")
+        expect(explicit.info.model.variant).toBe("high")
+
+        yield* sessions.remove(session.id)
+      }),
+    { git: true, config: cfgWithLadder },
+  ),
+)
+
+it.live("remembered variant off the model's ladder never rides", () =>
+  provideTmpdirInstance(
+    (_dir) =>
+      Effect.gen(function* () {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        yield* writeVariantMemory("nonexistent")
+        const session = yield* sessions.create({})
+
+        const bare = yield* prompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          noReply: true,
+          parts: [{ type: "text", text: "hello" }],
+        })
+        if (bare.info.role !== "user") throw new Error("expected user message")
+        expect(bare.info.model.variant).toBeUndefined()
+
+        yield* sessions.remove(session.id)
+      }),
+    { git: true, config: cfgWithLadder },
+  ),
+)
+
 // Agent / command resolution errors
 
 it.live(
