@@ -70,6 +70,7 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | Adding a route family to the effect-httpapi server assembly | `httpapi-root-api-family-needs-auth-router-middleware` |
 | Adding an always-on background service (watcher/poller) as a Layer | `configreload-lazy-service-runtime-never-constructs` |
 | Invalidating per-directory caches from outside the instance lifecycle | `scopedcache-invalidate-during-inflight-boot-deadlocks` |
+| Starting/steering the session agent loop from HTTP (any instance), or mixing surfaces (tui + serve, bare + scoped POSTs) on one session | `session-runloop-lock-busy-guard-was-per-instance` |
 
 ## By category — slugs with one-line summaries and line offsets
 
@@ -105,6 +106,9 @@ Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offs
 
 ### Sourced events
 - L551 `eventv2-and-bus-dual-emission-with-parallel-type-prefixes` — keep EventV2 (`session.next.<domain>.…`) and BusEvent (`<domain>.…`) under different type prefixes; emit both with the same payload.
+
+### Session run loop
+- L966 `session-runloop-lock-busy-guard-was-per-instance` — the busy guard was in-memory per-instance while the sqlite is host-global; two instances (or a tui + serve) could run one session's loop concurrently. `SessionRunState.ensureRunning` now wraps the loop in a host-scoped `EffectFlock` lock.
 
 ### Tool definitions
 - L954 `tool-define-execute-r-must-be-never-capture-services-in-closure` — lifting helpers out of `Tool.define` widens execute's R; capture services in the outer closure and provide inline.
@@ -960,6 +964,24 @@ const tid = PtyID.ascending("pty_legacy_term_1")
 
 **Why:** `Schema.brand(...)` produces a constructor whose `.make()` requires the input to ALREADY be branded. The intent is "if you're calling `.make()`, you've validated upstream." The `.descending/.ascending` statics accept plain strings and validate the prefix at runtime.
 **See:** `packages/opencode/src/id/id.ts:36-45` (`generateID` validates and brands).
+
+---
+
+### `session-runloop-lock-busy-guard-was-per-instance`
+
+**Severity:** correctness-bug
+
+**When:** Starting or steering the session agent loop through any HTTP surface (`POST /session/:id/message`, `/loop`, `/prompt_async`) on a serve hosting multiple instances, or from two processes (tui + serve) sharing the host db.
+
+**Symptom:** Two agent loops run the SAME session concurrently: two interleaved `step=` counters in one serve log, two live reasoning streams in clients, the same queued prompt answered twice at double token spend — and eventually a provider 400 (`"the final block in an assistant message cannot be `thinking`"`) when one lap's request ships the other lap's half-finished blocks. Live forensics 2026-07-20 (boxbox session `ses_080672a12ffe`): compose scoped the create + first prompt to the repo instance, thread replies posted bare to the launchd serve's default instance (cwd `/`), and each instance's runner map independently answered "idle".
+
+**Fix:** `SessionRunState.ensureRunning` wraps the runLoop in `EffectFlock.withLock("session-run:" + sessionID)` — at most one loop per session per HOST, across instances and processes. Losers PARK: when the holder releases, the parked loop acquires, re-reads storage, and exits on the standard exit condition without an LLM call when everything is already answered. Parking doubles as the backup consumer, closing the exit race where a prompt persists just as the holder's loop tears down. `LockTimeoutError` (a live holder ran the entire 5-minute park window) dies as `Session.BusyError` — the holder's loop re-reads every iteration and consumes whatever prompted the loser. The park is interruptible (same change: `Effect.uninterruptibleMask` around the acquire retry in effect-flock.ts) so abort can kill a parked runner; before, an interrupt wedged for the full retry window.
+
+**Why:** The busy guard was a `Map<SessionID, Runner>` inside `InstanceState.make` — in-memory, PER-INSTANCE — while sessions/messages/parts live in host-global sqlite. Any routing that lets one session id reach two instance contexts (bare vs `x-opencode-directory`-scoped POSTs, or two processes) got two independent "idle" answers and two loops interleaving one transcript. The lock puts the busy truth at the same scope as the data: the host.
+
+**Residuals:** (1) `startShell` is NOT lock-wrapped — a cross-process shell during a foreign lap can still interleave; fail-fast semantics there want a `tryAcquire` addition to EffectFlock. (2) A bare POST while idle still runs the lap on the RECEIVING instance — wrong cwd for repo sessions; the follow-up is routing session verbs (prompt/loop/cancel/deleteMessage) to `session.directory` via `InstanceStore.provide` at the `SessionPrompt` service level so both backends inherit it.
+
+**See:** `packages/opencode/src/session/run-state.ts` (the lock), `packages/core/src/util/effect-flock.ts` (interruptible park), `packages/opencode/test/session/prompt.test.ts` ("a prompt from a second instance parks on the run lock instead of starting a concurrent loop"), `packages/core/test/util/effect-flock.test.ts` ("parked acquire is interruptible and leaves the holder's lock intact"). [`agentcontrol-providerref-must-live-in-layer-not-instancestate`, `scopedcache-invalidate-during-inflight-boot-deadlocks`]
 
 ---
 

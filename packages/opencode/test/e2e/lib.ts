@@ -15,6 +15,7 @@ import { afterEach, beforeAll, afterAll } from "bun:test"
 import { Effect, Layer } from "effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
+import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
 import * as Log from "@opencode-ai/core/util/log"
 import { Agent as AgentSvc } from "@/agent/agent"
 import { AgentControl } from "@/agent/control"
@@ -121,7 +122,7 @@ const summary = Layer.succeed(
 )
 
 const status = SessionStatus.layer.pipe(Layer.provideMerge(Bus.layer))
-const run = SessionRunState.layer.pipe(Layer.provide(status))
+const run = SessionRunState.layer.pipe(Layer.provide(status), Layer.provide(EffectFlock.defaultLayer))
 const infra = Layer.mergeAll(NodeFileSystem.layer, CrossSpawnSpawner.defaultLayer)
 
 function makeLayer() {

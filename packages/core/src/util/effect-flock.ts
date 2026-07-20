@@ -255,8 +255,17 @@ export namespace EffectFlock {
 
         const lockfile = path.join(lockDir, Hash.fast(key) + ".lock")
 
-        // acquireRelease: acquire is uninterruptible, release is guaranteed
-        const handle = yield* Effect.acquireRelease(acquireHandle(lockfile, key), (handle) => release(handle))
+        // acquireRelease with a RESTORED (interruptible) acquire: the retry
+        // loop can park for minutes behind a held lock, and callers (e.g. a
+        // session runner being aborted) must be able to interrupt the park
+        // instead of wedging until the schedule gives up. The win-commit of
+        // a single attempt stays short; if an interrupt lands in the sliver
+        // between mkdir-win and finalizer registration, the orphaned dir is
+        // reclaimed by the stale breaker within STALE_MS. Release remains
+        // guaranteed for every registered handle.
+        const handle = yield* Effect.uninterruptibleMask((restore) =>
+          Effect.acquireRelease(restore(acquireHandle(lockfile, key)), (handle) => release(handle)),
+        )
 
         // Heartbeat fiber — scoped, so it's interrupted before release runs
         yield* fs

@@ -56,6 +56,7 @@ import { AgentControl } from "@/agent/control"
 import { ProcessSessions } from "@/tool/process/sessions"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
 import { Ripgrep } from "../../src/file/ripgrep"
 import { Format } from "../../src/format"
 
@@ -105,7 +106,7 @@ const lsp = Layer.succeed(
 )
 
 const status = SessionStatus.layer.pipe(Layer.provideMerge(Bus.layer))
-const run = SessionRunState.layer.pipe(Layer.provide(status))
+const run = SessionRunState.layer.pipe(Layer.provide(status), Layer.provide(EffectFlock.defaultLayer))
 const infra = Layer.mergeAll(NodeFileSystem.layer, CrossSpawnSpawner.defaultLayer)
 
 function makeHttp() {

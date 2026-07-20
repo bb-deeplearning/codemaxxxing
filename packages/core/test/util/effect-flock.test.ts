@@ -3,7 +3,7 @@ import { spawn } from "child_process"
 import fs from "fs/promises"
 import path from "path"
 import os from "os"
-import { Cause, Effect, Exit, Layer } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import { testEffect } from "../lib/effect"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
@@ -159,6 +159,36 @@ describe("util.effect-flock", () => {
         hit = true
       }).pipe(flock.withLock("eflock:pipe", dir))
       expect(hit).toBe(true)
+      yield* Effect.promise(() => fs.rm(tmp, { recursive: true, force: true }))
+    }),
+  )
+
+  it.live(
+    "parked acquire is interruptible and leaves the holder's lock intact",
+    Effect.gen(function* () {
+      const flock = yield* EffectFlock.Service
+      const tmp = yield* Effect.promise(() => fs.mkdtemp(path.join(os.tmpdir(), "eflock-test-")))
+      const dir = path.join(tmp, "locks")
+      const lockDir = lock(dir, "eflock:park")
+
+      const stop = yield* Deferred.make<void>()
+      const holder = yield* flock.withLock(Deferred.await(stop), "eflock:park", dir).pipe(Effect.forkChild)
+      yield* Effect.promise(() => waitForFile(lockDir))
+
+      // contender parks behind the held lock, then gets interrupted
+      const contender = yield* Effect.scoped(flock.acquire("eflock:park", dir)).pipe(Effect.forkChild)
+      yield* Effect.sleep(400)
+      const began = Date.now()
+      yield* Fiber.interrupt(contender)
+      // the pre-mask shape wedged here for the full retry window (minutes)
+      expect(Date.now() - began).toBeLessThan(3_000)
+
+      // holder unaffected; release and immediate reacquire still work
+      expect(yield* Effect.promise(() => exists(lockDir))).toBe(true)
+      yield* Deferred.succeed(stop, undefined)
+      yield* Fiber.await(holder)
+      yield* flock.withLock(Effect.void, "eflock:park", dir)
+      expect(yield* Effect.promise(() => exists(lockDir))).toBe(false)
       yield* Effect.promise(() => fs.rm(tmp, { recursive: true, force: true }))
     }),
   )

@@ -1,6 +1,7 @@
 import { InstanceState } from "@/effect/instance-state"
 import { Runner } from "@/effect/runner"
 import { Effect, Latch, Layer, Scope, Context } from "effect"
+import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
 import * as Session from "./session"
 import { MessageV2 } from "./message-v2"
 import { SessionID } from "./schema"
@@ -28,6 +29,7 @@ export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const status = yield* SessionStatus.Service
+    const flock = yield* EffectFlock.Service
 
     const state = yield* InstanceState.make(
       Effect.fn("SessionRunState.state")(function* () {
@@ -89,7 +91,28 @@ export const layer = Layer.effect(
       onInterrupt: Effect.Effect<MessageV2.WithParts>,
       work: Effect.Effect<MessageV2.WithParts>,
     ) {
-      return yield* (yield* runner(sessionID, onInterrupt)).ensureRunning(work)
+      /* the run lock: at most ONE runLoop per session across every
+         instance and process on this host. the sqlite is host-global, so
+         the busy truth must be too — the in-memory runner map only covers
+         THIS instance (the dual-lap scar: a prompt routed to a different
+         instance used to start a second concurrent loop for the same
+         session; two laps interleave one transcript until the provider
+         rejects it). parked acquisition doubles as the backup consumer:
+         if the holder exits just as a prompt lands, the parked loop
+         acquires, re-reads storage, and answers; if everything is already
+         answered, its first iteration hits the exit condition and returns
+         without an LLM call. */
+      const locked = flock.withLock(work, `session-run:${sessionID}`).pipe(
+        Effect.catchTag("LockTimeoutError", () =>
+          /* a LIVE holder ran for the entire park window — its loop
+             re-reads storage every iteration and will consume whatever
+             prompted us. surface the established busy signal, not a lock
+             internals error. */
+          Effect.die(new Session.BusyError(sessionID)),
+        ),
+        Effect.catchTag("LockCompromisedError", (e) => Effect.die(e)),
+      )
+      return yield* (yield* runner(sessionID, onInterrupt)).ensureRunning(locked)
     })
 
     const startShell = Effect.fn("SessionRunState.startShell")(function* (
@@ -105,6 +128,9 @@ export const layer = Layer.effect(
   }),
 )
 
-export const defaultLayer = layer.pipe(Layer.provide(SessionStatus.defaultLayer))
+export const defaultLayer = layer.pipe(
+  Layer.provide(SessionStatus.defaultLayer),
+  Layer.provide(EffectFlock.defaultLayer),
+)
 
 export * as SessionRunState from "./run-state"

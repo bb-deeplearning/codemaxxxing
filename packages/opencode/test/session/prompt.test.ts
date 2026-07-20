@@ -46,10 +46,11 @@ import { InterAgentCommunication } from "@/agent/inter-agent-communication"
 import { ProcessSessions } from "@/tool/process/sessions"
 import * as Log from "@opencode-ai/core/util/log"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
 import * as Database from "../../src/storage/db"
 import { Ripgrep } from "../../src/file/ripgrep"
 import { Format } from "../../src/format"
-import { provideTmpdirInstance, provideTmpdirServer } from "../fixture/fixture"
+import { provideInstance, provideTmpdirInstance, provideTmpdirServer, tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { reply, TestLLMServer } from "../lib/llm-server"
 
@@ -158,7 +159,7 @@ const lsp = Layer.succeed(
 )
 
 const status = SessionStatus.layer.pipe(Layer.provideMerge(Bus.layer))
-const run = SessionRunState.layer.pipe(Layer.provide(status))
+const run = SessionRunState.layer.pipe(Layer.provide(status), Layer.provide(EffectFlock.defaultLayer))
 const infra = Layer.mergeAll(NodeFileSystem.layer, CrossSpawnSpawner.defaultLayer)
 function makeHttp() {
   const deps = Layer.mergeAll(
@@ -1139,6 +1140,82 @@ it.live(
       { git: true, config: providerCfg },
     ),
   3_000,
+)
+
+// The dual-lap scar (2026-07-20): a prompt routed to a DIFFERENT instance
+// used to start a second concurrent runLoop for the same session — two
+// interleaved laps corrupting one transcript until the provider rejected
+// it ("final block in an assistant message cannot be `thinking`"). The
+// session run lock parks the second instance; the holder's loop answers
+// the queued message, and the parked loop exits without an LLM call once
+// it acquires and finds everything answered.
+it.live(
+  "a prompt from a second instance parks on the run lock instead of starting a concurrent loop",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const gate = defer<void>()
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const chat = yield* sessions.create({ title: "Pinned" })
+
+        yield* llm.hold("first", gate.promise)
+        yield* llm.text("second")
+
+        const a = yield* prompt
+          .prompt({
+            sessionID: chat.id,
+            agent: "build",
+            model: ref,
+            parts: [{ type: "text", text: "first" }],
+          })
+          .pipe(Effect.forkChild)
+
+        yield* llm.wait(1)
+
+        // a second instance over the same host-global storage
+        const away = yield* tmpdirScoped({ git: true, config: providerCfg(llm.url) })
+        const id = MessageID.ascending()
+        const b = yield* prompt
+          .prompt({
+            sessionID: chat.id,
+            messageID: id,
+            agent: "build",
+            model: ref,
+            parts: [{ type: "text", text: "second" }],
+          })
+          .pipe(provideInstance(away), Effect.forkChild)
+
+        yield* Effect.promise(async () => {
+          const end = Date.now() + 5000
+          while (Date.now() < end) {
+            const msgs = await Effect.runPromise(sessions.messages({ sessionID: chat.id }))
+            if (msgs.some((msg) => msg.info.role === "user" && msg.info.id === id)) return
+            await new Promise((done) => setTimeout(done, 20))
+          }
+          throw new Error("timed out waiting for second prompt to save")
+        })
+
+        // the un-locked world fired instance B's own concurrent LLM call
+        // right here, while the first call was still held open
+        yield* Effect.sleep(500)
+        expect(yield* llm.calls).toBe(1)
+
+        gate.resolve()
+
+        const [ea, eb] = yield* Effect.all([Fiber.await(a), Fiber.await(b)])
+        expect(Exit.isSuccess(ea)).toBe(true)
+        expect(Exit.isSuccess(eb)).toBe(true)
+
+        // the holder's loop answered "second"; the parked instance never
+        // reached the model
+        expect(yield* llm.calls).toBe(2)
+        const msgs = yield* sessions.messages({ sessionID: chat.id })
+        expect(msgs.filter((msg) => msg.info.role === "assistant")).toHaveLength(2)
+      }),
+      { git: true, config: providerCfg },
+    ),
+  20_000,
 )
 
 it.live(
