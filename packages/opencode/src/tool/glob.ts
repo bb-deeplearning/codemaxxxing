@@ -71,10 +71,11 @@ export const GlobTool = Tool.define(
           }
           files.sort((a, b) => b.mtime - a.mtime)
 
+          const paths = files.map((file) => file.path)
           const output = []
-          if (files.length === 0) output.push("No files found")
-          if (files.length > 0) {
-            output.push(...files.map((file) => file.path))
+          if (paths.length === 0) output.push("No files found")
+          if (paths.length > 0) {
+            output.push(...paths)
             if (truncated) {
               output.push("")
               output.push(
@@ -88,6 +89,7 @@ export const GlobTool = Tool.define(
             metadata: {
               count: files.length,
               truncated,
+              files: paths,
             },
             output: output.join("\n"),
           }

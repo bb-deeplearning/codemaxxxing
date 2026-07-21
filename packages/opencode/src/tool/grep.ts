@@ -33,7 +33,7 @@ export const GrepTool = Tool.define(
         Effect.gen(function* () {
           const empty = {
             title: params.pattern,
-            metadata: { matches: 0, truncated: false },
+            metadata: { matches: 0, truncated: false, hits: [] as { path: string; line: number; text: string }[] },
             output: "No files found",
           }
           if (!params.pattern) {
@@ -111,18 +111,21 @@ export const GrepTool = Tool.define(
           if (final.length === 0) return empty
 
           const total = matches.length
+          const hits = final.map((match) => ({
+            path: match.path,
+            line: match.line,
+            text: match.text.length > MAX_LINE_LENGTH ? match.text.substring(0, MAX_LINE_LENGTH) + "..." : match.text,
+          }))
           const output = [`Found ${total} matches${truncated ? ` (showing first ${limit})` : ""}`]
 
           let current = ""
-          for (const match of final) {
-            if (current !== match.path) {
+          for (const hit of hits) {
+            if (current !== hit.path) {
               if (current !== "") output.push("")
-              current = match.path
-              output.push(`${match.path}:`)
+              current = hit.path
+              output.push(`${hit.path}:`)
             }
-            const text =
-              match.text.length > MAX_LINE_LENGTH ? match.text.substring(0, MAX_LINE_LENGTH) + "..." : match.text
-            output.push(`  Line ${match.line}: ${text}`)
+            output.push(`  Line ${hit.line}: ${hit.text}`)
           }
 
           if (truncated) {
@@ -142,6 +145,7 @@ export const GrepTool = Tool.define(
             metadata: {
               matches: total,
               truncated,
+              hits,
             },
             output: output.join("\n"),
           }

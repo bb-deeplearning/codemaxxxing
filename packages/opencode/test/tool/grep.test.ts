@@ -68,6 +68,7 @@ describe("tool.grep", () => {
         ctx,
       )
       expect(result.metadata.matches).toBe(0)
+      expect(result.metadata.hits).toEqual([])
       expect(result.output).toBe("No files found")
     }),
   )
@@ -104,8 +105,50 @@ describe("tool.grep", () => {
         ctx,
       )
       expect(result.metadata.matches).toBe(1)
+      expect(result.metadata.hits).toEqual([{ path: file, line: 2, text: "line2\n" }])
       expect(result.output).toContain(file)
       expect(result.output).toContain("Line 2: line2")
+    }),
+  )
+
+  it.instance("caps hits at 100 and keeps full match count", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const file = path.join(test.directory, "many.txt")
+      yield* Effect.promise(() => Bun.write(file, Array.from({ length: 150 }, (_, i) => `match ${i}`).join("\n")))
+      const info = yield* GrepTool
+      const grep = yield* info.init()
+      const result = yield* grep.execute(
+        {
+          pattern: "match",
+          path: test.directory,
+        },
+        ctx,
+      )
+      expect(result.metadata.matches).toBe(150)
+      expect(result.metadata.truncated).toBe(true)
+      expect(result.metadata.hits).toHaveLength(100)
+      expect(result.metadata.hits[0]).toEqual({ path: file, line: 1, text: "match 0\n" })
+    }),
+  )
+
+  it.instance("truncates hit text like display output", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      yield* Effect.promise(() => Bun.write(path.join(test.directory, "long.txt"), "x".repeat(2500)))
+      const info = yield* GrepTool
+      const grep = yield* info.init()
+      const result = yield* grep.execute(
+        {
+          pattern: "xxx",
+          path: test.directory,
+        },
+        ctx,
+      )
+      expect(result.metadata.matches).toBe(1)
+      expect(result.metadata.hits[0].line).toBe(1)
+      expect(result.metadata.hits[0].text).toHaveLength(2003)
+      expect(result.metadata.hits[0].text.endsWith("...")).toBe(true)
     }),
   )
 })

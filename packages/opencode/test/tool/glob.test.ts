@@ -48,8 +48,47 @@ describe("tool.glob", () => {
         ctx,
       )
       expect(result.metadata.count).toBe(1)
+      expect(result.metadata.files).toEqual([path.join(test.directory, "a.ts")])
       expect(result.output).toContain(path.join(test.directory, "a.ts"))
       expect(result.output).not.toContain(path.join(test.directory, "b.txt"))
+    }),
+  )
+
+  it.instance("metadata files match output order", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      yield* Effect.promise(() => Bun.write(path.join(test.directory, "a.ts"), "a"))
+      yield* Effect.promise(() => Bun.write(path.join(test.directory, "b.ts"), "b"))
+      yield* Effect.promise(() => Bun.write(path.join(test.directory, "c.ts"), "c"))
+      const info = yield* GlobTool
+      const glob = yield* info.init()
+      const result = yield* glob.execute(
+        {
+          pattern: "*.ts",
+          path: test.directory,
+        },
+        ctx,
+      )
+      expect(result.metadata.count).toBe(3)
+      expect(result.metadata.files).toEqual(result.output.split("\n"))
+    }),
+  )
+
+  it.instance("empty result keeps files array", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const info = yield* GlobTool
+      const glob = yield* info.init()
+      const result = yield* glob.execute(
+        {
+          pattern: "*.zzz",
+          path: test.directory,
+        },
+        ctx,
+      )
+      expect(result.metadata.count).toBe(0)
+      expect(result.metadata.files).toEqual([])
+      expect(result.output).toBe("No files found")
     }),
   )
 
