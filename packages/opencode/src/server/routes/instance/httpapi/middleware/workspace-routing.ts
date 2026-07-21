@@ -6,7 +6,12 @@ import { EffectBridge } from "@/effect/bridge"
 import { Session } from "@/session/session"
 import { HttpApiProxy } from "./proxy"
 import * as Fence from "@/server/shared/fence"
-import { getWorkspaceRouteSessionID, isLocalWorkspaceRoute, workspaceProxyURL } from "@/server/shared/workspace-routing"
+import {
+  getWorkspaceRouteSessionID,
+  isLocalWorkspaceRoute,
+  isSessionHomeRoute,
+  workspaceProxyURL,
+} from "@/server/shared/workspace-routing"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { Context, Data, Effect, Layer } from "effect"
 import { HttpClient, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
@@ -56,8 +61,14 @@ function selectedWorkspaceID(url: URL, sessionWorkspaceID?: WorkspaceID): Worksp
   return sessionWorkspaceID ?? (workspaceParam ? WorkspaceID.make(workspaceParam) : undefined)
 }
 
-function defaultDirectory(request: HttpServerRequest.HttpServerRequest, url: URL): string {
-  return url.searchParams.get("directory") || request.headers["x-opencode-directory"] || process.cwd()
+function defaultDirectory(
+  request: HttpServerRequest.HttpServerRequest,
+  url: URL,
+  sessionHome?: string,
+): string {
+  // Explicit routing always wins; the session's own directory beats the
+  // receiving process's cwd for loop verbs (see isSessionHomeRoute).
+  return url.searchParams.get("directory") || request.headers["x-opencode-directory"] || sessionHome || process.cwd()
 }
 
 function shouldStayOnControlPlane(request: HttpServerRequest.HttpServerRequest, url: URL): boolean {
@@ -134,6 +145,7 @@ function planWorkspaceRequest(
 function planRequest(
   request: HttpServerRequest.HttpServerRequest,
   sessionWorkspaceID?: WorkspaceID,
+  sessionHome?: string,
 ): Effect.Effect<RequestPlan, never, Workspace.Service> {
   return Effect.gen(function* () {
     const url = requestURL(request)
@@ -149,7 +161,10 @@ function planRequest(
       return yield* planWorkspaceRequest(request, url, workspace)
     }
 
-    return RequestPlan.Local({ directory: defaultDirectory(request, url), workspaceID: envWorkspaceID ?? workspaceID })
+    return RequestPlan.Local({
+      directory: defaultDirectory(request, url, sessionHome),
+      workspaceID: envWorkspaceID ?? workspaceID,
+    })
   })
 }
 
@@ -176,11 +191,14 @@ function routeHttpApiWorkspace<E>(
 > {
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
-    const sessionID = getWorkspaceRouteSessionID(requestURL(request))
+    const url = requestURL(request)
+    const sessionID = getWorkspaceRouteSessionID(url)
     const session = sessionID
       ? yield* Session.Service.use((svc) => svc.get(sessionID)).pipe(Effect.catchDefect(() => Effect.void))
       : undefined
-    const plan = yield* planRequest(request, session?.workspaceID)
+    const sessionHome =
+      session?.directory && isSessionHomeRoute(request.method, url.pathname) ? session.directory : undefined
+    const plan = yield* planRequest(request, session?.workspaceID, sessionHome)
     return yield* routeWorkspace(client, effect, plan)
   })
 }
