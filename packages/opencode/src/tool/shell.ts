@@ -14,6 +14,7 @@ import { ShellID } from "./shell/id"
 import { ShellScan } from "./shell/scan"
 
 import * as Truncate from "./truncate"
+import { collectImageAttachments } from "./attach-images"
 import { Plugin } from "@/plugin"
 import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
@@ -126,6 +127,7 @@ export const ShellTool = Tool.define(
       },
       ctx: Tool.Context,
     ) {
+      const startedAt = Date.now()
       const limits = yield* trunc.limits()
       const keep = limits.maxBytes * 2
       let full = ""
@@ -261,6 +263,12 @@ export const ShellTool = Tool.define(
         )
       }
 
+      /* screenshots narrated in prose become pixels on the part: scan the
+         command + full captured output for freshly written image files */
+      const attachments = aborted
+        ? []
+        : yield* collectImageAttachments({ text: input.command + "\n" + raw, sinceMs: startedAt })
+
       return {
         title: input.description,
         metadata: {
@@ -271,6 +279,7 @@ export const ShellTool = Tool.define(
           ...(cut && file ? { outputPath: file } : {}),
         },
         output,
+        ...(attachments.length > 0 ? { attachments } : {}),
       }
     })
 

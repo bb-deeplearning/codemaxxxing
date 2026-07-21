@@ -28,6 +28,7 @@ import {
   truncateHeadTail,
 } from "./constants"
 import { NonNegativeInt, PositiveInt } from "@/util/schema"
+import { collectImageAttachments } from "../attach-images"
 
 export const Parameters = Schema.Struct({
   session_id: PositiveInt.annotate({
@@ -192,6 +193,12 @@ export const WriteStdinTool = Tool.define(
                 ...(exited && read.exitCode !== undefined ? { exit_code: read.exitCode } : {}),
               }
 
+              /* a screenshot completed during this poll attaches as pixels;
+                 range re-reads replay old bytes and never re-attach */
+              const attachments = rangeRead
+                ? []
+                : yield* collectImageAttachments({ text: decoded, sinceMs: start })
+
               return {
                 title: `write_stdin ${params.session_id}`,
                 metadata,
@@ -203,6 +210,7 @@ export const WriteStdinTool = Tool.define(
                   sessionId: params.session_id,
                   note,
                 }),
+                ...(attachments.length > 0 ? { attachments } : {}),
               }
             }),
         }

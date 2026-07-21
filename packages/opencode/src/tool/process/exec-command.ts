@@ -29,6 +29,7 @@ import { ExecCommandID, pidPattern } from "./id"
 import { EXEC_COMMAND_PROMPT } from "./prompt"
 import { DEFAULT_EXEC_YIELD_TIME_MS, DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_TTY, UNIFIED_EXEC_ENV, approxTokenCount, clampWriteYieldTime, formatExecResponse, stripAnsi, truncateHeadTail } from "./constants"
 import { PositiveInt } from "@/util/schema"
+import { collectImageAttachments } from "../attach-images"
 import path from "path"
 
 // Parameters mirror codex shell_spec.rs:28-110 verbatim — same field names,
@@ -221,6 +222,7 @@ export const ExecCommandTool = Tool.define(
               // entry. The acquire ordering is fixed by codex's gotcha
               // (#1 in WAVE.md): allocate the pty first so the
               // `pid:<id>` always-pattern is meaningful at ctx.ask time.
+              const spawnedAt = Date.now()
               return yield* Effect.acquireUseRelease(
                 Effect.gen(function* () {
                   const info = yield* pty.create({
@@ -329,6 +331,14 @@ export const ExecCommandTool = Tool.define(
                       ...(exited && read?.exitCode !== undefined ? { exit_code: read.exitCode } : {}),
                     }
 
+                    /* screenshots narrated in prose become pixels on the
+                       part: freshly written images named in the command or
+                       its output attach (agent-browser, simctl, any CLI) */
+                    const attachments = yield* collectImageAttachments({
+                      text: params.cmd + "\n" + decoded,
+                      sinceMs: spawnedAt,
+                    })
+
                     return {
                       title: `exec ${head}`,
                       metadata,
@@ -339,6 +349,7 @@ export const ExecCommandTool = Tool.define(
                         exitCode: exited && read?.exitCode !== undefined ? read.exitCode : undefined,
                         sessionId: session.processId,
                       }),
+                      ...(attachments.length > 0 ? { attachments } : {}),
                     }
                   }),
                 ({ info, session }, exit) =>
