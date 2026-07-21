@@ -3,7 +3,7 @@ import { spawn } from "child_process"
 import fs from "fs/promises"
 import path from "path"
 import os from "os"
-import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Result } from "effect"
 import { testEffect } from "../lib/effect"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
@@ -188,6 +188,86 @@ describe("util.effect-flock", () => {
       yield* Deferred.succeed(stop, undefined)
       yield* Fiber.await(holder)
       yield* flock.withLock(Effect.void, "eflock:park", dir)
+      expect(yield* Effect.promise(() => exists(lockDir))).toBe(false)
+      yield* Effect.promise(() => fs.rm(tmp, { recursive: true, force: true }))
+    }),
+  )
+
+  it.live(
+    "tryAcquire acquires when free and releases on scope close",
+    Effect.gen(function* () {
+      const flock = yield* EffectFlock.Service
+      const tmp = yield* Effect.promise(() => fs.mkdtemp(path.join(os.tmpdir(), "eflock-test-")))
+      const dir = path.join(tmp, "locks")
+      const key = "eflock:try-free"
+      const lockDir = lock(dir, key)
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* flock.tryAcquire(key, dir)
+          expect(yield* Effect.promise(() => exists(lockDir))).toBe(true)
+        }),
+      )
+      expect(yield* Effect.promise(() => exists(lockDir))).toBe(false)
+
+      // released on scope close — an immediate second tryAcquire succeeds
+      yield* Effect.scoped(flock.tryAcquire(key, dir))
+      expect(yield* Effect.promise(() => exists(lockDir))).toBe(false)
+      yield* Effect.promise(() => fs.rm(tmp, { recursive: true, force: true }))
+    }),
+  )
+
+  it.live(
+    "tryAcquire fails fast with LockHeldError while a live holder runs",
+    Effect.gen(function* () {
+      const flock = yield* EffectFlock.Service
+      const tmp = yield* Effect.promise(() => fs.mkdtemp(path.join(os.tmpdir(), "eflock-test-")))
+      const dir = path.join(tmp, "locks")
+      const key = "eflock:try-held"
+      const lockDir = lock(dir, key)
+
+      const stop = yield* Deferred.make<void>()
+      const holder = yield* flock.withLock(Deferred.await(stop), key, dir).pipe(Effect.forkChild)
+      yield* Effect.promise(() => waitForFile(lockDir))
+
+      const began = Date.now()
+      const result = yield* Effect.scoped(flock.tryAcquire(key, dir)).pipe(Effect.result)
+      // single attempt — the parked acquire path waits minutes here
+      expect(Date.now() - began).toBeLessThan(3_000)
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) expect(result.failure._tag).toBe("LockHeldError")
+
+      // holder unaffected; after release the same key try-acquires cleanly
+      expect(yield* Effect.promise(() => exists(lockDir))).toBe(true)
+      yield* Deferred.succeed(stop, undefined)
+      yield* Fiber.await(holder)
+      yield* Effect.scoped(flock.tryAcquire(key, dir))
+      expect(yield* Effect.promise(() => exists(lockDir))).toBe(false)
+      yield* Effect.promise(() => fs.rm(tmp, { recursive: true, force: true }))
+    }),
+  )
+
+  it.live(
+    "tryAcquire breaks a stale lock in one attempt",
+    Effect.gen(function* () {
+      const flock = yield* EffectFlock.Service
+      const tmp = yield* Effect.promise(() => fs.mkdtemp(path.join(os.tmpdir(), "eflock-test-")))
+      const dir = path.join(tmp, "locks")
+      const key = "eflock:try-stale"
+      const lockDir = lock(dir, key)
+
+      yield* Effect.promise(async () => {
+        await fs.mkdir(lockDir, { recursive: true })
+        const old = new Date(Date.now() - 120_000)
+        await fs.utimes(lockDir, old, old)
+      })
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* flock.tryAcquire(key, dir)
+          expect(yield* Effect.promise(() => exists(path.join(lockDir, "meta.json")))).toBe(true)
+        }),
+      )
       expect(yield* Effect.promise(() => exists(lockDir))).toBe(false)
       yield* Effect.promise(() => fs.rm(tmp, { recursive: true, force: true }))
     }),

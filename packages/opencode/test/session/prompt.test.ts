@@ -1293,6 +1293,54 @@ it.live(
   3_000,
 )
 
+// The dual-lap residual: startShell used to consult only THIS instance's
+// in-memory runner map, so a shell posted through a second instance during
+// a foreign lap started for real and interleaved PTY writes into the
+// transcript the lap was still streaming. The run lock closes it: shells
+// try-acquire the same host-scoped key the loop holds and fail fast as
+// BusyError instead of parking.
+it.live(
+  "a shell from a second instance rejects with BusyError while a foreign lap holds the run lock",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const gate = defer<void>()
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const chat = yield* sessions.create({ title: "Pinned" })
+
+        yield* llm.hold("first", gate.promise)
+
+        const a = yield* prompt
+          .prompt({
+            sessionID: chat.id,
+            agent: "build",
+            model: ref,
+            parts: [{ type: "text", text: "first" }],
+          })
+          .pipe(Effect.forkChild)
+        yield* llm.wait(1)
+
+        // a second instance over the same host-global storage — its own
+        // runner map is idle, so only the run lock can say no here
+        const away = yield* tmpdirScoped({ git: true, config: providerCfg(llm.url) })
+        const exit = yield* prompt
+          .shell({ sessionID: chat.id, agent: "build", command: "echo hi" })
+          .pipe(provideInstance(away), Effect.exit)
+        expect(Exit.isFailure(exit)).toBe(true)
+        if (Exit.isFailure(exit)) {
+          expect(Cause.squash(exit.cause)).toBeInstanceOf(Session.BusyError)
+        }
+
+        gate.resolve()
+        expect(Exit.isSuccess(yield* Fiber.await(a))).toBe(true)
+        expect(yield* llm.calls).toBe(1)
+      }),
+      { git: true, config: providerCfg },
+    ),
+  20_000,
+)
+
 unix("shell captures stdout and stderr in completed tool output", () =>
   provideTmpdirInstance(
     (_dir) =>

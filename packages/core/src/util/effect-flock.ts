@@ -17,6 +17,11 @@ export namespace EffectFlock {
     key: Schema.String,
   }) {}
 
+  /** A live holder owns the lock right now — the single-attempt `tryAcquire` path fails fast with this instead of parking. */
+  export class LockHeldError extends Schema.TaggedErrorClass<LockHeldError>()("LockHeldError", {
+    key: Schema.String,
+  }) {}
+
   export class LockCompromisedError extends Schema.TaggedErrorClass<LockCompromisedError>()("LockCompromisedError", {
     detail: Schema.String,
   }) {}
@@ -73,6 +78,10 @@ export namespace EffectFlock {
 
   export interface Interface {
     readonly acquire: (key: string, dir?: string) => Effect.Effect<void, LockError, Scope.Scope>
+    readonly tryAcquire: (
+      key: string,
+      dir?: string,
+    ) => Effect.Effect<void, LockHeldError | LockCompromisedError, Scope.Scope>
     readonly withLock: {
       (key: string, dir?: string): <A, E, R>(body: Effect.Effect<A, E, R>) => Effect.Effect<A, E | LockError, R>
       <A, E, R>(body: Effect.Effect<A, E, R>, key: string, dir?: string): Effect.Effect<A, E | LockError, R>
@@ -165,7 +174,7 @@ export namespace EffectFlock {
 
       type Handle = { token: string; metaPath: string; heartbeatPath: string; lockDir: string }
 
-      const tryAcquireLockDir = (lockDir: string, key: string) =>
+      const attemptLockDir = (lockDir: string, key: string) =>
         Effect.gen(function* () {
           const token = randomUUID()
           const metaPath = path.join(lockDir, "meta.json")
@@ -210,7 +219,7 @@ export namespace EffectFlock {
 
           return { token, metaPath, heartbeatPath, lockDir } satisfies Handle
         }).pipe(
-          Effect.withSpan("EffectFlock.tryAcquire", {
+          Effect.withSpan("EffectFlock.attempt", {
             attributes: { key },
           }),
         )
@@ -218,7 +227,7 @@ export namespace EffectFlock {
       // -- retry wrapper (preserves Handle type) --
 
       const acquireHandle = (lockfile: string, key: string): Effect.Effect<Handle, LockError> =>
-        tryAcquireLockDir(lockfile, key).pipe(
+        attemptLockDir(lockfile, key).pipe(
           Effect.retry({
             while: (err) => err._tag === "NotAcquired",
             schedule: retrySchedule,
@@ -249,28 +258,46 @@ export namespace EffectFlock {
 
       // -- build service --
 
+      /* Scoped registration shared by acquire + tryAcquire: acquireRelease
+         with a RESTORED (interruptible) acquisition. The parked retry loop
+         behind acquire can hold for minutes, and callers (e.g. a session
+         runner being aborted) must be able to interrupt the park instead of
+         wedging until the schedule gives up. The win-commit of a single
+         attempt stays short; if an interrupt lands in the sliver between
+         mkdir-win and finalizer registration, the orphaned dir is reclaimed
+         by the stale breaker within STALE_MS. Release remains guaranteed
+         for every registered handle. */
+      const scopedHandle = <E>(acquisition: Effect.Effect<Handle, E>): Effect.Effect<void, E, Scope.Scope> =>
+        Effect.gen(function* () {
+          const handle = yield* Effect.uninterruptibleMask((restore) =>
+            Effect.acquireRelease(restore(acquisition), (handle) => release(handle)),
+          )
+
+          // Heartbeat fiber — scoped, so it's interrupted before release runs
+          yield* fs
+            .utimes(handle.heartbeatPath, new Date(), new Date())
+            .pipe(Effect.ignore, Effect.repeat(Schedule.spaced(HEARTBEAT_MS)), Effect.forkScoped)
+        })
+
       const acquire = Effect.fn("EffectFlock.acquire")(function* (key: string, dir?: string) {
         const lockDir = dir ?? lockRoot
         yield* ensureDir(lockDir)
+        yield* scopedHandle(acquireHandle(path.join(lockDir, Hash.fast(key) + ".lock"), key))
+      })
 
-        const lockfile = path.join(lockDir, Hash.fast(key) + ".lock")
-
-        // acquireRelease with a RESTORED (interruptible) acquire: the retry
-        // loop can park for minutes behind a held lock, and callers (e.g. a
-        // session runner being aborted) must be able to interrupt the park
-        // instead of wedging until the schedule gives up. The win-commit of
-        // a single attempt stays short; if an interrupt lands in the sliver
-        // between mkdir-win and finalizer registration, the orphaned dir is
-        // reclaimed by the stale breaker within STALE_MS. Release remains
-        // guaranteed for every registered handle.
-        const handle = yield* Effect.uninterruptibleMask((restore) =>
-          Effect.acquireRelease(restore(acquireHandle(lockfile, key)), (handle) => release(handle)),
+      /* Single attempt, fail-fast: a live holder surfaces LockHeldError
+         immediately instead of parking on the retry schedule. Stale locks
+         (and stale breakers already cleaned by a prior pass) are broken
+         exactly like acquire — same attempt primitive, same scoped
+         release + heartbeat. */
+      const tryAcquire = Effect.fn("EffectFlock.tryAcquire")(function* (key: string, dir?: string) {
+        const lockDir = dir ?? lockRoot
+        yield* ensureDir(lockDir)
+        yield* scopedHandle(
+          attemptLockDir(path.join(lockDir, Hash.fast(key) + ".lock"), key).pipe(
+            Effect.catchTag("NotAcquired", () => Effect.fail(new LockHeldError({ key }))),
+          ),
         )
-
-        // Heartbeat fiber — scoped, so it's interrupted before release runs
-        yield* fs
-          .utimes(handle.heartbeatPath, new Date(), new Date())
-          .pipe(Effect.ignore, Effect.repeat(Schedule.spaced(HEARTBEAT_MS)), Effect.forkScoped)
       })
 
       const withLock: Interface["withLock"] = Function.dual(
@@ -284,7 +311,7 @@ export namespace EffectFlock {
           ),
       )
 
-      return Service.of({ acquire, withLock })
+      return Service.of({ acquire, tryAcquire, withLock })
     }),
   )
 

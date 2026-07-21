@@ -121,7 +121,24 @@ export const layer = Layer.effect(
       work: Effect.Effect<MessageV2.WithParts>,
       ready?: Latch.Latch,
     ) {
-      return yield* (yield* runner(sessionID, onInterrupt)).startShell(work, ready)
+      /* same key as ensureRunning: shells and run loops exclude each other
+         across every instance and process on this host, not just inside
+         this instance's runner map (the dual-lap residual: a shell started
+         from a second process during a foreign lap interleaved writes into
+         the same transcript). unlike the loop, a shell fails FAST — it is
+         an interactive foreground action, so parking it behind a holder
+         for minutes would present as a hang. a held lock surfaces as the
+         same BusyError the in-memory runner throws for same-instance
+         conflicts. */
+      return yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* flock.tryAcquire(`session-run:${sessionID}`)
+          return yield* (yield* runner(sessionID, onInterrupt)).startShell(work, ready)
+        }),
+      ).pipe(
+        Effect.catchTag("LockHeldError", () => Effect.die(new Session.BusyError(sessionID))),
+        Effect.catchTag("LockCompromisedError", (e) => Effect.die(e)),
+      )
     })
 
     return Service.of({ assertNotBusy, cancel, ensureRunning, startShell })
