@@ -814,7 +814,16 @@ export const SessionRoutes = lazy(() =>
           const params = c.req.valid("param")
           const state = yield* SessionRunState.Service
           const session = yield* Session.Service
-          yield* state.assertNotBusy(params.sessionID)
+          // Busy guard, relaxed for mid-run unsend of a queued (unconsumed)
+          // user message — identical rule in SessionHttpApi.deleteMessage
+          // (backend parity).
+          yield* state.assertNotBusy(params.sessionID).pipe(
+            Effect.catchDefect((defect) =>
+              defect instanceof Session.BusyError && Session.canUnsendWhileBusy(params)
+                ? Effect.void
+                : Effect.die(defect),
+            ),
+          )
           yield* session.removeMessage({
             sessionID: params.sessionID,
             messageID: params.messageID,

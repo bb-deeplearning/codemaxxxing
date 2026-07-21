@@ -422,6 +422,30 @@ export class BusyError extends Error {
   }
 }
 
+/**
+ * While a session's run loop is busy, the only message that may still be
+ * unsent is a QUEUED user message — one the loop has not consumed yet. A user
+ * message is consumed once an assistant message is born after it (the
+ * runLoop's exit test compares ids the same way; ids are lexically ordered by
+ * creation), so "queued" means no assistant message with a greater id exists.
+ * The loop re-reads storage every iteration, so a deleted queued message is
+ * simply never consumed. Both delete-message routes share this predicate to
+ * keep backend parity.
+ */
+export function canUnsendWhileBusy(input: { sessionID: SessionID; messageID: MessageID }): boolean {
+  let target: MessageV2.Info | undefined
+  let newestAssistant: MessageV2.Info | undefined
+  // stream is newest-first: the first assistant seen is the newest one.
+  for (const item of MessageV2.stream(input.sessionID)) {
+    if (item.info.id === input.messageID) target = item.info
+    if (!newestAssistant && item.info.role === "assistant") newestAssistant = item.info
+    if (target && newestAssistant) break
+  }
+  if (target?.role !== "user") return false
+  if (!newestAssistant) return true
+  return target.id > newestAssistant.id
+}
+
 export interface Interface {
   readonly list: (input?: ListInput) => Effect.Effect<Info[]>
   readonly create: (input?: {

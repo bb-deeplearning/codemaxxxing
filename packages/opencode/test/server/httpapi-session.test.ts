@@ -24,7 +24,8 @@ import * as Log from "@opencode-ai/core/util/log"
 import { eq } from "drizzle-orm"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, tmpdir } from "../fixture/fixture"
-import { it } from "../lib/effect"
+import { it, testEffect } from "../lib/effect"
+import { TestLLMServer } from "../lib/llm-server"
 
 void Log.init({ print: false })
 
@@ -504,4 +505,174 @@ describe("session HttpApi", () => {
       }),
     ),
   )
+})
+
+// Delete-message busy guard: a QUEUED (unconsumed) user message may be
+// unsent while the loop is busy; a consumed one keeps the busy error.
+// Runs the full scenario against each backend through the dual harness.
+const llmIt = testEffect(TestLLMServer.layer)
+
+// Registers a "test" provider whose baseURL points at the in-process
+// TestLLMServer so the session loop makes a real (hung) model call.
+function unsendProviderConfig(url: string) {
+  return {
+    formatter: false,
+    lsp: false,
+    share: "disabled" as const,
+    provider: {
+      test: {
+        name: "Test",
+        id: "test",
+        env: [],
+        npm: "@ai-sdk/openai-compatible",
+        models: {
+          "test-model": {
+            id: "test-model",
+            name: "Test Model",
+            attachment: false,
+            reasoning: false,
+            temperature: false,
+            tool_call: true,
+            release_date: "2025-01-01",
+            limit: { context: 100000, output: 10000 },
+            cost: { input: 0, output: 0 },
+            options: {},
+          },
+        },
+        options: { apiKey: "test-key", baseURL: url },
+      },
+    },
+  }
+}
+
+describe("session delete message while busy", () => {
+  for (const experimental of [false, true] as const) {
+    const backend = experimental ? "httpapi" : "hono"
+
+    llmIt.live(
+      `unsends only queued user messages while busy (${backend} backend)`,
+      () =>
+        Effect.gen(function* () {
+          const llm = yield* TestLLMServer
+          const tmp = yield* Effect.acquireRelease(
+            Effect.promise(() => tmpdir({ git: true, config: unsendProviderConfig(llm.url) })),
+            (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+          )
+          const headers = { "x-opencode-directory": tmp.path, "content-type": "application/json" }
+          const model = { providerID: "test", modelID: "test-model" }
+
+          const pollMessages = (predicate: (msgs: MessageV2.WithParts[]) => boolean, label: string) =>
+            Effect.promise(async () => {
+              const end = Date.now() + 10_000
+              while (Date.now() < end) {
+                const response = await app(experimental).request(
+                  pathFor(SessionPaths.messages, { sessionID: session.id }),
+                  { headers },
+                )
+                if (response.status === 200) {
+                  const msgs = (await response.json()) as MessageV2.WithParts[]
+                  if (predicate(msgs)) return msgs
+                }
+                await new Promise((done) => setTimeout(done, 25))
+              }
+              throw new Error(`timed out waiting for ${label}`)
+            })
+
+          const deleteMessage = (messageID: MessageID) =>
+            requestWithBackend(experimental, pathFor(SessionPaths.deleteMessage, { sessionID: session.id, messageID }), {
+              method: "DELETE",
+              headers,
+            })
+
+          const session = yield* json<Session.Info>(
+            yield* requestWithBackend(experimental, SessionPaths.create, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({ title: "busy unsend" }),
+            }),
+          )
+
+          // hang the model so the first lap never finishes: the loop stays busy
+          yield* llm.hang
+
+          const firstID = MessageID.ascending()
+          const accepted = yield* requestWithBackend(
+            experimental,
+            pathFor(SessionPaths.promptAsync, { sessionID: session.id }),
+            {
+              method: "POST",
+              headers,
+              body: JSON.stringify({ messageID: firstID, agent: "build", model, parts: [{ type: "text", text: "first" }] }),
+            },
+          )
+          expect(accepted.status).toBe(204)
+
+          yield* llm.wait(1)
+          const assistant = (yield* pollMessages(
+            (msgs) => msgs.some((msg) => msg.info.role === "assistant"),
+            "assistant message",
+          )).find((msg) => msg.info.role === "assistant")!
+
+          // queue a second user message while the loop hangs mid-lap; its id is
+          // minted after the assistant's, so it is unconsumed by construction
+          const queuedID = MessageID.ascending()
+          expect(queuedID > assistant.info.id).toBe(true)
+          const queued = yield* requestWithBackend(
+            experimental,
+            pathFor(SessionPaths.promptAsync, { sessionID: session.id }),
+            {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                messageID: queuedID,
+                agent: "build",
+                model,
+                parts: [{ type: "text", text: "queued" }],
+              }),
+            },
+          )
+          expect(queued.status).toBe(204)
+          yield* pollMessages((msgs) => msgs.some((msg) => msg.info.id === queuedID), "queued message")
+
+          // consumed user message: busy error, unchanged wire shape
+          const forbidden = yield* deleteMessage(firstID)
+          expect(forbidden.status).toBe(experimental ? 500 : 400)
+          if (!experimental) {
+            expect(yield* Effect.promise(() => forbidden.json())).toMatchObject({
+              name: "UnknownError",
+              data: { message: `Session ${session.id} is busy` },
+            })
+          }
+
+          // assistant message: role guard keeps the busy error
+          expect((yield* deleteMessage(assistant.info.id)).status).toBe(experimental ? 500 : 400)
+
+          // both survived the forbidden deletes
+          const before = yield* pollMessages(() => true, "message list")
+          expect(before.map((msg) => msg.info.id)).toContain(firstID)
+          expect(before.map((msg) => msg.info.id)).toContain(assistant.info.id)
+
+          // queued user message unsends mid-lap
+          const unsent = yield* deleteMessage(queuedID)
+          expect(unsent.status).toBe(200)
+          expect(yield* json<boolean>(unsent)).toBe(true)
+          const after = yield* pollMessages((msgs) => !msgs.some((msg) => msg.info.id === queuedID), "queued unsend")
+          expect(after.map((msg) => msg.info.id)).toContain(firstID)
+
+          // idle regression: abort the loop, then the consumed message deletes fine
+          expect(
+            yield* json<boolean>(
+              yield* requestWithBackend(experimental, pathFor(SessionPaths.abort, { sessionID: session.id }), {
+                method: "POST",
+                headers,
+              }),
+            ),
+          ).toBe(true)
+          const idle = yield* deleteMessage(firstID)
+          expect(idle.status).toBe(200)
+          expect(yield* json<boolean>(idle)).toBe(true)
+        }),
+      30_000,
+    )
+  }
 })

@@ -334,7 +334,17 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     const deleteMessage = Effect.fn("SessionHttpApi.deleteMessage")(function* (ctx: {
       params: { sessionID: SessionID; messageID: MessageID }
     }) {
-      yield* runState.assertNotBusy(ctx.params.sessionID)
+      // Busy guard, relaxed for mid-run unsend: a queued (unconsumed) user
+      // message only exists while the loop is busy, so it may be deleted
+      // mid-run — the loop re-reads storage every iteration and simply never
+      // consumes it. Anything else keeps today's BusyError wire behavior.
+      yield* runState.assertNotBusy(ctx.params.sessionID).pipe(
+        Effect.catchDefect((defect) =>
+          defect instanceof Session.BusyError && Session.canUnsendWhileBusy(ctx.params)
+            ? Effect.void
+            : Effect.die(defect),
+        ),
+      )
       yield* session.removeMessage(ctx.params)
       return true
     })
