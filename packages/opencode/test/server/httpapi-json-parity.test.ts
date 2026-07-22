@@ -1,4 +1,5 @@
 import { afterEach, describe, expect } from "bun:test"
+import { $ } from "bun"
 import { Effect } from "effect"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { ModelID, ProviderID } from "../../src/provider/schema"
@@ -13,10 +14,12 @@ import { PtyPaths } from "../../src/server/routes/instance/httpapi/groups/pty"
 import { SessionPaths } from "../../src/server/routes/instance/httpapi/groups/session"
 import { MessageID, PartID } from "../../src/session/schema"
 import { Session } from "@/session/session"
+import { Worktree } from "../../src/worktree"
 import * as Log from "@opencode-ai/core/util/log"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, provideInstance, tmpdir } from "../fixture/fixture"
 import { it } from "../lib/effect"
+import { waitGlobalBusEventPromise } from "./global-bus"
 
 void Log.init({ print: false })
 
@@ -248,6 +251,88 @@ describe("HttpApi JSON parity", () => {
           (input) => expectJsonParity({ ...input, legacy, httpapi }),
           { concurrency: 1 },
         )
+      }),
+    ),
+  )
+
+  const worktreeParity = process.platform === "win32" ? it.live.skip : it.live
+  worktreeParity(
+    "matches legacy JSON shape for a seeded worktree list and diff",
+    withTmp({ git: true, config: { formatter: false, lsp: false } }, (tmp) =>
+      Effect.gen(function* () {
+        const headers = { "x-opencode-directory": tmp.path }
+        const post = { ...headers, "content-type": "application/json" }
+        const legacy = app(false)
+        const httpapi = app(true)
+
+        const created = yield* Effect.promise(async () => {
+          const response = await legacy.request(ExperimentalPaths.worktree, {
+            method: "POST",
+            headers: post,
+            body: JSON.stringify({ name: "parity" }),
+          })
+          if (response.status !== 200) throw new Error(`worktree create returned ${response.status}`)
+          return (await response.json()) as Worktree.Info
+        })
+        yield* Effect.promise(() =>
+          waitGlobalBusEventPromise({
+            message: "timed out waiting for worktree.ready",
+            predicate: (event) =>
+              event.payload.type === Worktree.Event.Ready.type && event.directory === created.directory,
+          }),
+        )
+
+        yield* Effect.promise(async () => {
+          await Bun.write(`${created.directory}/parity.txt`, "one\ntwo\n")
+          await $`git add parity.txt`.cwd(created.directory).quiet()
+          await $`git commit -m parity`.cwd(created.directory).quiet()
+        })
+
+        const listed = yield* expectJsonParity({
+          label: "experimental.worktree seeded list",
+          legacy,
+          httpapi,
+          path: ExperimentalPaths.worktree,
+          headers,
+        })
+        expect(listed as Worktree.Info[]).toContainEqual(
+          expect.objectContaining({ name: "parity", directory: created.directory, branch: "opencode/parity" }),
+        )
+
+        const diff = yield* expectJsonParity({
+          label: "experimental.worktree diff",
+          legacy,
+          httpapi,
+          path: `${ExperimentalPaths.worktreeDiff}?${new URLSearchParams({ directory: created.directory })}`,
+          headers,
+        })
+        expect((diff as Worktree.Diff).commits).toBe(1)
+        expect((diff as Worktree.Diff).files).toEqual([
+          { path: "parity.txt", status: "added", additions: 2, deletions: 0 },
+        ])
+
+        const unified = yield* expectJsonParity({
+          label: "project.list unified with worktrees",
+          legacy,
+          httpapi,
+          path: "/project?worktrees=true",
+          headers,
+        })
+        const own = (unified as { worktree: string; worktrees?: Worktree.Info[] }[]).find(
+          (row) => row.worktree === tmp.path,
+        )
+        expect(own).toBeDefined()
+        expect(own!.worktrees).toContainEqual(
+          expect.objectContaining({ name: "parity", directory: created.directory, branch: "opencode/parity" }),
+        )
+
+        yield* Effect.promise(async () => {
+          await legacy.request(ExperimentalPaths.worktree, {
+            method: "DELETE",
+            headers: post,
+            body: JSON.stringify({ directory: created.directory }),
+          })
+        })
       }),
     ),
   )

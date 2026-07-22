@@ -53,7 +53,7 @@ const QueryBoolean = Schema.Literals(["true", "false"]).pipe(
     encode: SchemaGetter.transform((value) => (value ? "true" : "false")),
   }),
 )
-const WorktreeList = Schema.Array(Schema.String)
+const WorktreeList = Schema.Array(Worktree.Info)
 export const SessionListQuery = Schema.Struct({
   directory: Schema.optional(Schema.String),
   roots: Schema.optional(QueryBoolean),
@@ -72,6 +72,9 @@ export const ExperimentalPaths = {
   toolIDs: "/experimental/tool/ids",
   worktree: "/experimental/worktree",
   worktreeReset: "/experimental/worktree/reset",
+  worktreeDiff: "/experimental/worktree/diff",
+  worktreeMerge: "/experimental/worktree/merge",
+  worktreeDiscard: "/experimental/worktree/discard",
   session: "/experimental/session",
   resource: "/experimental/resource",
 } as const
@@ -133,12 +136,13 @@ export const ExperimentalApi = HttpApi.make("experimental")
           }),
         ),
         HttpApiEndpoint.get("worktree", ExperimentalPaths.worktree, {
-          success: described(WorktreeList, "List of worktree directories"),
+          success: described(WorktreeList, "List of worktrees"),
+          error: HttpApiError.BadRequest,
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "worktree.list",
             summary: "List worktrees",
-            description: "List all sandbox worktrees for the current project.",
+            description: "List the project's live git worktrees with their branches. The primary checkout is excluded.",
           }),
         ),
         HttpApiEndpoint.post("worktreeCreate", ExperimentalPaths.worktree, {
@@ -172,6 +176,42 @@ export const ExperimentalApi = HttpApi.make("experimental")
             identifier: "worktree.reset",
             summary: "Reset worktree",
             description: "Reset a worktree branch to the primary default branch.",
+          }),
+        ),
+        HttpApiEndpoint.get("worktreeDiff", ExperimentalPaths.worktreeDiff, {
+          query: Worktree.DiffQuery,
+          success: described(Worktree.Diff, "Worktree diff"),
+          error: HttpApiError.BadRequest,
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "worktree.diff",
+            summary: "Diff a worktree against the default branch",
+            description:
+              "Per-file changes, commit count, dirt, mergeability, and the unified diff from the merge base to the worktree's HEAD.",
+          }),
+        ),
+        HttpApiEndpoint.post("worktreeMerge", ExperimentalPaths.worktreeMerge, {
+          payload: Worktree.MergeInput,
+          success: described(Worktree.MergeResult, "Merge result"),
+          error: HttpApiError.BadRequest,
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "worktree.merge",
+            summary: "Merge a worktree branch",
+            description:
+              "Merge the worktree's branch into the local default branch in the primary checkout, then remove the worktree. Conflicts abort the merge and surface as a typed error.",
+          }),
+        ),
+        HttpApiEndpoint.post("worktreeDiscard", ExperimentalPaths.worktreeDiscard, {
+          payload: Worktree.DiscardInput,
+          success: described(Worktree.DiscardResult, "Discard result"),
+          error: HttpApiError.BadRequest,
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "worktree.discard",
+            summary: "Discard a worktree",
+            description:
+              "Snapshot the worktree's state to a dangling commit for recovery, then remove the worktree and its branch.",
           }),
         ),
         HttpApiEndpoint.get("session", ExperimentalPaths.session, {

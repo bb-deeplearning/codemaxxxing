@@ -107,3 +107,14 @@ prefer fan-out by topic, not by number.
   events rather than racing N pollers.
 - When you have nothing to do with the result — fan-out without a
   collect target wastes everyone's tokens.
+
+## isolation
+
+`isolation: "worktree"` gives EVERY member its own git checkout on its own
+branch — N writers, zero trampling, no shared-cwd discipline required.
+Checkouts are created up front (atomic phase: any failure fails the call,
+e.g. the per-project disk ceiling of 15 checkouts — shrink the pool);
+member spawning stays non-atomic, and checkouts behind failed spawns are
+removed. Each member's completion notification reports its checkout state
+(clean → auto-removed; commits → branch/ahead/dirty kept for review).
+Read-only pools should stay in the shared directory.

@@ -23,6 +23,7 @@ import { EventV2 } from "@/v2/event"
 import { SessionEvent } from "@/v2/session-event"
 import { InstanceState } from "@/effect/instance-state"
 import { InstanceRef } from "@/effect/instance-ref"
+import type { InstanceContext } from "@/project/instance-context"
 import { NonNegativeInt } from "@/util/schema"
 import { AgentPath, AgentPathInvalidError } from "./agent-path"
 import { AgentMetadata } from "./metadata"
@@ -356,8 +357,7 @@ export interface SpawnAgentInput {
   readonly task_name: string
   readonly agent_type?: string
   readonly initial_message: string
-  readonly options?: SpawnAgentOptions
-  // Bug 3 fix (specs/tui-redesign.md known bugs) — spawn_agent's `model` /
+  readonly options?: SpawnAgentOptions  // Bug 3 fix (specs/tui-redesign.md known bugs) — spawn_agent's `model` /
   // `reasoning_effort` params. When set, the child session is created with
   // this model, so its first turn (injectMailboxMessages' fresh-child
   // fallback in prompt.ts) runs on the override instead of the agent
@@ -397,6 +397,33 @@ export interface SpawnAgentInput {
   // (which is the correct behavior for unregistered agent_types per
   // WAVE.md gotcha 1).
   readonly behavior_version?: "subagent_v1" | "subagent_v2"
+  // Spawn isolation (idea-worktrees, 2026-07-22) — when present, the child
+  // is a worktree-isolated writer: its session is created on the worktree's
+  // instance and its run loop executes with the worktree's InstanceRef, so
+  // every tool call lands in the isolated checkout instead of the parent's
+  // cwd. The object is PRE-BUILT by the spawn tools (worktree create +
+  // instance boot happen there, via AppRuntime) so AgentControl's layer
+  // gains no deps. At terminal status the completion watcher settles the
+  // checkout: clean → removed silently; commits/dirt → kept, and the
+  // notification carries branch/ahead/dirty. Survives supervised respawns
+  // via respawnInputByPath — a respawned child continues in the SAME
+  // checkout (the respawn branch never removes it).
+  readonly isolation?: SpawnIsolation
+}
+
+export interface SpawnIsolation {
+  readonly directory: string
+  readonly branch?: string
+  readonly context: InstanceContext
+}
+
+export interface CheckoutSettleResult {
+  /** Human-readable checkout line appended to the completion notification. */
+  readonly line: string
+  /** True when the checkout was removed (clean) — the isolation bookkeeping
+   * entry is dropped so a revived child falls back to the shared cwd
+   * instead of a deleted path. */
+  readonly removed: boolean
 }
 
 export type SpawnError =
@@ -425,6 +452,11 @@ export interface CreatePoolInput {
   readonly on_failure?: OnFailureStrategy
   readonly options?: SpawnAgentOptions
   readonly max_threads?: number
+  // Spawn isolation — pre-built per-member isolation objects, indexed by
+  // member ordinal. Built by the spawn_pool tool (one worktree per member)
+  // so AgentControl stays mechanics-free. Sparse: undefined members share
+  // the ambient cwd.
+  readonly per_member_isolation?: ReadonlyArray<SpawnIsolation | undefined>
 }
 
 export interface PoolMemberFailure {
@@ -454,6 +486,16 @@ export type CollectStrategy =
 export interface Interface {
   readonly registerRunLoop: (
     fn: (sessionID: SessionID) => Effect.Effect<unknown>,
+  ) => Effect.Effect<void>
+  // Spawn isolation — the settle half. Registered by WorktreeIsolation
+  // (worktree/isolation.ts) with the worktree-backed implementation; the
+  // completion watcher invokes it for isolated children at terminal
+  // status. Same function-pointer pattern as registerRunLoop: AgentControl
+  // never names the worktree services, so its layer (and every custom test
+  // layer) stays dep-free. No settler registered → checkouts are left in
+  // place and the notification says so.
+  readonly registerCheckoutSettler: (
+    fn: (isolation: SpawnIsolation) => Effect.Effect<CheckoutSettleResult>,
   ) => Effect.Effect<void>
   readonly registerSessionRoot: (id: SessionID) => Effect.Effect<void>
   readonly spawnAgent: (input: SpawnAgentInput) => Effect.Effect<LiveAgent, SpawnError>
@@ -680,6 +722,15 @@ interface PerRootData {
   // PerRootData map; cleared in the Session.Event.Deleted subscriber
   // AND the instance-disposal finalizer below.
   readonly behaviorOf: Map<SessionID, BehaviorContract>
+  // Spawn isolation (idea-worktrees, 2026-07-22) — worktree isolation per
+  // child. Set at spawn when the input carries a pre-built isolation
+  // object. Read by startAgentFiber (loop runs under the worktree's
+  // InstanceRef — revival included) and by the completion watcher (settle
+  // the checkout: clean → remove; else keep + report). Deleted only when
+  // the checkout was REMOVED, so a revived child with a kept checkout
+  // continues in it, while a revived child whose clean checkout is gone
+  // falls back to the ambient (shared) instance instead of a dead path.
+  readonly isolationOf: Map<SessionID, SpawnIsolation>
   // B3 (2026-07-18) — tombstones for released agents, keyed by the dead
   // child's SessionID, insertion-ordered (FIFO eviction at TOMBSTONE_CAP).
   // Written by shutdownOne; surfaced by listAgents; cleared with the rest
@@ -718,6 +769,11 @@ export const layer = Layer.effect(
     // same reason as providerRef (instance-agnostic function pointer).
     const rootWakeRef = yield* Ref.make<
       ((sessionID: SessionID) => Effect.Effect<unknown>) | undefined
+    >(undefined)
+    // Spawn isolation — checkout settler, registered by WorktreeIsolation's
+    // layer init. Layer scope for the same reason as providerRef.
+    const settlerRef = yield* Ref.make<
+      ((isolation: SpawnIsolation) => Effect.Effect<CheckoutSettleResult>) | undefined
     >(undefined)
 
     const state = yield* InstanceState.make(
@@ -898,6 +954,7 @@ export const layer = Layer.effect(
           links: new Map(),
           linkedDeathOf: new Set(),
           behaviorOf: new Map(),
+          isolationOf: new Map(),
           tombstones: new Map(),
           drainedCorrelations: new Map(),
         }
@@ -926,6 +983,12 @@ export const layer = Layer.effect(
       yield* Ref.set(rootWakeRef, fn)
     })
 
+    const registerCheckoutSettler = Effect.fn("AgentControl.registerCheckoutSettler")(function* (
+      fn: (isolation: SpawnIsolation) => Effect.Effect<CheckoutSettleResult>,
+    ) {
+      yield* Ref.set(settlerRef, fn)
+    })
+
     const registerSessionRoot = Effect.fn("AgentControl.registerSessionRoot")(function* (
       id: SessionID,
     ) {
@@ -948,7 +1011,13 @@ export const layer = Layer.effect(
       sessionID: SessionID,
     ) {
       const provider = yield* Ref.get(providerRef)
-      const loopEffect: Effect.Effect<unknown> = provider ? provider(sessionID) : Effect.never
+      const base: Effect.Effect<unknown> = provider ? provider(sessionID) : Effect.never
+      // Isolated children run their whole loop under the worktree's
+      // InstanceRef — tool cwds, file ops, and shells resolve to the
+      // isolated checkout. Applies to revival too (this fn is the single
+      // fiber-start door).
+      const isolation = slot.isolationOf.get(sessionID)
+      const loopEffect = isolation ? Effect.provideService(base, InstanceRef, isolation.context) : base
       const status = slot.statuses.get(sessionID)
       const fiber = yield* loopEffect.pipe(
         Effect.onExit((exit: Exit.Exit<unknown, unknown>) =>
@@ -1040,7 +1109,7 @@ export const layer = Layer.effect(
             )
 
             const parent = yield* sessions.get(input.parentID)
-            const child = yield* sessions.create({
+            const create = sessions.create({
               parentID: input.parentID,
               title: `${input.task_name} (@${nickname})`,
               agent: input.agent_type,
@@ -1056,6 +1125,13 @@ export const layer = Layer.effect(
                 : undefined,
               permission: parent.permission,
             })
+            // Isolated children are BORN on the worktree instance: their
+            // session row carries the worktree directory, so session-home
+            // routing, strip grouping, and the run-lock all see the
+            // isolated checkout as home.
+            const child = yield* (input.isolation
+              ? create.pipe(Effect.provideService(InstanceRef, input.isolation.context))
+              : create)
 
             yield* emitSpawn({
               event: Event.SpawnStarted,
@@ -1112,6 +1188,7 @@ export const layer = Layer.effect(
             // `poolStrategyOf` is stored only here — Wave 6 wires.
             slot.onFailureOf.set(child.id, input.on_failure ?? "escalate")
             slot.poolStrategyOf.set(child.id, input.pool_strategy ?? "one_for_one")
+            if (input.isolation) slot.isolationOf.set(child.id, input.isolation)
             slot.respawnInputByPath.set(String(childPath), input)
             if (!slot.respawnCountByPath.has(String(childPath))) {
               slot.respawnCountByPath.set(String(childPath), 0)
@@ -1241,6 +1318,10 @@ export const layer = Layer.effect(
                       slot.outgoingToSpawner.delete(child.id)
                       slot.spawnerOf.delete(child.id)
                       slot.skipCompletionNotification.delete(child.id)
+                      // isolation: the crashed child's checkout is deliberately
+                      // NOT settled here — the respawned child (same cached
+                      // input, same worktree context) continues in it.
+                      slot.isolationOf.delete(child.id)
                       yield* slot.registry.releaseSpawnedThread(child.id)
                       data.sessionToRoot.delete(child.id)
                       yield* spawnAgent(cachedInput).pipe(Effect.catch(() => Effect.void))
@@ -1315,13 +1396,36 @@ export const layer = Layer.effect(
                   const childDelivered = slot.outgoingToSpawner.has(child.id)
                   const needsWarning = !childDelivered && looksLikeMissingDeliverable(body)
                   const header = `Agent ${String(childPath)} reached status: ${label}`
+                  // Spawn isolation — settle the child's checkout at terminal
+                  // status through the registered settler (WorktreeIsolation).
+                  // Clean → removed silently, nothing to review. Anything
+                  // else → kept, and the notification carries branch/ahead/
+                  // dirty so the parent merges or escalates instead of
+                  // guessing. No settler (bare test layers) or a settler
+                  // failure → checkout left in place, notification says so.
+                  const isolation = slot.isolationOf.get(child.id)
+                  const settler = yield* Ref.get(settlerRef)
+                  const settled = isolation
+                    ? settler
+                      ? yield* settler(isolation).pipe(
+                          Effect.catchCause(() =>
+                            Effect.succeed({
+                              line: `[checkout left in place at ${isolation.directory} — inspection failed]`,
+                              removed: false,
+                            }),
+                          ),
+                        )
+                      : { line: `[checkout left in place at ${isolation.directory}]`, removed: false }
+                    : undefined
+                  if (settled?.removed) slot.isolationOf.delete(child.id)
+                  const checkoutSuffix = settled ? `\n\n${settled.line}` : ""
                   // B3 (2026-07-18) — audit tail. The child's Session (and
                   // full transcript) survives termination; give the parent
                   // the id so post-mortems don't rely on the child's own
                   // self-reported summary. Appended AFTER the body so the
                   // TUI's STATUS_HEADER_RE and the pool-collect filter
                   // (both match on the header line) are unaffected.
-                  const content = `${buildNotificationBody(header, body, needsWarning)}\n\n[child session: ${child.id} — transcript retained on disk]`
+                  const content = `${buildNotificationBody(header, body, needsWarning)}${checkoutSuffix}\n\n[child session: ${child.id} — transcript retained on disk]`
                   // D11 (actor-discipline-2026-05-20 Wave 4) — parse the
                   // ABORT set-phrase from the LAST line of the extracted
                   // body. undefined when no ABORT line present (normal
@@ -2274,6 +2378,7 @@ export const layer = Layer.effect(
             pool_strategy: input.pool_strategy,
             on_failure: input.on_failure,
             max_threads: input.max_threads,
+            isolation: input.per_member_isolation?.[i],
           }),
         )
         if (result._tag === "Success") {
@@ -2492,6 +2597,7 @@ export const layer = Layer.effect(
 
     return Service.of({
       registerRunLoop,
+      registerCheckoutSettler,
       registerSessionRoot,
       spawnAgent,
       sendInterAgentCommunication,

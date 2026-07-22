@@ -259,23 +259,24 @@ export const ExperimentalRoutes = lazy(() =>
       "/worktree",
       describeRoute({
         summary: "List worktrees",
-        description: "List all sandbox worktrees for the current project.",
+        description: "List the project's live git worktrees with their branches. The primary checkout is excluded.",
         operationId: "worktree.list",
         responses: {
           200: {
-            description: "List of worktree directories",
+            description: "List of worktrees",
             content: {
               "application/json": {
-                schema: resolver(z.array(z.string())),
+                schema: resolver(z.array(Worktree.Info.zod)),
               },
             },
           },
+          ...errors(400),
         },
       }),
       async (c) =>
         jsonRequest("ExperimentalRoutes.worktree.list", c, function* () {
-          const svc = yield* Project.Service
-          return yield* svc.sandboxes(Instance.project.id)
+          const svc = yield* Worktree.Service
+          return yield* svc.list()
         }),
     )
     .delete(
@@ -332,6 +333,93 @@ export const ExperimentalRoutes = lazy(() =>
           const svc = yield* Worktree.Service
           yield* svc.reset(body)
           return true
+        }),
+    )
+    .get(
+      "/worktree/diff",
+      describeRoute({
+        summary: "Diff a worktree against the default branch",
+        description:
+          "Per-file changes, commit count, dirt, mergeability, and the unified diff from the merge base to the worktree's HEAD.",
+        operationId: "worktree.diff",
+        responses: {
+          200: {
+            description: "Worktree diff",
+            content: {
+              "application/json": {
+                schema: resolver(Worktree.Diff.zod),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator("query", Worktree.DiffQuery.zod),
+      async (c) =>
+        jsonRequest("ExperimentalRoutes.worktree.diff", c, function* () {
+          const query = c.req.valid("query")
+          const svc = yield* Worktree.Service
+          return yield* svc.diff(query)
+        }),
+    )
+    .post(
+      "/worktree/merge",
+      describeRoute({
+        summary: "Merge a worktree branch",
+        description:
+          "Merge the worktree's branch into the local default branch in the primary checkout, then remove the worktree. Conflicts abort the merge and surface as a typed error.",
+        operationId: "worktree.merge",
+        responses: {
+          200: {
+            description: "Merge result",
+            content: {
+              "application/json": {
+                schema: resolver(Worktree.MergeResult.zod),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator("json", Worktree.MergeInput.zod),
+      async (c) =>
+        jsonRequest("ExperimentalRoutes.worktree.merge", c, function* () {
+          const body = c.req.valid("json")
+          const worktree = yield* Worktree.Service
+          const project = yield* Project.Service
+          const result = yield* worktree.merge(body)
+          yield* project.removeSandbox(Instance.project.id, body.directory)
+          return result
+        }),
+    )
+    .post(
+      "/worktree/discard",
+      describeRoute({
+        summary: "Discard a worktree",
+        description:
+          "Snapshot the worktree's state to a dangling commit for recovery, then remove the worktree and its branch.",
+        operationId: "worktree.discard",
+        responses: {
+          200: {
+            description: "Discard result",
+            content: {
+              "application/json": {
+                schema: resolver(Worktree.DiscardResult.zod),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator("json", Worktree.DiscardInput.zod),
+      async (c) =>
+        jsonRequest("ExperimentalRoutes.worktree.discard", c, function* () {
+          const body = c.req.valid("json")
+          const worktree = yield* Worktree.Service
+          const project = yield* Project.Service
+          const result = yield* worktree.discard(body)
+          yield* project.removeSandbox(Instance.project.id, body.directory)
+          return result
         }),
     )
     .get(

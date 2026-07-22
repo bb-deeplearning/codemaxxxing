@@ -86,6 +86,10 @@ export const Parameters = Schema.Struct({
     description:
       "Pool failure semantics (D12, stub-only this release). Stored on the per-child slot for Wave 6 to read when `spawn_pool` lands. `one_for_one` (default) isolates failures; `one_for_all` will tear down the entire pool on any single failure; `rest_for_one` will tear down pool members spawned after the failing one. Today this param has no runtime effect beyond being stored.",
   }),
+  isolation: Schema.optional(Schema.Union([Schema.Literal("none"), Schema.Literal("worktree")])).annotate({
+    description:
+      "Filesystem isolation for this child. `worktree` gives the child its own git checkout on its own branch (named from task_name): its writes land there instead of your cwd, a clean checkout removes itself when the child finishes, and one with commits is kept — the completion notification then reports branch, commits ahead, and dirt so you can merge, send back, or discard. Defaults to the agent type's configured isolation, else `none` (shared cwd). Only worth paying for children that WRITE; read-only fan-outs should stay in the shared directory.",
+  }),
 })
 
 export type Parameters = Schema.Schema.Type<typeof Parameters>
@@ -178,6 +182,7 @@ export const AgentSpawnTool = Tool.define(
               // Eligible = mode in {"subagent", "all"} AND not hidden. Built-ins
               // yield `explore` + `general` only. Primary agents (build, plan)
               // and hidden internals (compaction, title, summary) are rejected.
+              let resolvedAgent: Agent.Info | undefined
               if (params.agent_type !== undefined) {
                 const eligible = (yield* agents.list()).filter(
                   (a) => (a.mode === "subagent" || a.mode === "all") && a.hidden !== true,
@@ -191,6 +196,7 @@ export const AgentSpawnTool = Tool.define(
                     `agent_type "${params.agent_type}" is not a spawnable subagent. Available: ${available}.`,
                   )
                 }
+                resolvedAgent = match
               }
 
               // Bug 3 fix (specs/tui-redesign.md known bugs): `model` /
@@ -297,6 +303,50 @@ export const AgentSpawnTool = Tool.define(
                 },
               })
 
+              // Spawn isolation (idea-worktrees, 2026-07-22) — explicit param
+              // wins, else the agent type's configured default, else none.
+              // The worktree is created HERE (after the permission ask, so a
+              // rejected spawn never mints a checkout) and the pre-built
+              // isolation object rides SpawnAgentInput — AgentControl stays
+              // free of worktree mechanics. createFromInfo awaits the full
+              // readiness contract: populate, .worktreeinclude copy,
+              // instance boot, start scripts.
+              const isolationMode = params.isolation ?? resolvedAgent?.isolation ?? "none"
+              let isolation: AgentControl.SpawnAgentInput["isolation"] = undefined
+              if (isolationMode === "worktree") {
+                const built = yield* Effect.promise(async () => {
+                  const [{ AppRuntime }, { Worktree }, { InstanceStore }] = await Promise.all([
+                    import("@/effect/app-runtime"),
+                    import("@/worktree"),
+                    import("@/project/instance-store"),
+                  ])
+                  return AppRuntime.runPromise(
+                    Effect.gen(function* () {
+                      const svc = yield* Worktree.Service
+                      const store = yield* InstanceStore.Service
+                      const info = yield* svc.makeWorktreeInfo({ name: params.task_name })
+                      yield* svc.createFromInfo(info)
+                      const context = yield* store.load({ directory: info.directory })
+                      return { directory: info.directory, branch: info.branch, context }
+                    }),
+                  ).then(
+                    (value) => ({ ok: true as const, value }),
+                    (error) => ({
+                      ok: false as const,
+                      reason: error instanceof Error ? error.message : String(error),
+                    }),
+                  )
+                })
+                if (!built.ok) {
+                  return errorOutput(
+                    params.task_name,
+                    "isolation_failed",
+                    `Could not create an isolated checkout: ${built.reason}`,
+                  )
+                }
+                isolation = built.value
+              }
+
               const spawned = yield* control
                 .spawnAgent({
                   parentID: ctx.sessionID,
@@ -308,6 +358,7 @@ export const AgentSpawnTool = Tool.define(
                   options: { fork_turns: fork.value },
                   on_failure: params.on_failure,
                   pool_strategy: params.pool_strategy,
+                  isolation,
                 })
                 .pipe(
                   Effect.map((live) => ({ kind: "ok" as const, live })),
@@ -321,18 +372,45 @@ export const AgentSpawnTool = Tool.define(
                 )
 
               if (spawned.kind === "err") {
+                // Never leave an orphan checkout behind a failed spawn.
+                if (isolation) {
+                  const directory = isolation.directory
+                  yield* Effect.promise(async () => {
+                    const [{ AppRuntime }, { Worktree }] = await Promise.all([
+                      import("@/effect/app-runtime"),
+                      import("@/worktree"),
+                    ])
+                    await AppRuntime.runPromise(
+                      Worktree.Service.use((svc) => svc.remove({ directory })),
+                    ).catch(() => {})
+                  })
+                }
                 return errorOutput(params.task_name, spawned.tag, spawned.reason)
               }
 
               const canonical = String(spawned.live.metadata.agent_path ?? "")
               const nickname = spawned.live.metadata.agent_nickname
-              const output = { task_name: canonical, nickname }
+              const output = {
+                task_name: canonical,
+                nickname,
+                ...(isolation
+                  ? { checkout: { directory: isolation.directory, ...(isolation.branch ? { branch: isolation.branch } : {}) } }
+                  : {}),
+              }
               return {
                 title: `spawn_agent ${canonical}`,
                 metadata: {
                   task_name: canonical,
                   nickname,
                   child_session_id: spawned.live.thread_id,
+                  ...(isolation
+                    ? {
+                        isolation: {
+                          directory: isolation.directory,
+                          ...(isolation.branch ? { branch: isolation.branch } : {}),
+                        },
+                      }
+                    : {}),
                 },
                 output: JSON.stringify(output),
               }

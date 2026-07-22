@@ -87,8 +87,7 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
     })
 
     const worktree = Effect.fn("ExperimentalHttpApi.worktree")(function* () {
-      const ctx = yield* InstanceState.context
-      return yield* project.sandboxes(ctx.project.id)
+      return yield* worktreeSvc.list()
     })
 
     const worktreeCreate = Effect.fn("ExperimentalHttpApi.worktreeCreate")(function* (ctx: {
@@ -111,6 +110,30 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
     }) {
       yield* worktreeSvc.reset(ctx.payload)
       return true
+    })
+
+    const worktreeDiff = Effect.fn("ExperimentalHttpApi.worktreeDiff")(function* (ctx: {
+      query: Worktree.DiffQuery
+    }) {
+      return yield* worktreeSvc.diff(ctx.query)
+    })
+
+    const worktreeMerge = Effect.fn("ExperimentalHttpApi.worktreeMerge")(function* (input: {
+      payload: Worktree.MergeInput
+    }) {
+      const ctx = yield* InstanceState.context
+      const result = yield* worktreeSvc.merge(input.payload)
+      yield* project.removeSandbox(ctx.project.id, input.payload.directory)
+      return result
+    })
+
+    const worktreeDiscard = Effect.fn("ExperimentalHttpApi.worktreeDiscard")(function* (input: {
+      payload: Worktree.DiscardInput
+    }) {
+      const ctx = yield* InstanceState.context
+      const result = yield* worktreeSvc.discard(input.payload)
+      yield* project.removeSandbox(ctx.project.id, input.payload.directory)
+      return result
     })
 
     const session = Effect.fn("ExperimentalHttpApi.session")(function* (ctx: { query: typeof SessionListQuery.Type }) {
@@ -149,6 +172,9 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
       .handle("worktreeCreate", worktreeCreate)
       .handle("worktreeRemove", worktreeRemove)
       .handle("worktreeReset", worktreeReset)
+      .handle("worktreeDiff", worktreeDiff)
+      .handle("worktreeMerge", worktreeMerge)
+      .handle("worktreeDiscard", worktreeDiscard)
       .handle("session", session)
       .handle("resource", resource)
   }),

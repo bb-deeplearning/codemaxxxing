@@ -1285,7 +1285,7 @@ export default function Layout(props: ParentProps) {
       if (!target || target === root || canOpen(target)) return canOpen(target)
       const listed = await globalSDK.client.worktree
         .list({ directory: root })
-        .then((x) => x.data ?? [])
+        .then((x) => (x.data ?? []).map((item) => item.directory))
         .catch(() => [] as string[])
       dirs = effectiveWorkspaceOrder(root, [root, ...listed], store.workspaceOrder[root])
       return canOpen(target)
@@ -1931,7 +1931,8 @@ export default function Layout(props: ParentProps) {
         return undefined
       })
 
-    if (!created?.directory) return
+    // create() without detached always allocates a branch; the guard narrows the optional wire type
+    if (!created?.directory || !created.branch) return
 
     setWorkspaceName(created.directory, created.branch, project.id, created.branch)
 

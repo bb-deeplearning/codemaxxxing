@@ -1,6 +1,7 @@
 import { Project } from "@/project/project"
 import { ProjectID } from "@/project/schema"
-import { Schema } from "effect"
+import { Worktree } from "@/worktree"
+import { Schema, SchemaGetter } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiError, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
 import { Authorization } from "../middleware/authorization"
 import { InstanceContextMiddleware } from "../middleware/instance-context"
@@ -14,17 +15,35 @@ const UpdatePayload = Schema.Struct({
   commands: Schema.optional(Project.Info.fields.commands),
 })
 
+const QueryBoolean = Schema.Literals(["true", "false"]).pipe(
+  Schema.decodeTo(Schema.Boolean, {
+    decode: SchemaGetter.transform((value) => value === "true"),
+    encode: SchemaGetter.transform((value) => (value ? "true" : "false")),
+  }),
+)
+
+export const ProjectListQuery = Schema.Struct({
+  worktrees: Schema.optional(QueryBoolean),
+})
+
+const ProjectWithWorktrees = Schema.Struct({
+  ...Project.Info.fields,
+  worktrees: Schema.optional(Schema.Array(Worktree.Info)),
+}).annotate({ identifier: "ProjectWithWorktrees" })
+
 export const ProjectApi = HttpApi.make("project")
   .add(
     HttpApiGroup.make("project")
       .add(
         HttpApiEndpoint.get("list", root, {
-          success: described(Schema.Array(Project.Info), "List of projects"),
+          query: ProjectListQuery,
+          success: described(Schema.Array(ProjectWithWorktrees), "List of projects"),
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "project.list",
             summary: "List all projects",
-            description: "Get a list of projects that have been opened with OpenCode.",
+            description:
+              "Get a list of projects that have been opened with OpenCode. Pass worktrees=true to fold each git project's live worktrees (name, directory, branch) into the response — the unified projects+worktrees index.",
           }),
         ),
         HttpApiEndpoint.get("current", `${root}/current`, {

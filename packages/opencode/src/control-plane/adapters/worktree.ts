@@ -22,7 +22,7 @@ export const WorktreeAdapter: WorkspaceAdapter = {
     return {
       ...info,
       name: next.name,
-      branch: next.branch,
+      branch: next.branch ?? null,
       directory: next.directory,
     }
   },

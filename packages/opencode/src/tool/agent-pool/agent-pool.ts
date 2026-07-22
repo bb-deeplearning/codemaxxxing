@@ -86,6 +86,10 @@ export const Parameters = Schema.Struct({
     description:
       "How much of your conversation history each member inherits. `all` (default) forks the full history; `none` starts fresh with only the initial message; a positive integer string like `3` forks the last N turns. Use `none` for self-contained tasks.",
   }),
+  isolation: Schema.optional(Schema.Union([Schema.Literal("none"), Schema.Literal("worktree")])).annotate({
+    description:
+      "Filesystem isolation for every member. `worktree` gives each member its own git checkout on its own branch (named from the member task name), so N writers can run in parallel without trampling each other. Clean checkouts remove themselves when members finish; ones with commits are kept and each completion notification reports branch/ahead/dirty. Worktree creation is capped per project (disk ceiling) — a pool larger than the remaining budget fails with the ceiling message. Defaults to the agent type's configured isolation, else `none`. Read-only pools should stay in the shared directory.",
+  }),
 })
 
 export type Parameters = Schema.Schema.Type<typeof Parameters>
@@ -201,6 +205,64 @@ export const AgentPoolTool = Tool.define(
             },
           })
 
+          // 7b. Spawn isolation (idea-worktrees, 2026-07-22) — one worktree
+          // per member, created up front so every member's isolation object
+          // rides CreatePoolInput and AgentControl stays mechanics-free.
+          // The isolation PHASE is atomic (any create failure tears the
+          // batch down and fails the call — the ceiling message tells the
+          // model to shrink the pool); member SPAWNING stays non-atomic per
+          // pool doctrine, and worktrees of failed spawns are removed.
+          const isolationMode = params.isolation ?? match.isolation ?? "none"
+          const prefix = params.task_prefix ?? "pool"
+          let memberIsolation: AgentControl.CreatePoolInput["per_member_isolation"] = undefined
+          if (isolationMode === "worktree") {
+            const built = yield* Effect.promise(async () => {
+              const [{ AppRuntime }, { Worktree }, { InstanceStore }] = await Promise.all([
+                import("@/effect/app-runtime"),
+                import("@/worktree"),
+                import("@/project/instance-store"),
+              ])
+              const removeAll = (directories: string[]) =>
+                AppRuntime.runPromise(
+                  Worktree.Service.use((svc) =>
+                    Effect.forEach(directories, (directory) => svc.remove({ directory }).pipe(Effect.ignore), {
+                      concurrency: 2,
+                    }),
+                  ),
+                ).catch(() => {})
+              try {
+                const value = await AppRuntime.runPromise(
+                  Effect.gen(function* () {
+                    const svc = yield* Worktree.Service
+                    const store = yield* InstanceStore.Service
+                    return yield* Effect.forEach(
+                      Array.from({ length: params.count }, (_, i) => i),
+                      (i) =>
+                        Effect.gen(function* () {
+                          const info = yield* svc.makeWorktreeInfo({ name: `${prefix}-${i}` })
+                          yield* svc.createFromInfo(info)
+                          const context = yield* store.load({ directory: info.directory })
+                          return { directory: info.directory, branch: info.branch, context }
+                        }),
+                      { concurrency: 2 },
+                    )
+                  }),
+                )
+                return { ok: true as const, value, removeAll }
+              } catch (error) {
+                return {
+                  ok: false as const,
+                  reason: error instanceof Error ? error.message : String(error),
+                  removeAll,
+                }
+              }
+            })
+            if (!built.ok) {
+              return errorOutput("isolation_failed", `Could not create isolated checkouts: ${built.reason}`)
+            }
+            memberIsolation = built.value
+          }
+
           // 8. Fan out.
           const result = yield* control.createPool({
             parentID: ctx.sessionID,
@@ -213,7 +275,35 @@ export const AgentPoolTool = Tool.define(
             on_failure: params.on_failure,
             task_prefix: params.task_prefix,
             options: { fork_turns: fork.value },
+            per_member_isolation: memberIsolation,
           })
+
+          // 8b. Worktrees behind members that FAILED to spawn are orphans —
+          // remove them (failures carry the member task_name, which encodes
+          // the ordinal).
+          if (memberIsolation && result.failures.length > 0) {
+            const orphaned = result.failures
+              .map((failure) => {
+                const ordinal = Number(failure.task_name.slice(prefix.length + 1))
+                return Number.isInteger(ordinal) ? memberIsolation[ordinal]?.directory : undefined
+              })
+              .filter((directory): directory is string => !!directory)
+            if (orphaned.length > 0) {
+              yield* Effect.promise(async () => {
+                const [{ AppRuntime }, { Worktree }] = await Promise.all([
+                  import("@/effect/app-runtime"),
+                  import("@/worktree"),
+                ])
+                await AppRuntime.runPromise(
+                  Worktree.Service.use((svc) =>
+                    Effect.forEach(orphaned, (directory) => svc.remove({ directory }).pipe(Effect.ignore), {
+                      concurrency: 2,
+                    }),
+                  ),
+                ).catch(() => {})
+              })
+            }
+          }
 
           // 9. Total spawn failure — short-circuit so the model sees a
           //    clear signal instead of waiting on a vacant pool.
@@ -251,6 +341,14 @@ export const AgentPoolTool = Tool.define(
           }
 
           // 13. Render the model-facing result.
+          const checkoutFor = (memberPath: string) => {
+            if (!memberIsolation) return undefined
+            const leaf = memberPath.split("/").at(-1) ?? ""
+            const ordinal = Number(leaf.slice(prefix.length + 1))
+            const iso = Number.isInteger(ordinal) ? memberIsolation[ordinal] : undefined
+            if (!iso) return undefined
+            return { directory: iso.directory, ...(iso.branch ? { branch: iso.branch } : {}) }
+          }
           return {
             title: `spawn_pool ${result.pool_id}`,
             metadata: {
@@ -259,6 +357,16 @@ export const AgentPoolTool = Tool.define(
               failure_count: result.failures.length,
               collected_count: collected.deliverables.length,
               timed_out: collected.timed_out,
+              ...(memberIsolation
+                ? {
+                    member_checkouts: Object.fromEntries(
+                      result.members.flatMap((m) => {
+                        const checkout = checkoutFor(String(m.metadata.agent_path))
+                        return checkout ? [[String(m.metadata.agent_path), checkout]] : []
+                      }),
+                    ),
+                  }
+                : {}),
             },
             output: JSON.stringify({
               pool_id: result.pool_id,
@@ -268,6 +376,14 @@ export const AgentPoolTool = Tool.define(
               })),
               failures: result.failures,
               timed_out: collected.timed_out,
+              ...(memberIsolation
+                ? {
+                    checkouts: result.members.flatMap((m) => {
+                      const checkout = checkoutFor(String(m.metadata.agent_path))
+                      return checkout ? [{ worker: String(m.metadata.agent_path), ...checkout }] : []
+                    }),
+                  }
+                : {}),
             }),
           }
         }),

@@ -11,6 +11,7 @@ import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
 import { disposeAllInstances, provideTmpdirInstance } from "../../test/fixture/fixture"
 import { testEffect } from "../../test/lib/effect"
+import { InstanceRef } from "@/effect/instance-ref"
 import {
   AgentControl,
   AgentDepthExceededError,
@@ -5000,6 +5001,126 @@ describe("AgentControl D18 observability metric emission", () => {
         expect(sm?.error_kind).toBe("mailbox_full")
         expect(wa?.error_kind).toBe("invalid_timeout")
         off()
+      }),
+    ),
+  )
+})
+
+// Spawn isolation (idea-worktrees, 2026-07-22) — the MECHANISM pins, no git
+// involved: isolation objects are synthesized, the settler is a registered
+// fake (the registerRunLoop pattern). The real worktree-backed settler is
+// covered by test/project/worktree.test.ts primitives + the live harness.
+describe("AgentControl spawn isolation", () => {
+  const waitUntil = (predicate: () => boolean) =>
+    Effect.promise(async () => {
+      const deadline = Date.now() + 5_000
+      while (!predicate() && Date.now() < deadline) await Bun.sleep(25)
+    })
+
+  it.live("child session and run loop bind to the isolation context; the settler fires at terminal status", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+        const sessions = yield* Session.Service
+
+        const loopDirs: (string | undefined)[] = []
+        yield* control.registerRunLoop(() =>
+          Effect.gen(function* () {
+            const ref = yield* InstanceRef
+            loopDirs.push(ref?.directory)
+            return "done"
+          }),
+        )
+
+        const settledDirs: string[] = []
+        yield* control.registerCheckoutSettler((isolation) =>
+          Effect.sync(() => {
+            settledDirs.push(isolation.directory)
+            return { line: "[checkout: clean — removed]", removed: true }
+          }),
+        )
+
+        const root = yield* seedRoot()
+        const ambient = yield* InstanceRef
+        const isoDir = `${dir}-isolated`
+
+        const live = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "writer",
+          initial_message: "write things",
+          isolation: {
+            directory: isoDir,
+            branch: "opencode/writer",
+            context: { directory: isoDir, worktree: isoDir, project: ambient!.project },
+          },
+        })
+
+        // the child session is BORN on the isolation context: its row
+        // carries the worktree directory (session-home routing, strip
+        // grouping, and the run lock all key off this).
+        const child = yield* sessions.get(live.thread_id)
+        expect(child.directory).toBe(isoDir)
+
+        // the loop ran under the isolation InstanceRef, and the watcher
+        // invoked the registered settler once the loop completed.
+        yield* waitUntil(() => settledDirs.length > 0)
+        expect(loopDirs).toEqual([isoDir])
+        expect(settledDirs).toEqual([isoDir])
+      }),
+    ),
+  )
+
+  it.live("kept checkouts ride the completion notification; no settler means left-in-place", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+
+        yield* control.registerRunLoop(() => Effect.succeed("done"))
+        yield* control.registerCheckoutSettler((isolation) =>
+          Effect.succeed({
+            line: `[checkout kept: branch ${isolation.branch} · 1 commit ahead of main · clean tree · +2 -0 — merge, send back, or discard: ${isolation.directory}]`,
+            removed: false,
+          }),
+        )
+
+        const root = yield* seedRoot()
+        const ambient = yield* InstanceRef
+        const isoDir = `${dir}-kept`
+
+        yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "keeper",
+          initial_message: "commit things",
+          isolation: {
+            directory: isoDir,
+            branch: "opencode/keeper",
+            context: { directory: isoDir, worktree: isoDir, project: ambient!.project },
+          },
+        })
+
+        const drained: string[] = []
+        yield* waitUntil(() => drained.some((content) => content.includes("[checkout kept:")))
+          .pipe(
+            Effect.race(
+              Effect.forever(
+                control.drainMailbox(root.id).pipe(
+                  Effect.flatMap((msgs) =>
+                    Effect.sync(() => {
+                      for (const m of msgs) drained.push(m.content)
+                    }),
+                  ),
+                  Effect.andThen(Effect.sleep(25)),
+                ),
+              ),
+            ),
+          )
+
+        const notification = drained.find((content) => content.includes("reached status: completed"))
+        expect(notification).toBeDefined()
+        expect(notification!).toContain("[checkout kept: branch opencode/keeper")
+        expect(notification!).toContain(isoDir)
       }),
     ),
   )

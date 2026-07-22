@@ -2,6 +2,7 @@ import { AppRuntime } from "@/effect/app-runtime"
 import * as InstanceState from "@/effect/instance-state"
 import { Project } from "@/project/project"
 import { ProjectID } from "@/project/schema"
+import { Worktree } from "@/worktree"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
@@ -10,9 +11,25 @@ import { markInstanceForReload } from "../lifecycle"
 export const projectHandlers = HttpApiBuilder.group(InstanceHttpApi, "project", (handlers) =>
   Effect.gen(function* () {
     const svc = yield* Project.Service
+    const worktreeSvc = yield* Worktree.Service
 
-    const list = Effect.fn("ProjectHttpApi.list")(function* () {
-      return yield* svc.list()
+    const list = Effect.fn("ProjectHttpApi.list")(function* (ctx: { query: { worktrees?: boolean } }) {
+      const projects = yield* svc.list()
+      if (!ctx.query.worktrees) return projects
+      return yield* Effect.forEach(
+        projects,
+        (row) =>
+          row.vcs === "git"
+            ? worktreeSvc.listAt(row.worktree).pipe(
+                // catchCause, not catch: listAt THROWS NamedErrors (defects)
+                // for stale/broken project rows, and one dead row must never
+                // 500 the whole index.
+                Effect.catchCause(() => Effect.succeed([] as Worktree.Info[])),
+                Effect.map((worktrees) => ({ ...row, worktrees })),
+              )
+            : Effect.succeed({ ...row, worktrees: [] as Worktree.Info[] }),
+        { concurrency: 4 },
+      )
     })
 
     const current = Effect.fn("ProjectHttpApi.current")(function* () {

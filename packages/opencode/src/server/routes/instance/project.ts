@@ -1,9 +1,11 @@
 import { Hono } from "hono"
 import { describeRoute, validator } from "hono-openapi"
 import { resolver } from "hono-openapi"
+import { Effect } from "effect"
 import { Instance } from "@/project/instance"
 import { InstanceRuntime } from "@/project/instance-runtime"
 import { Project } from "@/project/project"
+import { Worktree } from "@/worktree"
 import z from "zod"
 import { ProjectID } from "@/project/schema"
 import { errors } from "../../error"
@@ -16,22 +18,51 @@ export const ProjectRoutes = lazy(() =>
       "/",
       describeRoute({
         summary: "List all projects",
-        description: "Get a list of projects that have been opened with OpenCode.",
+        description:
+          "Get a list of projects that have been opened with OpenCode. Pass worktrees=true to fold each git project's live worktrees (name, directory, branch) into the response — the unified projects+worktrees index.",
         operationId: "project.list",
         responses: {
           200: {
             description: "List of projects",
             content: {
               "application/json": {
-                schema: resolver(Project.Info.zod.array()),
+                schema: resolver(
+                  z.array(
+                    Project.Info.zod.and(
+                      z.object({ worktrees: z.array(Worktree.Info.zod).optional() }).meta({ ref: "ProjectWorktrees" }),
+                    ),
+                  ),
+                ),
               },
             },
           },
         },
       }),
+      validator("query", z.object({ worktrees: z.enum(["true", "false"]).optional() })),
       async (c) => {
         const projects = Project.list()
-        return c.json(projects)
+        if (c.req.valid("query").worktrees !== "true") return c.json(projects)
+        const enriched = await runRequest(
+          "ProjectRoutes.list",
+          c,
+          Worktree.Service.use((svc) =>
+            Effect.forEach(
+              projects,
+              (row) =>
+                row.vcs === "git"
+                  ? svc.listAt(row.worktree).pipe(
+                      // catchCause, not catch: listAt THROWS NamedErrors
+                      // (defects) for stale/broken project rows, and one
+                      // dead row must never 500 the whole index.
+                      Effect.catchCause(() => Effect.succeed([] as Worktree.Info[])),
+                      Effect.map((worktrees) => ({ ...row, worktrees })),
+                    )
+                  : Effect.succeed({ ...row, worktrees: [] as Worktree.Info[] }),
+              { concurrency: 4 },
+            ),
+          ),
+        )
+        return c.json(enriched)
       },
     )
     .get(

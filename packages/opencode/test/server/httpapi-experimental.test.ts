@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { $ } from "bun"
 import { Effect } from "effect"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { Instance } from "../../src/project/instance"
@@ -185,7 +186,9 @@ describe("experimental HttpApi", () => {
 
     const listed = await app().request(ExperimentalPaths.worktree, { headers })
     expect(listed.status).toBe(200)
-    expect(await listed.json()).toContain(info.directory)
+    expect(await listed.json()).toContainEqual(
+      expect.objectContaining({ name: "api-test", directory: info.directory, branch: "opencode/api-test" }),
+    )
 
     if (process.platform !== "win32") {
       const reset = await app().request(ExperimentalPaths.worktreeReset, {
@@ -210,5 +213,84 @@ describe("experimental HttpApi", () => {
     const afterRemove = await app().request(ExperimentalPaths.worktree, { headers })
     expect(afterRemove.status).toBe(200)
     expect(await afterRemove.json()).toEqual([])
+  })
+
+  testWorktreeMutations("serves worktree diff, merge, and discard through Hono bridge", async () => {
+    await using tmp = await tmpdir({ git: true, config: { formatter: false, lsp: false } })
+    const headers = { "x-opencode-directory": tmp.path, "content-type": "application/json" }
+
+    // --- diff + merge ---
+    const created = await app().request(ExperimentalPaths.worktree, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name: "review-test" }),
+    })
+    expect(created.status).toBe(200)
+    const info = (await created.json()) as Worktree.Info
+    await waitReady(info.directory)
+
+    await Bun.write(`${info.directory}/feature.txt`, "line one\nline two\n")
+    await $`git add feature.txt`.cwd(info.directory).quiet()
+    await $`git commit -m feature`.cwd(info.directory).quiet()
+
+    const diffed = await app().request(
+      `${ExperimentalPaths.worktreeDiff}?${new URLSearchParams({ directory: info.directory })}`,
+      { headers },
+    )
+    expect(diffed.status).toBe(200)
+    const diff = (await diffed.json()) as Worktree.Diff
+    expect(diff).toMatchObject({
+      branch: "opencode/review-test",
+      commits: 1,
+      dirty: false,
+      additions: 2,
+      deletions: 0,
+      truncated: false,
+    })
+    expect(diff.files).toEqual([{ path: "feature.txt", status: "added", additions: 2, deletions: 0 }])
+    expect(diff.diff).toContain("+line one")
+
+    const merged = await app().request(ExperimentalPaths.worktreeMerge, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ directory: info.directory }),
+    })
+    expect(merged.status).toBe(200)
+    const mergeResult = (await merged.json()) as Worktree.MergeResult
+    expect(mergeResult.merged).toBe(true)
+    expect(mergeResult.commit).toMatch(/^[0-9a-f]{40}$/)
+    expect(await Bun.file(`${tmp.path}/feature.txt`).text()).toContain("line one")
+
+    const afterMerge = await app().request(ExperimentalPaths.worktree, { headers })
+    expect(await afterMerge.json()).toEqual([])
+
+    // --- discard ---
+    const again = await app().request(ExperimentalPaths.worktree, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name: "discard-test" }),
+    })
+    expect(again.status).toBe(200)
+    const second = (await again.json()) as Worktree.Info
+    await waitReady(second.directory)
+
+    await Bun.write(`${second.directory}/junk.txt`, "almost lost\n")
+
+    const discarded = await app().request(ExperimentalPaths.worktreeDiscard, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ directory: second.directory }),
+    })
+    expect(discarded.status).toBe(200)
+    const discardResult = (await discarded.json()) as Worktree.DiscardResult
+    expect(discardResult.discarded).toBe(true)
+    expect(discardResult.snapshot).toMatch(/^[0-9a-f]{40}$/)
+
+    // the snapshot commit stays recoverable from the shared object store
+    const shown = await $`git show ${discardResult.snapshot}:junk.txt`.cwd(tmp.path).quiet().text()
+    expect(shown).toBe("almost lost\n")
+
+    const afterDiscard = await app().request(ExperimentalPaths.worktree, { headers })
+    expect(await afterDiscard.json()).toEqual([])
   })
 })

@@ -47,6 +47,10 @@ const AgentSchema = Schema.StructWithRest(
     }),
     maxSteps: Schema.optional(PositiveInt).annotate({ description: "@deprecated Use 'steps' field instead." }),
     permission: Schema.optional(ConfigPermission.Info),
+    isolation: Schema.optional(Schema.Literals(["none", "worktree"])).annotate({
+      description:
+        "Default filesystem isolation for spawns of this agent type. 'worktree' gives each spawned child its own git worktree (own branch, own checkout); clean checkouts remove themselves when the child finishes, checkouts with commits are kept for review. Default: none (shared cwd).",
+    }),
   }),
   [Schema.Record(Schema.String, Schema.Any)],
 )
@@ -68,6 +72,7 @@ const KNOWN_KEYS = new Set([
   "permission",
   "disable",
   "tools",
+  "isolation",
 ])
 
 // Post-parse normalisation:

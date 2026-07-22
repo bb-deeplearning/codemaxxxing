@@ -68,6 +68,7 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | Parsing binary headers at fixed offsets (image sniffing) | `image-header-parsers-must-validate-magic-bytes` |
 | Scripting `bun test` with explicit file paths | `bun-test-nonexistent-path-exits-zero` |
 | Adding a route family to the effect-httpapi server assembly | `httpapi-root-api-family-needs-auth-router-middleware` |
+| Touching Worktree service git ops, or letting requests arrive scoped to a worktree's own instance | `worktree-service-git-must-anchor-primary-cwd` |
 | Adding an always-on background service (watcher/poller) as a Layer | `configreload-lazy-service-runtime-never-constructs` |
 | Invalidating per-directory caches from outside the instance lifecycle | `scopedcache-invalidate-during-inflight-boot-deadlocks` |
 | Starting/steering the session agent loop from HTTP (any instance), or mixing surfaces (tui + serve, bare + scoped POSTs) on one session | `session-runloop-lock-busy-guard-was-per-instance` |
@@ -168,6 +169,9 @@ Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offs
 
 ### Server routes / auth
 - `httpapi-root-api-family-needs-auth-router-middleware` — effect-backend auth is per-route-layer; a new top-level family (e.g. `/global/*`) ships password-free unless it mounts `authorizationRouterMiddleware`. Hono's `Server.Legacy()` hides the hole in-process.
+
+### Worktrees
+- L1526 `worktree-service-git-must-anchor-primary-cwd` — primary-side git anchors at `ctx.project.worktree`, never `ctx.worktree`: a worktree-scoped remove/merge otherwise runs `git branch -D` from the directory it just deleted.
 
 ---
 
@@ -1522,5 +1526,22 @@ const rootApiRoutes = HttpApiBuilder.layer(RootHttpApi).pipe(
 
 **Why:** Auth in the effect backend is per-route-layer, not global: `authorizationRouterMiddleware` only guards the layers it is provided to, and the `global` group declares no `Authorization` API middleware (mirroring hono, where auth is runtime middleware). A family provided to none of the auth'd layers ships open. The trap compounds when debugging: `Server.Legacy()` forces hono (where app-level `AuthMiddleware` covers everything including `/global`), so the hole "doesn't reproduce" in-process — `Flag.OPENCODE_EXPERIMENTAL_HTTPAPI` defaults ON for channels dev/beta/local/codemaxxxing (`flag.ts`), so real serves run the effect backend where it was open.
 **See:** `packages/opencode/src/server/routes/instance/httpapi/server.ts` (`rootApiRoutes`). Test: `packages/opencode/test/server/httpapi-raw-route-auth.test.ts` (`requires configured auth on every root api route`). Related: [pty-leader-exit-sighup-vs-nohup-race] (same detach discipline used to verify it live).
+
+---
+
+### `worktree-service-git-must-anchor-primary-cwd`
+
+**Severity:** correctness-bug
+**When:** Adding or changing Worktree service operations (remove/reset/merge/discard/list) that run primary-side git commands, or any surface that lets a request arrive scoped to a WORKTREE's own instance (`x-opencode-directory: <worktree dir>`).
+**Symptom:** The operation half-completes and 500s. Live on the 2026-07-22 drive: merge scoped to the checkout's own instance landed the merge and removed the directory, then `git branch -D` ran with `cwd: ctx.worktree` — the directory that had just been deleted — spawn failed, `RemoveFailedError`, HTTP 500, and the branch survived as litter.
+**Fix:** Primary-side git in the Worktree service anchors at `ctx.project.worktree` (the project's primary checkout), NEVER `ctx.worktree` (the RECEIVING instance's root, which IS the worktree when the request is worktree-scoped). Target-side git (reset/clean inside the checkout) keeps using the located `entry.path`.
+
+```ts
+const primaryCwd = ctx.project.worktree
+const removed = yield* git(["worktree", "remove", "--force", entry.path], { cwd: primaryCwd })
+```
+
+**Why:** Worktree-scoped requests are the CORRECT shape for clients: a checkout is proven live by its own sessions' frames while the parent repo often has no live instance, and the boxbox review verbs deliberately ride the checkout's directory. `ctx.worktree` silently changes meaning per receiving instance; `ctx.project.worktree` is instance-invariant. Upstream carries the same latent bug (its remove uses `ctx.worktree`).
+**See:** `packages/opencode/src/worktree/index.ts` (`remove`, `reset`, `diff`/`merge`/`discard`). Test: `packages/opencode/test/project/worktree.test.ts` ("merge scoped to the worktree's OWN instance"). Related: [effect-v4-catchall-renamed-to-catch] (thrown `NamedError`s are DEFECTS — per-row enrichment like the unified `/project?worktrees=true` must use `Effect.catchCause`, not `Effect.catch`, or one stale project row 500s the whole index; bit the same drive).
 
 ---

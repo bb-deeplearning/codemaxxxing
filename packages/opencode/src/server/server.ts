@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import { adapter } from "#hono"
 import { lazy } from "@/util/lazy"
 import { ConfigReload } from "@/config/reload"
+import { WorktreeIsolation } from "@/worktree/isolation"
 import * as Log from "@opencode-ai/core/util/log"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { WorkspaceID } from "@/control-plane/schema"
@@ -188,6 +189,9 @@ export async function listen(opts: ListenOptions): Promise<Listener> {
   // config hot-reload rides its own lazy runtime; force it alive for every
   // serving process (fire-and-forget, logs its own failures)
   void ConfigReload.init()
+  // spawn-isolation checkout settler, same lazy-runtime shape: without this
+  // a serve never settles isolated worktrees at terminal status
+  void WorktreeIsolation.init()
 
   const next = new URL("http://localhost")
   next.hostname = opts.hostname

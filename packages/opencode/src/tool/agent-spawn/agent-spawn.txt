@@ -164,3 +164,22 @@ siblings (Erlang OTP-style):
 
 Today, both params are stored on the per-child slot until Wave 6's
 `spawn_pool` wires active behavior.
+
+## isolation
+
+`isolation: "worktree"` gives the child its own git checkout on its own
+branch (named from task_name) under the data dir. Its writes land there,
+never in your cwd — parallel WRITER fan-out becomes structurally safe
+instead of discipline-dependent. The checkout boots alive: tracked files,
+.worktreeinclude-declared ignored files (.env, node_modules), instance,
+and start scripts are all ready before the child's first turn.
+
+At terminal status the checkout settles itself: clean → removed silently;
+commits or dirt → kept, and the completion notification reports branch,
+commits ahead, and dirt so you can merge, send back (followup_task), or
+discard through the worktree surface. A respawned child continues in the
+same checkout.
+
+Defaults: the agent type's configured `isolation`, else `none`. Read-only
+children (explore) should never pay for isolation — keep them in the
+shared directory.

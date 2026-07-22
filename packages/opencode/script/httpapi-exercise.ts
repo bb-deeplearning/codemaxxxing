@@ -109,6 +109,8 @@ type ScenarioContext = {
   messages: (sessionID: SessionID) => Effect.Effect<MessageV2.WithParts[]>
   todos: (sessionID: SessionID, todos: TodoInfo[]) => Effect.Effect<void>
   worktree: (input?: { name?: string }) => Effect.Effect<Worktree.Info>
+  /** Create AND await boot (populate + instance + start scripts), so the checkout is usable. */
+  worktreeReady: (input?: { name?: string }) => Effect.Effect<Worktree.Info>
   worktreeRemove: (directory: string) => Effect.Effect<void>
   llmText: (value: string) => Effect.Effect<void>
   llmWait: (count: number) => Effect.Effect<void>
@@ -833,6 +835,85 @@ const scenarios: Scenario[] = [
         yield* ctx.worktreeRemove(ctx.state.directory)
       }),
     ),
+  http
+    .get("/experimental/worktree/diff", "worktree.diff")
+    .mutating()
+    .seeded((ctx) =>
+      Effect.gen(function* () {
+        const info = yield* ctx.worktreeReady({ name: "api-diff" })
+        yield* Effect.promise(async () => {
+          await Bun.write(`${info.directory}/exercise.txt`, "one\n")
+          await Bun.$`git add exercise.txt`.cwd(info.directory).quiet()
+          await Bun.$`git commit -m exercise`.cwd(info.directory).quiet()
+        })
+        return info
+      }),
+    )
+    .at((ctx) => ({
+      path: `/experimental/worktree/diff?${new URLSearchParams({ directory: ctx.state.directory })}`,
+      headers: ctx.headers(),
+    }))
+    .jsonEffect(200, (body, ctx) =>
+      Effect.gen(function* () {
+        object(body)
+        check(body.commits === 1, "worktree diff should count one commit ahead")
+        check(Array.isArray(body.files) && body.files.length === 1, "worktree diff should list one file")
+        check(typeof body.diff === "string" && body.diff.includes("+one"), "worktree diff should carry the patch")
+        check(body.dirty === false, "worktree diff should report a clean checkout")
+        yield* ctx.worktreeRemove(ctx.state.directory)
+      }),
+    ),
+  http
+    .post("/experimental/worktree/merge", "worktree.merge")
+    .mutating()
+    .seeded((ctx) =>
+      Effect.gen(function* () {
+        const info = yield* ctx.worktreeReady({ name: "api-merge" })
+        yield* Effect.promise(async () => {
+          await Bun.write(`${info.directory}/merged.txt`, "landed\n")
+          await Bun.$`git add merged.txt`.cwd(info.directory).quiet()
+          await Bun.$`git commit -m merged`.cwd(info.directory).quiet()
+        })
+        return info
+      }),
+    )
+    .at((ctx) => ({
+      path: "/experimental/worktree/merge",
+      headers: ctx.headers(),
+      body: { directory: ctx.state.directory },
+    }))
+    .json(200, (body) => {
+      object(body)
+      check(body.merged === true, "worktree merge should return merged true")
+      check(
+        typeof body.commit === "string" && body.commit.length === 40,
+        "worktree merge should return the merge commit",
+      )
+      // the worktree removed itself after the merge: no cleanup owed here
+    }),
+  http
+    .post("/experimental/worktree/discard", "worktree.discard")
+    .mutating()
+    .seeded((ctx) =>
+      Effect.gen(function* () {
+        const info = yield* ctx.worktreeReady({ name: "api-discard" })
+        yield* Effect.promise(() => Bun.write(`${info.directory}/junk.txt`, "junk\n"))
+        return info
+      }),
+    )
+    .at((ctx) => ({
+      path: "/experimental/worktree/discard",
+      headers: ctx.headers(),
+      body: { directory: ctx.state.directory },
+    }))
+    .json(200, (body) => {
+      object(body)
+      check(body.discarded === true, "worktree discard should return discarded true")
+      check(
+        typeof body.snapshot === "string" && body.snapshot.length === 40,
+        "worktree discard should return a snapshot sha",
+      )
+    }),
   http.get("/experimental/session", "experimental.session.list").json(200, array),
   http.get("/experimental/resource", "experimental.resource.list").json(),
   http
@@ -1665,6 +1746,16 @@ function withContext<A, E>(scenario: ActiveScenario, use: (ctx: SeededContext<un
           messages: (sessionID) => run(modules.Session.Service.use((svc) => svc.messages({ sessionID }))),
           todos: (sessionID, todos) => run(modules.Todo.Service.use((svc) => svc.update({ sessionID, todos }))),
           worktree: (input) => run(modules.Worktree.Service.use((svc) => svc.create(input))),
+          worktreeReady: (input) =>
+            run(
+              modules.Worktree.Service.use((svc) =>
+                Effect.gen(function* () {
+                  const info = yield* svc.makeWorktreeInfo(input)
+                  yield* svc.createFromInfo(info)
+                  return info
+                }),
+              ),
+            ),
           worktreeRemove: (directory) =>
             run(modules.Worktree.Service.use((svc) => svc.remove({ directory })).pipe(Effect.ignore)),
           llmText: (value) => Effect.suspend(() => llm().text(value)),

@@ -52,7 +52,11 @@ import type {
   GlobalConfigUpdateResponses,
   GlobalDisposeResponses,
   GlobalEventResponses,
+  GlobalFsListErrors,
+  GlobalFsListResponses,
   GlobalHealthResponses,
+  GlobalReloadResponses,
+  GlobalRestartResponses,
   GlobalUpgradeErrors,
   GlobalUpgradeResponses,
   InstanceDisposeResponses,
@@ -220,7 +224,16 @@ import type {
   WorktreeCreateErrors,
   WorktreeCreateInput,
   WorktreeCreateResponses,
+  WorktreeDiffErrors,
+  WorktreeDiffResponses,
+  WorktreeDiscardErrors,
+  WorktreeDiscardInput,
+  WorktreeDiscardResponses,
+  WorktreeListErrors,
   WorktreeListResponses,
+  WorktreeMergeErrors,
+  WorktreeMergeInput,
+  WorktreeMergeResponses,
   WorktreeRemoveErrors,
   WorktreeRemoveInput,
   WorktreeRemoveResponses,
@@ -435,6 +448,27 @@ export class App extends HeyApiClient {
   }
 }
 
+export class Fs extends HeyApiClient {
+  /**
+   * List directories
+   *
+   * List the subdirectories of a directory on the server host. Defaults to the server user's home directory. Read-only; directories only.
+   */
+  public list<ThrowOnError extends boolean = false>(
+    parameters?: {
+      path?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "path" }] }])
+    return (options?.client ?? this.client).get<GlobalFsListResponses, GlobalFsListErrors, ThrowOnError>({
+      url: "/global/fs",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Config extends HeyApiClient {
   /**
    * Get global configuration
@@ -532,6 +566,35 @@ export class Global extends HeyApiClient {
         ...params.headers,
       },
     })
+  }
+
+  /**
+   * Reload config, skills, and MCP servers
+   *
+   * Flush every config-derived cache (skills, MCP, providers, agents) on all live instances and rescan from disk. MCP and LSP servers reconnect. Sessions and PTYs are untouched.
+   */
+  public reload<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).post<GlobalReloadResponses, unknown, ThrowOnError>({
+      url: "/global/reload",
+      ...options,
+    })
+  }
+
+  /**
+   * Restart the serve process
+   *
+   * Respond, dispose instances cleanly, then exit; the process supervisor relaunches the serve. In-flight turns on this host abort. Clients resync over SSE.
+   */
+  public restart<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).post<GlobalRestartResponses, unknown, ThrowOnError>({
+      url: "/global/restart",
+      ...options,
+    })
+  }
+
+  private _fs?: Fs
+  get fs(): Fs {
+    return (this._fs ??= new Fs({ client: this.client }))
   }
 
   private _config?: Config
@@ -1202,7 +1265,7 @@ export class Worktree extends HeyApiClient {
   /**
    * List worktrees
    *
-   * List all sandbox worktrees for the current project.
+   * List the project's live git worktrees with their branches. The primary checkout is excluded.
    */
   public list<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -1222,7 +1285,7 @@ export class Worktree extends HeyApiClient {
         },
       ],
     )
-    return (options?.client ?? this.client).get<WorktreeListResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).get<WorktreeListResponses, WorktreeListErrors, ThrowOnError>({
       url: "/experimental/worktree",
       ...options,
       ...params,
@@ -1293,6 +1356,110 @@ export class Worktree extends HeyApiClient {
     )
     return (options?.client ?? this.client).post<WorktreeResetResponses, WorktreeResetErrors, ThrowOnError>({
       url: "/experimental/worktree/reset",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Diff a worktree against the default branch
+   *
+   * Per-file changes, commit count, dirt, mergeability, and the unified diff from the merge base to the worktree's HEAD.
+   */
+  public diff<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<WorktreeDiffResponses, WorktreeDiffErrors, ThrowOnError>({
+      url: "/experimental/worktree/diff",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Merge a worktree branch
+   *
+   * Merge the worktree's branch into the local default branch in the primary checkout, then remove the worktree. Conflicts abort the merge and surface as a typed error.
+   */
+  public merge<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      worktreeMergeInput?: WorktreeMergeInput
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { key: "worktreeMergeInput", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<WorktreeMergeResponses, WorktreeMergeErrors, ThrowOnError>({
+      url: "/experimental/worktree/merge",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Discard a worktree
+   *
+   * Snapshot the worktree's state to a dangling commit for recovery, then remove the worktree and its branch.
+   */
+  public discard<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      worktreeDiscardInput?: WorktreeDiscardInput
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { key: "worktreeDiscardInput", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<WorktreeDiscardResponses, WorktreeDiscardErrors, ThrowOnError>({
+      url: "/experimental/worktree/discard",
       ...options,
       ...params,
       headers: {
@@ -2007,12 +2174,13 @@ export class Project extends HeyApiClient {
   /**
    * List all projects
    *
-   * Get a list of projects that have been opened with OpenCode.
+   * Get a list of projects that have been opened with OpenCode. Pass worktrees=true to fold each git project's live worktrees (name, directory, branch) into the response — the unified projects+worktrees index.
    */
   public list<ThrowOnError extends boolean = false>(
     parameters?: {
       directory?: string
       workspace?: string
+      worktrees?: "true" | "false"
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2023,6 +2191,7 @@ export class Project extends HeyApiClient {
           args: [
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
+            { in: "query", key: "worktrees" },
           ],
         },
       ],
