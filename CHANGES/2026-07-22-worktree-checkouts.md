@@ -33,3 +33,7 @@ Unified project index: `GET /project?worktrees=true` enriches rows per-project v
 - `src/agent/control.test.ts`: 142 pass (isolation mechanism pins: InstanceRef binding, respawn continuity, settler injection).
 - httpapi experimental + json-parity green; `bun typecheck` clean; SDK regenerated (`packages/sdk/js`).
 - Three full live loops against a from-source serve: merge landed a real commit with branch+checkout auto-removed, discard rescue sha recovered content, `.env` copied / `cache.log` excluded, `worktree.failed` carried a real stderr tail.
+
+## Turn-zero hotfix (`0037390865`, 2026-07-23)
+
+Shipped the same day the batch deployed: five isolated children died at turn zero on the boxbox vm — `No user message found in stream`, deterministic, zero model calls. The child's loop fiber runs under the WORKTREE's InstanceRef (by design), but its slot and mailbox lived in the spawning instance's `InternalState`; the loop's mailbox drain resolved a fresh empty state and the initial task never became a user message. Fix: layer-scoped `sessionHome` index (session → owning InternalState, lifetime mirroring `sessionToRoot`), and every session-anchored AgentControl method resolves through it with ambient fallback. Also fixes `fork_turns: "all"` isolated children being deaf to followups and nested spawns from inside isolated fibers. Pin drives the real loop shape — red on the old code. See GOTCHAS `agentcontrol-tree-state-resolves-by-session-home-not-ambient-instance`.

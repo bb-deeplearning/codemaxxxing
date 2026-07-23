@@ -1545,3 +1545,14 @@ const removed = yield* git(["worktree", "remove", "--force", entry.path], { cwd:
 **See:** `packages/opencode/src/worktree/index.ts` (`remove`, `reset`, `diff`/`merge`/`discard`). Test: `packages/opencode/test/project/worktree.test.ts` ("merge scoped to the worktree's OWN instance"). Related: [effect-v4-catchall-renamed-to-catch] (thrown `NamedError`s are DEFECTS — per-row enrichment like the unified `/project?worktrees=true` must use `Effect.catchCause`, not `Effect.catch`, or one stale project row 500s the whole index; bit the same drive).
 
 ---
+
+### `agentcontrol-tree-state-resolves-by-session-home-not-ambient-instance`
+
+**Severity:** correctness-bug
+**When:** Any AgentControl surface that can execute on a fiber whose ambient `InstanceRef` differs from the instance that spawned the tree — today that means isolated children (`isolation: "worktree"`), whose whole run loop is rebound to the checkout's InstanceRef by `startAgentFiber`.
+**Symptom:** Turn-zero death, deterministic, zero model calls: `Error: No user message found in stream. This should never happen.` Session row exists, checkout boots, completion notification fires — but the child has 0 messages in the db. Five dead children on the boxbox vm, 2026-07-23. Quieter variants: `fork_turns: "all"` children start fine but are DEAF to every followup (inherited history masks the throw; mail still lands in the other instance's state), and nested spawns from inside an isolated fiber fail the parent slot lookup.
+**Fix:** AgentControl keeps a LAYER-scoped `sessionHome: Map<SessionID, InternalState>` (the providerRef precedent: fibers cross instances, tree ownership doesn't). `ensureRootSlot` and `spawnAgent` register; the respawn rollback, session-deleted sweep, and instance-dispose finalizer delete — key lifetime mirrors `sessionToRoot` exactly. Every session-anchored method resolves `const data = yield* sessionState(id)` (home first, ambient fallback for first-contact registration).
+**Why:** `InstanceState.make` gives each instance its own `InternalState`; `InstanceState.get` resolves via ambient `InstanceRef`. The spawn queues the initial task into the child's mailbox in the PARENT instance's state, then the child's loop — running under the WORKTREE's ref — asks a fresh empty state for that mailbox and legitimately finds nothing. The mechanism pins passed because their fake run loops never drained; the pin now drives the real loop shape (drain inside the fiber, nested spawn from within, trigger_turn revival).
+**See:** `packages/opencode/src/agent/control.ts` (`sessionHome`, `sessionState`), pin in `src/agent/control.test.ts` ("isolated child's fiber drains its mailbox…"). Fix commit `0037390865`.
+
+---
