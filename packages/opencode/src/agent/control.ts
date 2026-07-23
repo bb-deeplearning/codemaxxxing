@@ -776,6 +776,20 @@ export const layer = Layer.effect(
       ((isolation: SpawnIsolation) => Effect.Effect<CheckoutSettleResult>) | undefined
     >(undefined)
 
+    // Spawn isolation (2026-07-23) — session → owning InternalState. An
+    // isolated child's loop fiber runs under the WORKTREE's InstanceRef
+    // (startAgentFiber), but its slot/mailbox live in the InternalState of
+    // the instance that spawned it. Resolving state from the ambient ref
+    // inside that fiber finds a fresh empty state: the child's mailbox —
+    // initial task included — is invisible, drainMailbox returns [], and
+    // the run loop throws "No user message found in stream" before the
+    // first model call (five dead children on the vm, 2026-07-23). Layer
+    // scope for the same reason as providerRef: fibers cross instances,
+    // tree ownership doesn't. Entries mirror sessionToRoot's key lifetime
+    // exactly (set at ensureRootSlot/spawnAgent, deleted at the respawn
+    // rollback, the session-deleted sweep, and instance disposal).
+    const sessionHome = new Map<SessionID, InternalState>()
+
     const state = yield* InstanceState.make(
       Effect.fn("AgentControl.state")(function* () {
         const scope = yield* Scope.Scope
@@ -872,8 +886,12 @@ export const layer = Layer.effect(
           slot.drainedCorrelations.clear()
           perRoot.delete(deletedID)
           for (const [sid, rid] of sessionToRoot.entries()) {
-            if (rid === deletedID) sessionToRoot.delete(sid)
+            if (rid === deletedID) {
+              sessionToRoot.delete(sid)
+              sessionHome.delete(sid)
+            }
           }
+          sessionHome.delete(deletedID)
         })
         yield* Effect.addFinalizer(() => Effect.sync(() => offSessionDeleted()))
 
@@ -909,6 +927,9 @@ export const layer = Layer.effect(
             }
             perRoot.clear()
             sessionToRoot.clear()
+            for (const [sid, st] of sessionHome) {
+              if (st.perRoot === perRoot) sessionHome.delete(sid)
+            }
           }),
         )
 
@@ -960,6 +981,7 @@ export const layer = Layer.effect(
         }
         data.perRoot.set(id, slot)
         data.sessionToRoot.set(id, id)
+        sessionHome.set(id, data)
         return slot
       })
 
@@ -970,6 +992,15 @@ export const layer = Layer.effect(
       if (!rootID) return undefined
       return data.perRoot.get(rootID)
     }
+
+    // Resolve the InternalState that OWNS `id`'s tree, falling back to the
+    // ambient instance for first-contact registration paths. Every public
+    // method with a session anchor resolves through this, so a fiber running
+    // under a different InstanceRef (isolated children) still finds its
+    // mailbox, slot, and siblings.
+    const sessionState = Effect.fn(function* (id: SessionID) {
+      return sessionHome.get(id) ?? (yield* InstanceState.get(state))
+    })
 
     const registerRunLoop = Effect.fn("AgentControl.registerRunLoop")(function* (
       fn: (sessionID: SessionID) => Effect.Effect<unknown>,
@@ -1043,7 +1074,7 @@ export const layer = Layer.effect(
     const spawnAgent: (input: SpawnAgentInput) => Effect.Effect<LiveAgent, SpawnError> = Effect.fn(
       "AgentControl.spawnAgent",
     )(function* (input: SpawnAgentInput) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(input.parentID)
       const callID = newCallID()
       // 1. Compute child path. Failure here is AgentPathInvalidError from
       //    AgentPath.join (the leaf failed segment validation).
@@ -1205,6 +1236,7 @@ export const layer = Layer.effect(
             // (sendInterAgentCommunication, closeAgent, wait_agent) on
             // the child resolve to the right slot.
             data.sessionToRoot.set(child.id, slot.rootID)
+            sessionHome.set(child.id, data)
 
             // Wave 8 (D16) — resolve declared behavior contract for this child.
             // Undefined when agent_type is undefined / unknown — no contract means
@@ -1324,6 +1356,7 @@ export const layer = Layer.effect(
                       slot.isolationOf.delete(child.id)
                       yield* slot.registry.releaseSpawnedThread(child.id)
                       data.sessionToRoot.delete(child.id)
+                      sessionHome.delete(child.id)
                       yield* spawnAgent(cachedInput).pipe(Effect.catch(() => Effect.void))
                       return yield* Effect.interrupt
                     }
@@ -1677,7 +1710,7 @@ export const layer = Layer.effect(
         senderID: SessionID,
         flags?: { system?: boolean },
       ) {
-        const data = yield* InstanceState.get(state)
+        const data = yield* sessionState(senderID)
         // Cross-root rejection. Sender and target must belong to the SAME
         // root's slot — otherwise the target either doesn't exist for this
         // sender (different chat / root) or has been torn down.
@@ -1811,7 +1844,7 @@ export const layer = Layer.effect(
       callerID?: SessionID,
       cause: TombstoneCause = "closed",
     ) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(id)
       const slot = slotFor(data, id)
       if (!slot) return yield* new AgentNotFoundError({ session: id })
 
@@ -1951,7 +1984,7 @@ export const layer = Layer.effect(
       senderID: SessionID,
       pathPrefix?: string,
     ) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(senderID)
       const slot = slotFor(data, senderID)
       if (!slot) return [] as readonly ListedAgent[]
 
@@ -2012,7 +2045,7 @@ export const layer = Layer.effect(
       reference: string,
       senderID: SessionID,
     ) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(senderID)
       const resolved = yield* AgentPath.resolve(currentPath, reference).pipe(
         Effect.mapError((e) => new AgentReferenceInvalidError({ reference, reason: e.reason })),
       )
@@ -2036,14 +2069,14 @@ export const layer = Layer.effect(
     })
 
     const getAgentMetadata = Effect.fn("AgentControl.getAgentMetadata")(function* (id: SessionID) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(id)
       const slot = slotFor(data, id)
       if (!slot) return undefined
       return yield* slot.registry.agentMetadataForThread(id)
     })
 
     const subscribeStatus = Effect.fn("AgentControl.subscribeStatus")(function* (id: SessionID) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(id)
       const slot = slotFor(data, id)
       if (!slot) return yield* new AgentNotFoundError({ session: id })
       const ref = slot.statuses.get(id)
@@ -2054,7 +2087,7 @@ export const layer = Layer.effect(
     const subscribeMailboxSeq = Effect.fn("AgentControl.subscribeMailboxSeq")(function* (
       id: SessionID,
     ) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(id)
       const slot = slotFor(data, id)
       if (!slot) return yield* new AgentNotFoundError({ session: id })
       const mailbox = slot.mailboxes.get(id)
@@ -2065,7 +2098,7 @@ export const layer = Layer.effect(
     const hasPendingMailboxItems = Effect.fn("AgentControl.hasPendingMailboxItems")(function* (
       id: SessionID,
     ) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(id)
       const slot = slotFor(data, id)
       if (!slot) return false
       const mailbox = slot.mailboxes.get(id)
@@ -2076,7 +2109,7 @@ export const layer = Layer.effect(
     const hasPendingTriggerTurn = Effect.fn("AgentControl.hasPendingTriggerTurn")(function* (
       id: SessionID,
     ) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(id)
       const slot = slotFor(data, id)
       if (!slot) return false
       const mailbox = slot.mailboxes.get(id)
@@ -2089,7 +2122,7 @@ export const layer = Layer.effect(
     // that lands on the turn's final step produces another step instead of
     // rotting until the next user input.
     const hasPendingMail = Effect.fn("AgentControl.hasPendingMail")(function* (id: SessionID) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(id)
       const slot = slotFor(data, id)
       if (!slot) return false
       const mailbox = slot.mailboxes.get(id)
@@ -2098,7 +2131,7 @@ export const layer = Layer.effect(
     })
 
     const drainMailbox = Effect.fn("AgentControl.drainMailbox")(function* (id: SessionID) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(id)
       const slot = slotFor(data, id)
       if (!slot) return [] as readonly InterAgentCommunication[]
       const mailbox = slot.mailboxes.get(id)
@@ -2118,7 +2151,7 @@ export const layer = Layer.effect(
 
     const findMailboxByCorrelationId = Effect.fn("AgentControl.findMailboxByCorrelationId")(
       function* (id: SessionID, correlation_id: string) {
-        const data = yield* InstanceState.get(state)
+        const data = yield* sessionState(id)
         const slot = slotFor(data, id)
         if (!slot) return undefined
         const mailbox = slot.mailboxes.get(id)
@@ -2133,7 +2166,7 @@ export const layer = Layer.effect(
     // wait_for_reply before it commits to waiting (drain-race fix).
     const wasCorrelationDrained = Effect.fn("AgentControl.wasCorrelationDrained")(
       function* (id: SessionID, correlation_id: string) {
-        const data = yield* InstanceState.get(state)
+        const data = yield* sessionState(id)
         const slot = slotFor(data, id)
         if (!slot) return false
         return (slot.drainedCorrelations.get(id) ?? []).includes(correlation_id)
@@ -2143,7 +2176,7 @@ export const layer = Layer.effect(
     const cancelChildrenOf = Effect.fn("AgentControl.cancelChildrenOf")(function* (
       parentID: SessionID,
     ) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(parentID)
       const slot = slotFor(data, parentID)
       if (!slot) return
       const meta = yield* slot.registry.agentMetadataForThread(parentID)
@@ -2217,7 +2250,7 @@ export const layer = Layer.effect(
     const reportSurvivorsOf = Effect.fn("AgentControl.reportSurvivorsOf")(function* (
       parentID: SessionID,
     ) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(parentID)
       const slot = slotFor(data, parentID)
       if (!slot) return
       const meta = yield* slot.registry.agentMetadataForThread(parentID)
@@ -2263,7 +2296,7 @@ export const layer = Layer.effect(
       senderID: SessionID,
       path: AgentPath,
     ) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(senderID)
       const slot = slotFor(data, senderID)
       if (!slot) return false
       return slot.knownPaths.has(String(path))
@@ -2351,7 +2384,7 @@ export const layer = Layer.effect(
     const createPool: (input: CreatePoolInput) => Effect.Effect<CreatePoolResult> = Effect.fn(
       "AgentControl.createPool",
     )(function* (input: CreatePoolInput) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(input.parentID)
       const pool_id = Identifier.create("pool", "ascending")
       let slot = slotFor(data, input.parentID)
       if (!slot && AgentPath.isRoot(input.parentPath)) {
@@ -2418,7 +2451,7 @@ export const layer = Layer.effect(
       readonly timed_out: boolean
     }> =>
       Effect.gen(function* () {
-        const data = yield* InstanceState.get(state)
+        const data = yield* sessionState(callerID)
         const slot = slotFor(data, callerID)
         if (!slot) {
           return { deliverables: [] as ReadonlyArray<PoolDeliverable>, timed_out: false }
@@ -2505,7 +2538,7 @@ export const layer = Layer.effect(
       pool_id: string,
       callerID: SessionID,
     ) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(callerID)
       const slot = slotFor(data, callerID)
       if (!slot) return [] as ReadonlyArray<SessionID>
       return (slot.poolMembers.get(pool_id) ?? []) as ReadonlyArray<SessionID>
@@ -2516,7 +2549,7 @@ export const layer = Layer.effect(
       callerID: SessionID,
       except?: SessionID,
     ) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(callerID)
       const slot = slotFor(data, callerID)
       if (!slot) return
       const memberIDs = slot.poolMembers.get(pool_id) ?? []
@@ -2539,7 +2572,7 @@ export const layer = Layer.effect(
       b: SessionID,
       callerID: SessionID,
     ) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(callerID)
       const callerSlot = slotFor(data, callerID)
       if (!callerSlot) return yield* new AgentNotFoundError({ session: callerID })
       const aRoot = data.sessionToRoot.get(a)
@@ -2568,7 +2601,7 @@ export const layer = Layer.effect(
       b: SessionID,
       callerID: SessionID,
     ) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(callerID)
       const slot = slotFor(data, callerID)
       if (!slot) return
       const aSet = slot.links.get(a)
@@ -2587,7 +2620,7 @@ export const layer = Layer.effect(
       id: SessionID,
       callerID: SessionID,
     ) {
-      const data = yield* InstanceState.get(state)
+      const data = yield* sessionState(callerID)
       const slot = slotFor(data, callerID)
       if (!slot) return [] as readonly SessionID[]
       const set = slot.links.get(id)

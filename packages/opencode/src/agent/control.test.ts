@@ -5124,4 +5124,103 @@ describe("AgentControl spawn isolation", () => {
       }),
     ),
   )
+
+  // Regression (2026-07-23, five dead children on the vm): the isolated
+  // child's loop fiber runs under the WORKTREE's InstanceRef, but its slot
+  // and mailbox live in the InternalState of the SPAWNING instance.
+  // Resolving state from the ambient ref inside the loop found a fresh
+  // empty state: drainMailbox returned [], the initial task never became a
+  // user message, and prompt.ts threw "No user message found in stream" at
+  // turn zero — deterministic, zero model calls. The sessionHome index
+  // resolves tree state by session, not by ambient instance. This pin
+  // drives the REAL loop shape (drain from inside the fiber), a nested
+  // spawn from inside the isolated fiber, and a post-completion followup —
+  // all three died before the fix.
+  it.live("isolated child's fiber drains its mailbox, spawns nested agents, and hears followups across the instance hop", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+
+        const MAGIC = "the initial task must survive the instance hop"
+        const drainedBySession = new Map<string, string[]>()
+        const nestedSpawn: { ok: boolean; error?: string }[] = []
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            // mirror the real run loop's first act: drain from INSIDE the
+            // loop fiber (isolated children run this under the worktree's
+            // InstanceRef — the exact context split that killed the drain).
+            const drained = yield* control.drainMailbox(sid)
+            const prior = drainedBySession.get(sid) ?? []
+            drainedBySession.set(sid, [...prior, ...drained.map((m) => m.content)])
+            if (drained.some((m) => m.content === MAGIC)) {
+              // nested spawn from inside the isolated fiber: the parent
+              // lookup must resolve the spawning tree's state, not the
+              // ambient (worktree) instance's empty one.
+              const grand = yield* control
+                .spawnAgent({
+                  parentID: sid,
+                  parentPath: path("/root/prober"),
+                  task_name: "grandchild",
+                  initial_message: "nested",
+                })
+                .pipe(Effect.result)
+              nestedSpawn.push(
+                grand._tag === "Success"
+                  ? { ok: true }
+                  : { ok: false, error: String(grand.failure) },
+              )
+            }
+            return "done"
+          }),
+        )
+        yield* control.registerCheckoutSettler(() =>
+          Effect.succeed({ line: "[checkout: clean — removed]", removed: true }),
+        )
+
+        const root = yield* seedRoot()
+        const ambient = yield* InstanceRef
+        const isoDir = `${dir}-mailbox`
+
+        const live = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "prober",
+          initial_message: MAGIC,
+          isolation: {
+            directory: isoDir,
+            branch: "opencode/prober",
+            context: { directory: isoDir, worktree: isoDir, project: ambient!.project },
+          },
+        })
+
+        // 1. the initial task drained from inside the isolated fiber.
+        yield* waitUntil(() => (drainedBySession.get(live.thread_id) ?? []).includes(MAGIC))
+        expect(drainedBySession.get(live.thread_id)).toContain(MAGIC)
+
+        // 2. the nested spawn from inside the isolated fiber succeeded.
+        yield* waitUntil(() => nestedSpawn.length > 0)
+        expect(nestedSpawn).toEqual([{ ok: true }])
+
+        // 3. a followup with trigger_turn revives the child and its NEXT
+        //    drain (same isolated fiber context) sees the message — the
+        //    deaf-child variant that fork_turns:"all" would have masked.
+        yield* waitUntil(() => drainedBySession.has(live.thread_id))
+        yield* control.sendInterAgentCommunication(
+          live.thread_id,
+          new InterAgentCommunication({
+            author: ROOT,
+            recipient: path("/root/prober"),
+            content: "followup across the hop",
+            trigger_turn: true,
+            sent_at: Date.now(),
+          }),
+          root.id,
+        )
+        yield* waitUntil(() =>
+          (drainedBySession.get(live.thread_id) ?? []).includes("followup across the hop"),
+        )
+        expect(drainedBySession.get(live.thread_id)).toContain("followup across the hop")
+      }),
+    ),
+  )
 })
