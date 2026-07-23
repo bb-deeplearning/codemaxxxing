@@ -74,6 +74,7 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | Starting/steering the session agent loop from HTTP (any instance), or mixing surfaces (tui + serve, bare + scoped POSTs) on one session | `session-runloop-lock-busy-guard-was-per-instance` |
 | Passing impure expressions (`new Date()`, `Date.now()`) as ARGUMENTS to effects that repeat/retry | `effect-arguments-evaluate-at-construction-froze-the-heartbeat` |
 | Forking fibers from AgentControl on a tree's behalf (wake, revival, auto-starts) | `agentcontrol-started-fibers-provide-tree-owner-context` |
+| Returning a typed error from an AUTH-WRAPPED httpapi endpoint (any Effect.fail in an API group with Authorization) | `httpapi-security-middleware-eats-typed-errors-respond-raw` |
 
 ## By category — slugs with one-line summaries and line offsets
 
@@ -1578,5 +1579,16 @@ const removed = yield* git(["worktree", "remove", "--force", entry.path], { cwd:
 **Fix:** `InternalState` carries its owning `ctx` (captured at construction). The wake pipes `Effect.provideService(InstanceRef, data.ctx)`; `startAgentFiber` ALWAYS provides a deterministic ref — `isolation.context` for isolated children, `data.ctx` for everyone else. Sender ambience never leaks into fibers AgentControl starts.
 **Why:** Fibers inherit the caller's context by design; that's right for the caller's own work and wrong for work done on a TREE's behalf. The busy-root no-op promise ("the callback enters via ensureRunning, so a busy root is a clean no-op") is only true when the wake resolves the SAME runner map the lap runs in.
 **See:** `packages/opencode/src/agent/control.ts` (`InternalState.ctx`, the wake fork, `startAgentFiber`), red-green pin "root wake and revival run under the tree-owner's context" in `control.test.ts`. Sibling entry: [agentcontrol-tree-state-resolves-by-session-home-not-ambient-instance] (same family — state resolution vs fiber context; both halves of the 2026-07-23 incident).
+
+---
+
+### `httpapi-security-middleware-eats-typed-errors-respond-raw`
+
+**Severity:** correctness-bug (wire contract)
+**When:** Returning a TYPED error (`Effect.fail`, declared endpoint error schemas — stock `HttpApiError.*` included) from any httpapi endpoint in an API group wrapped by the `Authorization` security middleware.
+**Symptom:** The client receives 401 with an EMPTY body regardless of what you failed with. Success paths work (200/204), so the break hides until an error path is exercised through auth. Live-proven on every build: `consoleSwitch` with a bad payload answers 401-empty on the real serve AND in the authed harness — this was misread twice (first as an untagged-union mis-encode, then as a harness config artifact) before the stock-error control isolated it. Downstream damage before the fix: every worktree failure was mute — the mid-turn busy guard's message never reached the human, and boxbox's conflict send-back (string-matches `MergeConflict` in the body) was dead on this backend.
+**Fix:** Respond RAW from the handler: `Effect.succeed(HttpServerResponse.jsonUnsafe(payload, { status: 400 }))` — the builder returns raw responses verbatim (`handlerToHttpEffect` checks `isHttpServerResponse` before encoding; the session-list handler is the precedent). Keep the declared error schema on the endpoint for OpenAPI truth; the wire truth is the raw response. The worktree family uses the hono `ErrorMiddleware` contract: `{name, data}` from `NamedError.toObject()`, status 400.
+**Why:** Effect's security middleware wrapper intercepts the error channel of the wrapped handler effect before the endpoint's `encodeError` union can serialize it, and answers with its own 401. Whether that's intended framework behavior or an effect-beta bug is unresolved — treat auth-wrapped endpoint error channels as unusable until an effect upgrade proves otherwise (the authed pin below goes red if `Effect.fail` ever starts working, which is the signal to revisit).
+**See:** `src/server/routes/instance/httpapi/handlers/experimental.ts` (`worktreeErrors`), authed pin in `test/server/httpapi-raw-route-auth.test.ts` ("THROUGH the auth middleware"), no-auth shape pin in `httpapi-experimental.test.ts`. Fix commit `efa93f94d6` (after two wrong theories in `9f087103ac` and `87c01ab3d6` — the commit trail is the debugging story).
 
 ---

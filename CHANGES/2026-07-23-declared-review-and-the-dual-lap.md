@@ -23,3 +23,13 @@ Every other need is agent-initiated (permissions, questions); review was the one
 ## boxbox-web (same batch, other repo)
 
 Review need = declared || wreckage: `reviewNeeded()` extracted pure + pinned (8 pins — busy quiet, child quiet forever, undeclared quiet, park busted by fresh declaration via `requestedAt` in the signature); `worktree.review.requested` flags the CheckoutSnapshot and survives ready re-emits; fault lanes with kept work grow the rescue verbs; the card and lane show the agent's note as the handoff's voice; machine card version now rides `/global/health` per connect (the field was never assigned — found 2026-07-22).
+
+## The error-body hunt (`9f087103ac` → `87c01ab3d6` → `efa93f94d6`, same day)
+
+The live e2e drive proved the busy guard fired but its message never reached the wire — and pulled a thread that ended at a framework-level scar. Three commits, two wrong theories, kept as the debugging story:
+
+1. `9f087103ac` — worktree NamedError defects were never mapped on the httpapi backend (empty 500s; the hono twin always had `ErrorMiddleware`). Mapped them to a declared 400 schema. Bridge-harness green, live still broken.
+2. `87c01ab3d6` — theory two: untagged struct mis-encoding in the live error union. Tagged ErrorClass. Still 401 live.
+3. `efa93f94d6` — the stock-error control (`consoleSwitch` bad payload → 401-empty, live and harness, every build) isolated the truth: **effect's security middleware eats TYPED errors from auth-wrapped endpoints entirely**. The fix responds RAW (`HttpServerResponse.jsonUnsafe`, 400, the exact hono `{name, data}` contract) — the framework returns raw responses verbatim. Authed pin restored and green; red on any `Effect.fail`-based mapping. GOTCHAS: `httpapi-security-middleware-eats-typed-errors-respond-raw`.
+
+Live-verified end to end on the vm: mid-turn discard answers `400 {"name":"WorktreeDiscardFailedError","data":{"message":"An agent is mid-turn in this checkout…"}}` while the lap runs, and succeeds after it settles. The full declared-review loop drove clean on production: compose-fresh → quiet while working (commits raised nothing) → `request_review` raised the card with the agent's note as headline → card yielded while busy → merge landed both commits and dissolved the checkout.
