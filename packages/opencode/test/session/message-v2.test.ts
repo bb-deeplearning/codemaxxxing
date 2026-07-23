@@ -1224,6 +1224,49 @@ describe("session.message-v2.fromError", () => {
     expect(MessageV2.ContextOverflowError.isInstance(result)).toBe(true)
   })
 
+  test("detects context overflow from provider byte-size limit messages", () => {
+    const cases = [
+      // Vertex AI (Claude) via gateway, verbatim live capture 2026-07-22: arrives
+      // as a 400 FAILED_PRECONDITION, not a 413, so only the message text can
+      // classify it. Unclassified, the session wedges: every turn re-sends the
+      // same oversized transcript and re-fails on a non-retryable APIError.
+      'Bad Request: [{\n  "error": {\n    "code": 400,\n    "message": "The message size (30110680 bytes) exceeds 30.000MB limit.",\n    "status": "FAILED_PRECONDITION"\n  }\n}\n]',
+      "Request payload size exceeds the limit: 20971520 bytes.",
+      "Request body too large",
+      "Payload Too Large",
+      '{"type":"error","error":{"type":"request_too_large","message":"Request body too large"}}',
+    ]
+
+    cases.forEach((message) => {
+      const error = new APICallError({
+        message,
+        url: "https://example.com",
+        requestBodyValues: {},
+        statusCode: 400,
+        responseHeaders: { "content-type": "application/json" },
+        isRetryable: false,
+      })
+      const result = MessageV2.fromError(error, { providerID })
+      expect(MessageV2.ContextOverflowError.isInstance(result)).toBe(true)
+    })
+  })
+
+  test("does not classify generic payload validation errors as overflow", () => {
+    const result = MessageV2.fromError(
+      new APICallError({
+        message: "Invalid payload: missing required field 'model'",
+        url: "https://example.com",
+        requestBodyValues: {},
+        statusCode: 400,
+        responseHeaders: { "content-type": "application/json" },
+        isRetryable: false,
+      }),
+      { providerID },
+    )
+    expect(MessageV2.ContextOverflowError.isInstance(result)).toBe(false)
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+  })
+
   test("does not classify 429 no body as context overflow", () => {
     const result = MessageV2.fromError(
       new APICallError({

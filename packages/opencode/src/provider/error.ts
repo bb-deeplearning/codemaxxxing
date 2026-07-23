@@ -25,6 +25,19 @@ const OVERFLOW_PATTERNS = [
   /prompt too long; exceeded (?:max )?context length/i, // Ollama explicit overflow error
   /too large for model with \d+ maximum context length/i, // Mistral
   /model_context_window_exceeded/i, // z.ai non-standard finish_reason surfaced as error text
+  // Byte-size request caps, distinct from token limits: media-heavy sessions
+  // (inline base64 screenshots on tool parts) can cross a provider's
+  // serialized-request ceiling long before the context window fills, and the
+  // rejection arrives as a non-retryable 400 — not a 413 — so the statusCode
+  // check below never sees it. Classifying these as overflow routes them into
+  // the same strip-media compaction + replay path that heals token overflow;
+  // leaving them unclassified wedges the session on every subsequent turn
+  // (live incident 2026-07-22: 36 screenshots, 30.1MB request, 30MB cap).
+  /message size \(\d+ bytes\) exceeds/i, // Vertex AI (Claude): "The message size (30110680 bytes) exceeds 30.000MB limit."
+  /request payload size exceeds the limit/i, // Google (Gemini): "Request payload size exceeds the limit: 20971520 bytes."
+  /request body too large/i, // Anthropic 413 body text, for gateways that rewrite the status code
+  /payload too large/i, // RFC 9110 413 reason phrase, relayed verbatim by proxies
+  /request_too_large/i, // Anthropic error.type token when the raw body rides in the message
 ]
 
 // Anthropic returns a 400 like this when an image in the request exceeds the
