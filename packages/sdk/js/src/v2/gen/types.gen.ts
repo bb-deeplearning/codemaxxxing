@@ -1409,6 +1409,14 @@ export type Worktree = {
   directory: string
 }
 
+export type WorktreeError = {
+  name: string
+  data: {
+    message?: string
+    files?: Array<string>
+  }
+}
+
 export type WorktreeCreateInput = {
   name?: string
   /**
@@ -4337,9 +4345,9 @@ export type WorktreeRemoveData = {
 
 export type WorktreeRemoveErrors = {
   /**
-   * Bad request
+   * WorktreeError
    */
-  400: BadRequestError
+  400: WorktreeError
 }
 
 export type WorktreeRemoveError = WorktreeRemoveErrors[keyof WorktreeRemoveErrors]
@@ -4365,9 +4373,9 @@ export type WorktreeListData = {
 
 export type WorktreeListErrors = {
   /**
-   * Bad request
+   * WorktreeError
    */
-  400: BadRequestError
+  400: WorktreeError
 }
 
 export type WorktreeListError = WorktreeListErrors[keyof WorktreeListErrors]
@@ -4393,9 +4401,9 @@ export type WorktreeCreateData = {
 
 export type WorktreeCreateErrors = {
   /**
-   * Bad request
+   * WorktreeError
    */
-  400: BadRequestError
+  400: WorktreeError
 }
 
 export type WorktreeCreateError = WorktreeCreateErrors[keyof WorktreeCreateErrors]
@@ -4421,9 +4429,9 @@ export type WorktreeResetData = {
 
 export type WorktreeResetErrors = {
   /**
-   * Bad request
+   * WorktreeError
    */
-  400: BadRequestError
+  400: WorktreeError
 }
 
 export type WorktreeResetError = WorktreeResetErrors[keyof WorktreeResetErrors]
@@ -4449,9 +4457,9 @@ export type WorktreeDiffData = {
 
 export type WorktreeDiffErrors = {
   /**
-   * Bad request
+   * WorktreeError
    */
-  400: BadRequestError
+  400: WorktreeError
 }
 
 export type WorktreeDiffError = WorktreeDiffErrors[keyof WorktreeDiffErrors]
@@ -4477,9 +4485,9 @@ export type WorktreeMergeData = {
 
 export type WorktreeMergeErrors = {
   /**
-   * Bad request
+   * WorktreeError
    */
-  400: BadRequestError
+  400: WorktreeError
 }
 
 export type WorktreeMergeError = WorktreeMergeErrors[keyof WorktreeMergeErrors]
@@ -4505,9 +4513,9 @@ export type WorktreeDiscardData = {
 
 export type WorktreeDiscardErrors = {
   /**
-   * Bad request
+   * WorktreeError
    */
-  400: BadRequestError
+  400: WorktreeError
 }
 
 export type WorktreeDiscardError = WorktreeDiscardErrors[keyof WorktreeDiscardErrors]

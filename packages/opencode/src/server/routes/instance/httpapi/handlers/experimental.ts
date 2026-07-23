@@ -11,8 +11,9 @@ import { Worktree } from "@/worktree"
 import { Effect, Option } from "effect"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
+import { NamedError } from "@opencode-ai/core/util/error"
 import { InstanceHttpApi } from "../api"
-import { ConsoleSwitchPayload, SessionListQuery, ToolListQuery } from "../groups/experimental"
+import { ConsoleSwitchPayload, SessionListQuery, ToolListQuery, type WorktreeErrorShape } from "../groups/experimental"
 
 export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "experimental", (handlers) =>
   Effect.gen(function* () {
@@ -85,6 +86,21 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
     const toolIDs = Effect.fn("ExperimentalHttpApi.toolIDs")(function* () {
       return yield* registry.ids()
     })
+
+    // Worktree NamedErrors are THROWN (defects, per the effect-v4 catch
+    // gotcha). The hono twin maps Worktree* → 400 + err.toObject() in
+    // ErrorMiddleware; this backend answered EMPTY 500s until the
+    // 2026-07-23 e2e drive caught it — killing the app's conflict
+    // send-back (string-matches MergeConflict in the body) and muting the
+    // mid-turn busy guard. Same shape, same status, both backends.
+    const worktreeErrors = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.catchDefect((defect) =>
+          defect instanceof NamedError && defect.name.startsWith("Worktree")
+            ? Effect.fail(defect.toObject() as WorktreeErrorShape)
+            : Effect.die(defect),
+        ),
+      )
 
     const worktree = Effect.fn("ExperimentalHttpApi.worktree")(function* () {
       return yield* worktreeSvc.list()
@@ -168,13 +184,13 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
       .handle("consoleSwitch", switchConsole)
       .handle("tool", tool)
       .handle("toolIDs", toolIDs)
-      .handle("worktree", worktree)
-      .handle("worktreeCreate", worktreeCreate)
-      .handle("worktreeRemove", worktreeRemove)
-      .handle("worktreeReset", worktreeReset)
-      .handle("worktreeDiff", worktreeDiff)
-      .handle("worktreeMerge", worktreeMerge)
-      .handle("worktreeDiscard", worktreeDiscard)
+      .handle("worktree", () => worktreeErrors(worktree()))
+      .handle("worktreeCreate", (input) => worktreeErrors(worktreeCreate(input)))
+      .handle("worktreeRemove", (input) => worktreeErrors(worktreeRemove(input)))
+      .handle("worktreeReset", (input) => worktreeErrors(worktreeReset(input)))
+      .handle("worktreeDiff", (input) => worktreeErrors(worktreeDiff(input)))
+      .handle("worktreeMerge", (input) => worktreeErrors(worktreeMerge(input)))
+      .handle("worktreeDiscard", (input) => worktreeErrors(worktreeDiscard(input)))
       .handle("session", session)
       .handle("resource", resource)
   }),

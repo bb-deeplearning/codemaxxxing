@@ -5,7 +5,7 @@ import { Session } from "@/session/session"
 import { Worktree } from "@/worktree"
 import { NonNegativeInt } from "@/util/schema"
 import { Schema, SchemaGetter } from "effect"
-import { HttpApi, HttpApiEndpoint, HttpApiError, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiEndpoint, HttpApiError, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
 import { Authorization } from "../middleware/authorization"
 import { InstanceContextMiddleware } from "../middleware/instance-context"
 import { WorkspaceRoutingMiddleware } from "../middleware/workspace-routing"
@@ -79,8 +79,25 @@ export const ExperimentalPaths = {
   resource: "/experimental/resource",
 } as const
 
-export const ExperimentalApi = HttpApi.make("experimental")
-  .add(
+/** NamedError.toObject() on the wire, matching the hono ErrorMiddleware
+ * contract: Worktree* failures answer 400 with `{name, data}` so clients
+ * read the message and key flows off the NAME (boxbox's conflict
+ * send-back string-matches `MergeConflict`; the mid-turn busy guard's
+ * message must reach the human). Before this the httpapi backend
+ * answered EMPTY 500s for every worktree failure — live-caught by the
+ * 2026-07-23 e2e drive. */
+export const WorktreeError = Schema.Struct({
+  name: Schema.String,
+  data: Schema.Struct({
+    message: Schema.optional(Schema.String),
+    files: Schema.optional(Schema.Array(Schema.String)),
+  }),
+})
+  .annotate({ identifier: "WorktreeError" })
+  .pipe(HttpApiSchema.status(400))
+export type WorktreeErrorShape = typeof WorktreeError.Type
+
+export const ExperimentalApi = HttpApi.make("experimental")  .add(
     HttpApiGroup.make("experimental")
       .add(
         HttpApiEndpoint.get("console", ExperimentalPaths.console, {
@@ -137,7 +154,7 @@ export const ExperimentalApi = HttpApi.make("experimental")
         ),
         HttpApiEndpoint.get("worktree", ExperimentalPaths.worktree, {
           success: described(WorktreeList, "List of worktrees"),
-          error: HttpApiError.BadRequest,
+          error: WorktreeError,
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "worktree.list",
@@ -148,7 +165,7 @@ export const ExperimentalApi = HttpApi.make("experimental")
         HttpApiEndpoint.post("worktreeCreate", ExperimentalPaths.worktree, {
           payload: Schema.optional(Worktree.CreateInput),
           success: described(Worktree.Info, "Worktree created"),
-          error: HttpApiError.BadRequest,
+          error: WorktreeError,
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "worktree.create",
@@ -159,7 +176,7 @@ export const ExperimentalApi = HttpApi.make("experimental")
         HttpApiEndpoint.delete("worktreeRemove", ExperimentalPaths.worktree, {
           payload: Worktree.RemoveInput,
           success: described(Schema.Boolean, "Worktree removed"),
-          error: HttpApiError.BadRequest,
+          error: WorktreeError,
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "worktree.remove",
@@ -170,7 +187,7 @@ export const ExperimentalApi = HttpApi.make("experimental")
         HttpApiEndpoint.post("worktreeReset", ExperimentalPaths.worktreeReset, {
           payload: Worktree.ResetInput,
           success: described(Schema.Boolean, "Worktree reset"),
-          error: HttpApiError.BadRequest,
+          error: WorktreeError,
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "worktree.reset",
@@ -181,7 +198,7 @@ export const ExperimentalApi = HttpApi.make("experimental")
         HttpApiEndpoint.get("worktreeDiff", ExperimentalPaths.worktreeDiff, {
           query: Worktree.DiffQuery,
           success: described(Worktree.Diff, "Worktree diff"),
-          error: HttpApiError.BadRequest,
+          error: WorktreeError,
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "worktree.diff",
@@ -193,7 +210,7 @@ export const ExperimentalApi = HttpApi.make("experimental")
         HttpApiEndpoint.post("worktreeMerge", ExperimentalPaths.worktreeMerge, {
           payload: Worktree.MergeInput,
           success: described(Worktree.MergeResult, "Merge result"),
-          error: HttpApiError.BadRequest,
+          error: WorktreeError,
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "worktree.merge",
@@ -205,7 +222,7 @@ export const ExperimentalApi = HttpApi.make("experimental")
         HttpApiEndpoint.post("worktreeDiscard", ExperimentalPaths.worktreeDiscard, {
           payload: Worktree.DiscardInput,
           success: described(Worktree.DiscardResult, "Discard result"),
-          error: HttpApiError.BadRequest,
+          error: WorktreeError,
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "worktree.discard",

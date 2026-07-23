@@ -293,4 +293,24 @@ describe("experimental HttpApi", () => {
     const afterDiscard = await app().request(ExperimentalPaths.worktree, { headers })
     expect(await afterDiscard.json()).toEqual([])
   })
+
+  testWorktreeMutations("worktree failures answer 400 with {name, data} — the hono ErrorMiddleware contract", async () => {
+    /* live-caught 2026-07-23: the httpapi backend answered EMPTY 500s for
+       every worktree NamedError defect, muting the mid-turn busy guard and
+       breaking boxbox's conflict send-back (it string-matches MergeConflict
+       in the body). the cheapest deterministic trigger: merging the
+       primary into itself. */
+    await using tmp = await tmpdir({ git: true, config: { formatter: false, lsp: false } })
+    const headers = { "x-opencode-directory": tmp.path, "content-type": "application/json" }
+
+    const refused = await app().request(ExperimentalPaths.worktreeMerge, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ directory: tmp.path }),
+    })
+    expect(refused.status).toBe(400)
+    const body = (await refused.json()) as { name: string; data: { message?: string } }
+    expect(body.name).toBe("WorktreeMergeFailedError")
+    expect(body.data.message).toContain("primary")
+  })
 })
