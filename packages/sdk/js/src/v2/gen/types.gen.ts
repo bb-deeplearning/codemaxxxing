@@ -56,6 +56,7 @@ export type Event =
   | EventWorkspaceStatus
   | EventWorktreeReady
   | EventWorktreeFailed
+  | EventWorktreeReviewRequested
   | EventWaveUpdated
   | EventWaveActiveChanged
   | EventMessageUpdated
@@ -855,6 +856,7 @@ export type GlobalEvent = {
     | EventWorkspaceStatus
     | EventWorktreeReady
     | EventWorktreeFailed
+    | EventWorktreeReviewRequested
     | EventWaveUpdated
     | EventWaveActiveChanged
     | EventMessageUpdated
@@ -3000,6 +3002,16 @@ export type EventWorktreeFailed = {
   properties: {
     message: string
     log?: string
+  }
+}
+
+export type EventWorktreeReviewRequested = {
+  id: string
+  type: "worktree.review.requested"
+  properties: {
+    name: string
+    branch?: string
+    note?: string
   }
 }
 

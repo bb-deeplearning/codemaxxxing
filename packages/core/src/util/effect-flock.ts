@@ -1,7 +1,8 @@
 import path from "path"
 import os from "os"
 import { randomUUID } from "crypto"
-import { Context, Effect, Function, Layer, Option, Schedule, Schema } from "effect"
+import { utimes as nodeUtimes } from "fs/promises"
+import { Cause, Context, Effect, Function, Layer, Option, Schedule, Schema } from "effect"
 import type { FileSystem, Scope } from "effect"
 import type { PlatformError } from "effect/PlatformError"
 import { AppFileSystem } from "../filesystem"
@@ -44,7 +45,7 @@ export namespace EffectFlock {
   // Timing (baked in — no caller ever overrides these)
   // ---------------------------------------------------------------------------
 
-  const STALE_MS = 60_000
+  export const STALE_MS = 60_000
   const TIMEOUT_MS = 5 * 60_000
   const BASE_DELAY_MS = 100
   const MAX_DELAY_MS = 2_000
@@ -273,10 +274,33 @@ export namespace EffectFlock {
             Effect.acquireRelease(restore(acquisition), (handle) => release(handle)),
           )
 
-          // Heartbeat fiber — scoped, so it's interrupted before release runs
-          yield* fs
-            .utimes(handle.heartbeatPath, new Date(), new Date())
-            .pipe(Effect.ignore, Effect.repeat(Schedule.spaced(HEARTBEAT_MS)), Effect.forkScoped)
+          // Heartbeat fiber — scoped, so it's interrupted before release
+          // runs. THE 2026-07-23 SCAR, name it precisely: the old pipe was
+          // `fs.utimes(path, new Date(), new Date()).pipe(Effect.ignore,
+          // Effect.repeat(...))` — effects are descriptions, and impure
+          // ARGUMENTS evaluate at construction, so both Dates froze at
+          // acquire time. The beat ran faithfully every 20s and re-set
+          // mtime to the SAME acquire-time instant forever: every live
+          // holder looked stale after STALE_MS, any waiter could legally
+          // break a HELD lock, and two runLoops interleaved one transcript
+          // until the provider rejected it (the triple-lap). The dates now
+          // live inside the thunk (fresh per beat), the call rides node's
+          // fs/promises directly, and failures log once per handle instead
+          // of vanishing into Effect.ignore.
+          let warned = false
+          const beat = Effect.tryPromise(() => {
+            const now = new Date()
+            return nodeUtimes(handle.heartbeatPath, now, now)
+          }).pipe(
+            Effect.catchCause((cause) => {
+              if (warned) return Effect.void
+              warned = true
+              return Effect.logWarning(
+                `EffectFlock heartbeat failed for ${handle.lockDir}: ${Cause.pretty(cause)}`,
+              )
+            }),
+          )
+          yield* beat.pipe(Effect.repeat(Schedule.spaced(HEARTBEAT_MS)), Effect.forkScoped)
         })
 
       const acquire = Effect.fn("EffectFlock.acquire")(function* (key: string, dir?: string) {

@@ -23,6 +23,7 @@ import { AgentListTool } from "./agent-list/agent-list"
 import { AgentCloseTool } from "./agent-close/agent-close"
 import { AgentPoolTool } from "./agent-pool/agent-pool"
 import { LinkAgentsTool, UnlinkAgentsTool } from "./agent-link/agent-link"
+import { RequestReviewTool } from "./request-review/request-review"
 import { AgentControl } from "@/agent/control"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
@@ -141,6 +142,7 @@ export const layer: Layer.Layer<
     const agentpool = yield* AgentPoolTool
     const linkagents = yield* LinkAgentsTool
     const unlinkagents = yield* UnlinkAgentsTool
+    const requestreview = yield* RequestReviewTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -250,6 +252,7 @@ export const layer: Layer.Layer<
           agentpool: Tool.init(agentpool),
           linkagents: Tool.init(linkagents),
           unlinkagents: Tool.init(unlinkagents),
+          requestreview: Tool.init(requestreview),
         })
 
         return {
@@ -298,6 +301,7 @@ export const layer: Layer.Layer<
             tool.agentpool,
             tool.linkagents,
             tool.unlinkagents,
+            tool.requestreview,
             ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
             ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [tool.plan] : []),
           ],

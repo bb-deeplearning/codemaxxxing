@@ -14,10 +14,13 @@ import { errorMessage } from "../util/error"
 import { BusEvent } from "@/bus/bus-event"
 import { GlobalBus } from "@/bus/global"
 import { Git } from "@/git"
-import { Effect, Layer, Path, Schema, Scope, Context, Stream } from "effect"
+import { Effect, Layer, Path, Schema, Scope, Context, Stream, Option } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { NodePath } from "@effect/platform-node"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
+import { Hash } from "@opencode-ai/core/util/hash"
+import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
+import { SessionTable } from "@/session/session.sql"
 import { BootstrapRuntime } from "@/effect/bootstrap-runtime"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { InstanceState } from "@/effect/instance-state"
@@ -39,6 +42,18 @@ export const Event = {
     Schema.Struct({
       message: Schema.String,
       log: Schema.optional(Schema.String),
+    }),
+  ),
+  // Declared review (2026-07-23, rohan's paradigm correction): review is
+  // something an agent SAYS, never something the system infers from git
+  // state. The request_review tool emits this; clients raise the review
+  // need on this event and ONLY this event (plus orphaned wreckage).
+  ReviewRequested: BusEvent.define(
+    "worktree.review.requested",
+    Schema.Struct({
+      name: Schema.String,
+      branch: Schema.optional(Schema.String),
+      note: Schema.optional(Schema.String),
     }),
   ),
 }
@@ -194,6 +209,13 @@ export const DiffFailedError = NamedError.create(
   }),
 )
 
+export const ReviewRequestFailedError = NamedError.create(
+  "WorktreeReviewRequestFailedError",
+  z.object({
+    message: z.string(),
+  }),
+)
+
 export const MergeFailedError = NamedError.create(
   "WorktreeMergeFailedError",
   z.object({
@@ -257,6 +279,12 @@ export interface Interface {
   readonly diff: (input: DiffQuery) => Effect.Effect<Diff>
   readonly merge: (input: MergeInput) => Effect.Effect<MergeResult>
   readonly discard: (input: DiscardInput) => Effect.Effect<DiscardResult>
+  /** Declared review: emits worktree.review.requested for the RECEIVING
+   * instance's checkout. Fails when this instance IS the primary — review
+   * only means something for checkout-homed work. */
+  readonly requestReview: (input: {
+    note?: string
+  }) => Effect.Effect<{ name: string; branch?: string; note?: string }>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Worktree") {}
@@ -910,6 +938,36 @@ export const layer: Layer.Layer<
       return { path: entry.path, branch: entry.branch }
     })
 
+    // Busy guard (2026-07-23, locked with the declared-review paradigm):
+    // merge and discard REFUSE while any session homed in the checkout is
+    // mid-turn — a phone tap must never delete a working directory out
+    // from under a running agent (the next tool call lands in a dead cwd
+    // and the session wedges undiagnosably). Truth source is the run
+    // lock's on-disk protocol: a lock dir with a heartbeat fresher than
+    // STALE_MS is a LIVE lap (the heartbeat actually beats since the
+    // frozen-Date fix — a stale one is a dead holder, not a busy one).
+    // Zero interference: this only stats, never acquires.
+    const liveLapSession = Effect.fnUntraced(function* (checkoutDir: string) {
+      const rows = yield* Effect.sync(() =>
+        Database.use((db) =>
+          db.select({ id: SessionTable.id }).from(SessionTable).where(eq(SessionTable.directory, checkoutDir)).all(),
+        ),
+      )
+      for (const row of rows) {
+        const heartbeat = pathSvc.join(
+          Global.Path.state,
+          "locks",
+          Hash.fast(`session-run:${row.id}`) + ".lock",
+          "heartbeat",
+        )
+        const stat = yield* fs.stat(heartbeat).pipe(Effect.catch(() => Effect.void))
+        if (!stat) continue
+        const mtime = Option.getOrElse(stat.mtime, () => new Date(0)).getTime()
+        if (Date.now() - mtime <= EffectFlock.STALE_MS) return row.id as string
+      }
+      return undefined
+    })
+
     const diff = Effect.fn("Worktree.diff")(function* (input: DiffQuery) {
       const ctx = yield* InstanceState.context
       if (ctx.project.vcs !== "git") {
@@ -977,6 +1035,13 @@ export const layer: Layer.Layer<
         throw new MergeFailedError({ message: "Cannot merge the primary checkout into itself" })
       }
       const entry = yield* locate(primaryCwd, directory, (message) => new MergeFailedError({ message }))
+
+      const midTurn = yield* liveLapSession(directory)
+      if (midTurn) {
+        throw new MergeFailedError({
+          message: "An agent is mid-turn in this checkout. Let it finish or abort the turn, then merge.",
+        })
+      }
 
       const status = yield* git(["-c", "core.fsmonitor=false", "status", "--porcelain=v1"], { cwd: entry.path })
       if (status.code !== 0) {
@@ -1064,6 +1129,13 @@ export const layer: Layer.Layer<
       }
       const entry = yield* locate(primaryCwd, directory, (message) => new DiscardFailedError({ message }))
 
+      const midTurn = yield* liveLapSession(directory)
+      if (midTurn) {
+        throw new DiscardFailedError({
+          message: "An agent is mid-turn in this checkout. Let it finish or abort the turn, then discard.",
+        })
+      }
+
       const status = yield* git(["-c", "core.fsmonitor=false", "status", "--porcelain=v1"], { cwd: entry.path })
       const dirty = status.code === 0 && status.text.trim().length > 0
       const target = yield* mergeTarget(primaryCwd)
@@ -1083,7 +1155,42 @@ export const layer: Layer.Layer<
       return { discarded: true, ...(snapshot ? { snapshot } : {}) } satisfies DiscardResult
     })
 
-    return Service.of({ makeWorktreeInfo, createFromInfo, create, list, listAt, remove, reset, diff, merge, discard })
+    // Declared review (2026-07-23): the request_review tool's engine. The
+    // RECEIVING instance must be a checkout — the primary refuses (review
+    // is for work that can land, not for main itself). Emits on the
+    // checkout's own directory so per-directory event streams attribute
+    // the request to the lane it belongs to.
+    const requestReview = Effect.fn("Worktree.requestReview")(function* (input: { note?: string }) {
+      const ctx = yield* InstanceState.context
+      const workspaceID = yield* InstanceState.workspaceID
+      if (ctx.project.vcs !== "git") {
+        throw new ReviewRequestFailedError({ message: "Worktrees are only supported for git projects" })
+      }
+      const primary = yield* canonical(ctx.project.worktree)
+      const home = yield* canonical(ctx.worktree)
+      if (home === primary) {
+        throw new ReviewRequestFailedError({
+          message: "This session is not in its own checkout — request_review only means something for checkout-homed work",
+        })
+      }
+      const entry = yield* locate(primary, home, (message) => new ReviewRequestFailedError({ message }))
+      const branch = entry.branch?.replace(/^refs\/heads\//, "")
+      const name = pathSvc.basename(home)
+      const note = input.note?.trim() || undefined
+      GlobalBus.emit("event", {
+        directory: home,
+        project: ctx.project.id,
+        workspace: workspaceID,
+        payload: {
+          type: Event.ReviewRequested.type,
+          properties: { name, ...(branch ? { branch } : {}), ...(note ? { note } : {}) },
+        },
+      })
+      log.info("review requested", { directory: home, branch })
+      return { name, ...(branch ? { branch } : {}), ...(note ? { note } : {}) }
+    })
+
+    return Service.of({ makeWorktreeInfo, createFromInfo, create, list, listAt, remove, reset, diff, merge, discard, requestReview })
   }),
 )
 

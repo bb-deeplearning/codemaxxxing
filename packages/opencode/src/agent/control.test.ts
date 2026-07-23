@@ -5223,4 +5223,101 @@ describe("AgentControl spawn isolation", () => {
       }),
     ),
   )
+
+  // Regression (2026-07-23, the triple-lap): the root wake and child
+  // revival execute on the SENDER's fiber. An isolated child's fiber
+  // carries the WORKTREE's InstanceRef, so the woken root loop resolved a
+  // fresh empty runner map (couldn't join the live lap) and — with the
+  // heartbeat-rotted flock — started a CONCURRENT runLoop on the same
+  // transcript. Wake and revival now provide the tree-owner's context
+  // explicitly; the sender's ambient ref must never leak into fibers
+  // AgentControl starts on a tree's behalf.
+  it.live("root wake and revival run under the tree-owner's context, never the sender's", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const control = yield* AgentControl.Service
+
+        const loopDirs = new Map<string, (string | undefined)[]>()
+        yield* control.registerRunLoop((sid) =>
+          Effect.gen(function* () {
+            const ref = yield* InstanceRef
+            const prior = loopDirs.get(sid) ?? []
+            loopDirs.set(sid, [...prior, ref?.directory])
+            yield* control.drainMailbox(sid)
+            return "done"
+          }),
+        )
+        const wakeDirs: (string | undefined)[] = []
+        yield* control.registerRootWake(() =>
+          Effect.gen(function* () {
+            const ref = yield* InstanceRef
+            wakeDirs.push(ref?.directory)
+          }),
+        )
+        yield* control.registerCheckoutSettler(() =>
+          Effect.succeed({ line: "[checkout: clean — removed]", removed: true }),
+        )
+
+        const root = yield* seedRoot()
+        const ambient = yield* InstanceRef
+        const isoDir = `${dir}-foreign`
+        const foreignCtx = { directory: isoDir, worktree: isoDir, project: ambient!.project }
+
+        // an isolated child: its loop fiber carries the WORKTREE ref — the
+        // exact fiber shape that sent the fatal deliverable.
+        const child = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "sender",
+          initial_message: "work",
+          isolation: { directory: isoDir, branch: "opencode/sender", context: foreignCtx },
+        })
+        yield* waitUntil(() => (loopDirs.get(child.thread_id) ?? []).length > 0)
+
+        // 1. root wake triggered from a fiber carrying the FOREIGN ref —
+        //    the wake must observe the tree-owner's directory.
+        yield* control
+          .sendInterAgentCommunication(
+            root.id,
+            new InterAgentCommunication({
+              author: path("/root/sender"),
+              recipient: ROOT,
+              content: "deliverable",
+              trigger_turn: false,
+              sent_at: Date.now(),
+            }),
+            child.thread_id,
+          )
+          .pipe(Effect.provideService(InstanceRef, foreignCtx))
+        yield* waitUntil(() => wakeDirs.length > 0)
+        expect(wakeDirs).toEqual([ambient!.directory])
+
+        // 2. revival of a completed NON-isolated child from the same
+        //    foreign fiber — the revived loop must run under the
+        //    tree-owner's directory, not the sender's.
+        const plain = yield* control.spawnAgent({
+          parentID: root.id,
+          parentPath: ROOT,
+          task_name: "plain",
+          initial_message: "first",
+        })
+        yield* waitUntil(() => (loopDirs.get(plain.thread_id) ?? []).length > 0)
+        yield* control
+          .sendInterAgentCommunication(
+            plain.thread_id,
+            new InterAgentCommunication({
+              author: path("/root/sender"),
+              recipient: path("/root/plain"),
+              content: "revive",
+              trigger_turn: true,
+              sent_at: Date.now(),
+            }),
+            child.thread_id,
+          )
+          .pipe(Effect.provideService(InstanceRef, foreignCtx))
+        yield* waitUntil(() => (loopDirs.get(plain.thread_id) ?? []).length > 1)
+        expect(loopDirs.get(plain.thread_id)).toEqual([ambient!.directory, ambient!.directory])
+      }),
+    ),
+  )
 })

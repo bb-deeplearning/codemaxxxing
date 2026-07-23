@@ -1141,6 +1141,10 @@ describe("INTEGRATION_INVARIANTS — tool surface replacement", () => {
         // github workflow tools (post-actor-discipline).
         "github-pr-search",
         "github-triage",
+        // declared review (worktree-checkouts, 2026-07-23): review is
+        // something an agent SAYS — the tool emits worktree.review.requested
+        // for the session's own checkout.
+        "request_review",
       ])
 
       for (const agentName of agentNames) {

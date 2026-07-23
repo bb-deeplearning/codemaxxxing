@@ -72,6 +72,8 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | Adding an always-on background service (watcher/poller) as a Layer | `configreload-lazy-service-runtime-never-constructs` |
 | Invalidating per-directory caches from outside the instance lifecycle | `scopedcache-invalidate-during-inflight-boot-deadlocks` |
 | Starting/steering the session agent loop from HTTP (any instance), or mixing surfaces (tui + serve, bare + scoped POSTs) on one session | `session-runloop-lock-busy-guard-was-per-instance` |
+| Passing impure expressions (`new Date()`, `Date.now()`) as ARGUMENTS to effects that repeat/retry | `effect-arguments-evaluate-at-construction-froze-the-heartbeat` |
+| Forking fibers from AgentControl on a tree's behalf (wake, revival, auto-starts) | `agentcontrol-started-fibers-provide-tree-owner-context` |
 
 ## By category — slugs with one-line summaries and line offsets
 
@@ -1554,5 +1556,27 @@ const removed = yield* git(["worktree", "remove", "--force", entry.path], { cwd:
 **Fix:** AgentControl keeps a LAYER-scoped `sessionHome: Map<SessionID, InternalState>` (the providerRef precedent: fibers cross instances, tree ownership doesn't). `ensureRootSlot` and `spawnAgent` register; the respawn rollback, session-deleted sweep, and instance-dispose finalizer delete — key lifetime mirrors `sessionToRoot` exactly. Every session-anchored method resolves `const data = yield* sessionState(id)` (home first, ambient fallback for first-contact registration).
 **Why:** `InstanceState.make` gives each instance its own `InternalState`; `InstanceState.get` resolves via ambient `InstanceRef`. The spawn queues the initial task into the child's mailbox in the PARENT instance's state, then the child's loop — running under the WORKTREE's ref — asks a fresh empty state for that mailbox and legitimately finds nothing. The mechanism pins passed because their fake run loops never drained; the pin now drives the real loop shape (drain inside the fiber, nested spawn from within, trigger_turn revival).
 **See:** `packages/opencode/src/agent/control.ts` (`sessionHome`, `sessionState`), pin in `src/agent/control.test.ts` ("isolated child's fiber drains its mailbox…"). Fix commit `0037390865`.
+
+---
+
+### `effect-arguments-evaluate-at-construction-froze-the-heartbeat`
+
+**Severity:** correctness-bug (fleet-wide lock integrity)
+**When:** Passing impure expressions (`new Date()`, `Date.now()`, counters, randoms) as ARGUMENTS to an effect constructor whose effect gets repeated, retried, or reused — `fs.utimes(path, new Date(), new Date()).pipe(Effect.repeat(...))` is the canonical shape.
+**Symptom:** The flock heartbeat "beat" every 20s for months and never advanced a single mtime: both Dates evaluated ONCE at effect construction (acquire time), so every beat re-set mtime to the same instant. Every live holder looked stale after `STALE_MS`; any waiter legally broke a HELD lock; three concurrent runLoops interleaved one session's transcript until the provider rejected it (the 2026-07-23 triple-lap). Diagnosis was maximally misleading: `ls` showed heartbeat mtime == creation time, which reads as "the fiber never ran" — the fiber ran fine, its WRITES were frozen.
+**Fix:** Impure values live INSIDE the thunk/suspension so they re-evaluate per run: `Effect.tryPromise(() => { const now = new Date(); return utimes(path, now, now) })`. And never `Effect.ignore` a heartbeat — a silent heartbeat is a broken lock wearing a green light; log once per handle.
+**Why:** Effects are descriptions. Anything already evaluated when the description is BUILT is a constant forever, no matter how many times the description runs. `Effect.repeat` re-runs the description, not your intent.
+**See:** `packages/core/src/util/effect-flock.ts` (the heartbeat), pins in `packages/core/test/util/effect-flock.test.ts` — the live-holder liveness pin is RED on the frozen-Date shape.
+
+---
+
+### `agentcontrol-started-fibers-provide-tree-owner-context`
+
+**Severity:** correctness-bug
+**When:** Forking fibers from AgentControl on a tree's behalf — the root wake, child revival via trigger_turn, any future auto-start — or generally forking work whose HOME instance differs from the calling fiber's ambient `InstanceRef`.
+**Symptom:** The root wake executed on the SENDER's fiber. An isolated child's deliverable ran the woken root loop under the CHILD's checkout InstanceRef → `SessionRunState` resolved the child instance's EMPTY runner map → no join with the root's live lap → a second full runLoop raced the first on one transcript (with the heartbeat-rotted flock as the last dead defense). `Effect.forkIn` sets the parent SCOPE, not the context — ambience rides along silently.
+**Fix:** `InternalState` carries its owning `ctx` (captured at construction). The wake pipes `Effect.provideService(InstanceRef, data.ctx)`; `startAgentFiber` ALWAYS provides a deterministic ref — `isolation.context` for isolated children, `data.ctx` for everyone else. Sender ambience never leaks into fibers AgentControl starts.
+**Why:** Fibers inherit the caller's context by design; that's right for the caller's own work and wrong for work done on a TREE's behalf. The busy-root no-op promise ("the callback enters via ensureRunning, so a busy root is a clean no-op") is only true when the wake resolves the SAME runner map the lap runs in.
+**See:** `packages/opencode/src/agent/control.ts` (`InternalState.ctx`, the wake fork, `startAgentFiber`), red-green pin "root wake and revival run under the tree-owner's context" in `control.test.ts`. Sibling entry: [agentcontrol-tree-state-resolves-by-session-home-not-ambient-instance] (same family — state resolution vs fiber context; both halves of the 2026-07-23 incident).
 
 ---

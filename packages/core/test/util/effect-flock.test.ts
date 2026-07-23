@@ -493,4 +493,78 @@ describe("util.effect-flock", () => {
       }),
     30_000,
   )
+
+  // -------------------------------------------------------------------------
+  // Heartbeat (2026-07-23 regression) — the old heartbeat constructed
+  // `fs.utimes(path, new Date(), new Date())` ONCE at acquire: impure
+  // arguments evaluate at effect construction, so every 20s beat re-set
+  // mtime to the same acquire-time instant forever. Every live holder
+  // looked stale after STALE_MS and any waiter could legally break a HELD
+  // lock — two concurrent runLoops interleaved one transcript until the
+  // provider rejected it (the triple-lap). The dates now live inside the
+  // beat's thunk, evaluated fresh per tick.
+  // -------------------------------------------------------------------------
+
+  it.live(
+    "node utimes advances a file's mtime (the primitive the heartbeat rides)",
+    Effect.gen(function* () {
+      const tmp = yield* Effect.promise(() => fs.mkdtemp(path.join(os.tmpdir(), "eflock-hb-")))
+      const file = path.join(tmp, "beat")
+      yield* Effect.promise(() => fs.writeFile(file, ""))
+      const past = new Date(Date.now() - 600_000)
+      yield* Effect.promise(() => fs.utimes(file, past, past))
+      const before = (yield* Effect.promise(() => fs.stat(file))).mtimeMs
+      yield* Effect.promise(() => fs.utimes(file, new Date(), new Date()))
+      const after = (yield* Effect.promise(() => fs.stat(file))).mtimeMs
+      expect(after).toBeGreaterThan(before)
+      yield* Effect.promise(() => fs.rm(tmp, { recursive: true, force: true }))
+    }),
+  )
+
+  it.live(
+    "a live holder's heartbeat refreshes within the stale window (red on the frozen-Date heartbeat)",
+    Effect.gen(function* () {
+      const flock = yield* EffectFlock.Service
+      const tmp = yield* Effect.promise(() => fs.mkdtemp(path.join(os.tmpdir(), "eflock-hb-")))
+      const dir = path.join(tmp, "locks")
+      const lockDir = lock(dir, "eflock:hb")
+      const heartbeat = path.join(lockDir, "heartbeat")
+
+      const stop = yield* Deferred.make<void>()
+      const holder = yield* flock.withLock(Deferred.await(stop), "eflock:hb", dir).pipe(Effect.forkChild)
+
+      // Wait for the lock to exist, capture the birth mtime.
+      let before = 0
+      for (let i = 0; i < 100 && before === 0; i++) {
+        before = yield* Effect.promise(() =>
+          fs.stat(heartbeat).then(
+            (s) => s.mtimeMs,
+            () => 0,
+          ),
+        )
+        yield* Effect.promise(() => sleep(50))
+      }
+      expect(before).toBeGreaterThan(0)
+
+      // HEARTBEAT_MS is 20s (STALE_MS/3, baked). Poll up to 26s for the
+      // mtime to advance — the old heartbeat NEVER advanced it, which is
+      // exactly how live locks became breakable.
+      let after = before
+      for (let i = 0; i < 13 && after <= before; i++) {
+        yield* Effect.promise(() => sleep(2_000))
+        after = yield* Effect.promise(() =>
+          fs.stat(heartbeat).then(
+            (s) => s.mtimeMs,
+            () => before,
+          ),
+        )
+      }
+
+      yield* Deferred.succeed(stop, undefined)
+      yield* Fiber.await(holder)
+      expect(after).toBeGreaterThan(before)
+      yield* Effect.promise(() => fs.rm(tmp, { recursive: true, force: true }))
+    }),
+    45_000,
+  )
 })

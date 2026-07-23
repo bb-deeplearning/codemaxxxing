@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Exit, Layer } from "effect"
 
 import { InstanceState } from "@/effect/instance-state"
 
@@ -90,6 +90,36 @@ const renderCanonicalPathBlock = (path: string): string =>
     "  # or just omit the target; defaults to self.",
   ].join("\n")
 
+// Checkout orientation (2026-07-23, locked topology — docs in boxbox-web's
+// idea-worktrees): a session homed in a worktree checkout wakes up in an
+// unexplained ~/.local/share/.../worktree/<sha>/<name> cwd on a branch
+// nobody mentioned. The spawn tools document isolation to the PARENT; the
+// session living in the checkout is the one that needs the contract. Roots
+// integrate and declare; children commit and hand up. Without this block
+// agents burn turns inferring their situation — or worse, push the branch
+// and hunt for the "real" repo.
+const renderCheckoutBlock = (input: { role: "root" | "child"; primary: string }): string =>
+  input.role === "child"
+    ? [
+        "## Your workspace is an isolated checkout",
+        "",
+        `Your working directory is a git worktree checkout of \`${input.primary}\` — a private branch for THIS task.`,
+        "",
+        "- Commit your work here as you go. Never push. Never touch the primary tree directly.",
+        "- Do not merge anywhere and do not request review: when you finish, your checkout rides your completion notification to your parent, and merging your branch into THEIR worktree is their integration call, not yours.",
+        "- Your commits are the deliverable. Finish clean: committed, verified, nothing half-written in the tree.",
+      ].join("\n")
+    : [
+        "## Your workspace is an isolated checkout",
+        "",
+        `Your working directory is a git worktree checkout of \`${input.primary}\` — a private branch. Main stays clean until a human lands your work.`,
+        "",
+        "- Commit as you go. Never push. Never touch the primary tree directly.",
+        "- Subagents you spawn with isolation get their own checkouts branched from your HEAD; when one finishes, merge its branch into THIS worktree (worktrees share refs — plain `git merge <branch>` here works) and verify the integrated whole.",
+        "- When the deliverable is DONE and coherent as one unit, fire `request_review` with a one-line note. That raises the human's review lane — merge / send back / discard is their tap, and main moves only through it.",
+        "- After declaring: hands off the checkout until the verdict.",
+      ].join("\n")
+
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -160,6 +190,26 @@ export const layer = Layer.effect(
             if (pathStr !== "/root") {
               hints.push(renderCanonicalPathBlock(pathStr))
             }
+          }
+        }
+        // Checkout orientation — fires for ANY session homed in a worktree
+        // checkout (compose-fresh roots and isolated children alike). The
+        // child/root discriminator is the canonical agent path, not
+        // agent.mode: an isolated child spawned as agent_type "general"
+        // carries a non-root path while its MODE may still be primary/all.
+        // Exit-guarded: legacy callers (assembly-order pins, benches) run
+        // capabilityHints without an instance bound — no instance, no
+        // checkout, no block.
+        const ctxExit = yield* InstanceState.context.pipe(Effect.exit)
+        if (Exit.isSuccess(ctxExit)) {
+          const ctx = ctxExit.value
+          if (ctx.project.vcs === "git" && ctx.worktree !== ctx.project.worktree) {
+            let role: "root" | "child" = "root"
+            if (sessionID !== undefined) {
+              const agentPath = yield* AgentToolContext.currentAgentPath(control, sessionID)
+              if (String(agentPath) !== "/root") role = "child"
+            }
+            hints.push(renderCheckoutBlock({ role, primary: ctx.project.worktree }))
           }
         }
         return hints

@@ -12,6 +12,11 @@ import { InstanceState } from "../../src/effect/instance-state"
 import { Worktree } from "../../src/worktree"
 import { disposeAllInstances, provideInstance, provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import { Database } from "../../src/storage/db"
+import { SessionTable } from "../../src/session/session.sql"
+import { Global } from "@opencode-ai/core/global"
+import { Hash } from "@opencode-ai/core/util/hash"
+import { eq } from "drizzle-orm"
 
 const it = testEffect(Layer.mergeAll(Worktree.defaultLayer, CrossSpawnSpawner.defaultLayer))
 const wintest = process.platform !== "win32" ? it.live : it.live.skip
@@ -38,6 +43,31 @@ async function waitReady() {
 
     GlobalBus.on("event", on)
   })
+}
+
+async function waitReviewRequested() {
+  const { GlobalBus } = await import("../../src/bus/global")
+
+  return await new Promise<{ directory?: string; name: string; branch?: string; note?: string }>(
+    (resolve, reject) => {
+      const timer = setTimeout(() => {
+        GlobalBus.off("event", on)
+        reject(new Error("timed out waiting for worktree.review.requested"))
+      }, 10_000)
+
+      function on(evt: {
+        directory?: string
+        payload: { type: string; properties: { name: string; branch?: string; note?: string } }
+      }) {
+        if (evt.payload.type !== Worktree.Event.ReviewRequested.type) return
+        clearTimeout(timer)
+        GlobalBus.off("event", on)
+        resolve({ directory: evt.directory, ...evt.payload.properties })
+      }
+
+      GlobalBus.on("event", on)
+    },
+  )
 }
 
 async function waitFailed() {
@@ -702,6 +732,166 @@ describe("Worktree", () => {
               ),
             )
             expect(exists).toBe(false)
+          }),
+        { git: true },
+      ),
+    )
+
+    wintest("create scoped to a checkout's instance branches from THAT checkout's HEAD (nested spawns build on the parent's in-flight work)", () =>
+      provideTmpdirInstance(
+        (dir) =>
+          Effect.gen(function* () {
+            const svc = yield* Worktree.Service
+            const ready1 = waitReady()
+            const parent = yield* svc.create({ name: "nest-parent" })
+            yield* Effect.promise(() => ready1)
+
+            // the parent commits work main does NOT have
+            yield* Effect.promise(async () => {
+              await fs.writeFile(path.join(parent.directory, "in-flight.txt"), "parent work\n")
+              await $`git add in-flight.txt`.cwd(parent.directory).quiet()
+              await $`git commit -m parent-work`.cwd(parent.directory).quiet()
+            })
+
+            // a create scoped to the PARENT CHECKOUT's instance (the shape a
+            // nested isolated spawn produces: the spawn tool runs on the
+            // parent's fiber, ctx.worktree = the parent's checkout) must
+            // branch from the parent's HEAD, not from main — or grandchildren
+            // build against code missing their parent's work and every
+            // merge-up conflicts on arrival (locked topology, 2026-07-23).
+            const ambient = yield* InstanceState.context
+            const ready2 = waitReady()
+            const child = yield* svc.create({ name: "nest-child" }).pipe(
+              Effect.provideService(InstanceRef, {
+                directory: parent.directory,
+                worktree: parent.directory,
+                project: ambient.project,
+              }),
+            )
+            yield* Effect.promise(() => ready2)
+
+            const inherited = yield* Effect.promise(() =>
+              fs.readFile(path.join(child.directory, "in-flight.txt"), "utf8"),
+            )
+            expect(inherited).toBe("parent work\n")
+
+            // main never saw the parent's commit
+            const onMain = yield* Effect.promise(() =>
+              fs.access(path.join(dir, "in-flight.txt")).then(
+                () => true,
+                () => false,
+              ),
+            )
+            expect(onMain).toBe(false)
+          }),
+        { git: true },
+      ),
+    )
+
+    wintest("merge and discard refuse while a session homed in the checkout is mid-turn (busy guard)", () =>
+      provideTmpdirInstance(
+        () =>
+          Effect.gen(function* () {
+            const svc = yield* Worktree.Service
+            const ambient = yield* InstanceState.context
+            const ready = waitReady()
+            const info = yield* svc.create({ name: "busy" })
+            yield* Effect.promise(() => ready)
+
+            yield* Effect.promise(async () => {
+              await fs.writeFile(path.join(info.directory, "busy.txt"), "work\n")
+              await $`git add busy.txt`.cwd(info.directory).quiet()
+              await $`git commit -m busy-work`.cwd(info.directory).quiet()
+            })
+
+            // a session homed in the checkout + a FRESH run-lock heartbeat =
+            // a live lap. The guard reads the lock's on-disk protocol — a
+            // tap must never delete a working directory under a running
+            // agent (the wedge class from the 2026-07-23 triple-lap).
+            const sid = `ses_busyguard${Date.now().toString(16)}`
+            const lockDir = path.join(Global.Path.state, "locks", Hash.fast(`session-run:${sid}`) + ".lock")
+            yield* Effect.promise(async () => {
+              Database.use((db) =>
+                db
+                  .insert(SessionTable)
+                  .values({
+                    id: sid as never,
+                    project_id: ambient.project.id,
+                    slug: `busyguard-${Date.now()}`,
+                    directory: info.directory,
+                    title: "busy guard pin",
+                    version: "test",
+                    time_created: Date.now(),
+                    time_updated: Date.now(),
+                  })
+                  .run(),
+              )
+              await fs.mkdir(lockDir, { recursive: true })
+              await fs.writeFile(path.join(lockDir, "heartbeat"), "")
+            })
+
+            const cleanup = Effect.promise(async () => {
+              Database.use((db) => db.delete(SessionTable).where(eq(SessionTable.id, sid as never)).run())
+              await fs.rm(lockDir, { recursive: true, force: true })
+            })
+
+            const mergeExit = yield* svc.merge({ directory: info.directory }).pipe(Effect.exit)
+            const discardExit = yield* svc.discard({ directory: info.directory }).pipe(Effect.exit)
+
+            const defectMessage = (exit: Exit.Exit<unknown, unknown>) =>
+              Exit.isFailure(exit)
+                ? Cause.prettyErrors(exit.cause)
+                    .map((d) => (d as { data?: { message?: string } })?.data?.message ?? String(d))
+                    .join(" | ")
+                : ""
+
+            // stale heartbeat = dead holder, not a busy one: backdate past
+            // STALE_MS and the same merge goes through.
+            const old = new Date(Date.now() - 120_000)
+            yield* Effect.promise(() => fs.utimes(path.join(lockDir, "heartbeat"), old, old))
+            const afterStale = yield* svc.merge({ directory: info.directory }).pipe(Effect.exit)
+
+            yield* cleanup
+
+            expect(Exit.isFailure(mergeExit)).toBe(true)
+            expect(defectMessage(mergeExit)).toContain("mid-turn")
+            expect(Exit.isFailure(discardExit)).toBe(true)
+            expect(defectMessage(discardExit)).toContain("mid-turn")
+            expect(Exit.isSuccess(afterStale)).toBe(true)
+          }),
+        { git: true },
+      ),
+    )
+
+    wintest("requestReview emits on the checkout's directory with the note; the primary refuses", () =>
+      provideTmpdirInstance(
+        () =>
+          Effect.gen(function* () {
+            const svc = yield* Worktree.Service
+            const ambient = yield* InstanceState.context
+            const ready = waitReady()
+            const info = yield* svc.create({ name: "declare" })
+            yield* Effect.promise(() => ready)
+
+            // declared review: the event is the ONLY thing that raises the
+            // lane client-side — no git-state inference anywhere.
+            const requested = waitReviewRequested()
+            const result = yield* svc.requestReview({ note: "lands the thing, look at x first" }).pipe(
+              Effect.provideService(InstanceRef, {
+                directory: info.directory,
+                worktree: info.directory,
+                project: ambient.project,
+              }),
+            )
+            const evt = yield* Effect.promise(() => requested)
+            expect(result.branch).toBe(info.branch)
+            expect(evt.directory).toBe(info.directory)
+            expect(evt.note).toBe("lands the thing, look at x first")
+            expect(evt.branch).toBe(info.branch)
+
+            // the primary is not reviewable work
+            const onPrimary = yield* svc.requestReview({}).pipe(Effect.exit)
+            expect(Exit.isFailure(onPrimary)).toBe(true)
           }),
         { git: true },
       ),

@@ -1,0 +1,38 @@
+Declare your checkout ready for human review. Emits the review signal that
+raises the lane in the review UI — nothing about your work is inferred; the
+review moment exists because YOU declared it.
+
+## When to use
+
+- You are a checkout-homed session (started with an isolated workspace) and
+  the deliverable is DONE: committed, verified, coherent as one unit.
+- Integration work is finished: if you spawned subagents, you have already
+  merged their branches into YOUR worktree and verified the integrated
+  whole. One declaration covers the whole tree's work.
+
+## When NOT to use
+
+- You are a subagent. Your checkout rides your completion notification to
+  your parent; the parent integrates your branch into THEIR worktree.
+  Requesting review as a subagent is refused.
+- Mid-work checkpoints. Commits during work are invisible to the human by
+  design — the lane shows quiet telemetry until you declare. Do not declare
+  to "show progress"; declare when tapping MERGE would be reasonable.
+- Work you expect to keep changing. After you declare, the human may merge
+  or discard at any moment — treat the checkout as hands-off until the
+  verdict lands.
+
+## The note
+
+`note` becomes the review card's headline. One or two sentences: what this
+lands, where to look first, anything that needs a decision. It is the only
+context the reviewer gets besides the diff — write it like a good commit
+subject, not a changelog.
+
+## After declaring
+
+Three verdicts are possible, none of them yours: merge (squash-lands your
+branch, checkout dissolves), send back (the thread returns to you with the
+reviewer's notes — address them and declare again), discard (dirty work is
+snapshotted to a rescue commit first). Say what you need to say in the
+note, then stop touching the checkout.

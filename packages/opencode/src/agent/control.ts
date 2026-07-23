@@ -749,6 +749,15 @@ interface InternalState {
   // Index from any session (root or subagent) back to its root id.
   // Populated on registerSessionRoot and on each spawnAgent (child id → root id).
   readonly sessionToRoot: Map<SessionID, SessionID>
+  // The instance this state belongs to. Fibers that AgentControl starts on
+  // behalf of a tree (root wakes, revivals, spawned loops) provide THIS
+  // context explicitly instead of inheriting whatever the calling fiber
+  // carried — a subagent's send runs on the SENDER's fiber, and for
+  // isolated children that fiber carries the WORKTREE's InstanceRef. The
+  // 2026-07-23 triple-lap: a child's deliverable woke the root loop under
+  // the child's instance, whose empty runner map couldn't see the live
+  // lap, and the (heartbeat-rotted) flock let it through.
+  readonly ctx: InstanceContext
   readonly scope: Scope.Scope
 }
 
@@ -936,6 +945,7 @@ export const layer = Layer.effect(
         return {
           perRoot,
           sessionToRoot,
+          ctx,
           scope,
         } satisfies InternalState
       }),
@@ -1046,9 +1056,16 @@ export const layer = Layer.effect(
       // Isolated children run their whole loop under the worktree's
       // InstanceRef — tool cwds, file ops, and shells resolve to the
       // isolated checkout. Applies to revival too (this fn is the single
-      // fiber-start door).
+      // fiber-start door). Everyone else gets the TREE-OWNER's context
+      // explicitly: revival is triggered from the SENDER's fiber, and
+      // inheriting a cross-instance sender's ambient ref would run this
+      // loop against the wrong instance's runner map and cwd.
       const isolation = slot.isolationOf.get(sessionID)
-      const loopEffect = isolation ? Effect.provideService(base, InstanceRef, isolation.context) : base
+      const loopEffect = Effect.provideService(
+        base,
+        InstanceRef,
+        isolation ? isolation.context : data.ctx,
+      )
       const status = slot.statuses.get(sessionID)
       const fiber = yield* loopEffect.pipe(
         Effect.onExit((exit: Exit.Exit<unknown, unknown>) =>
@@ -1790,7 +1807,15 @@ export const layer = Layer.effect(
         if (targetID === slot.rootID) {
           const wake = yield* Ref.get(rootWakeRef)
           if (wake) {
+            // The wake runs on the SENDER's fiber — for an isolated child
+            // that fiber carries the WORKTREE's InstanceRef, and the woken
+            // loop would resolve a fresh empty runner map instead of
+            // joining the root's live lap (the 2026-07-23 triple-lap).
+            // Provide the tree-owner's context so a busy root is a genuine
+            // join-and-no-op, exactly what the comment above always
+            // promised.
             yield* wake(targetID).pipe(
+              Effect.provideService(InstanceRef, data.ctx),
               Effect.catchCause(() => Effect.void),
               Effect.forkIn(data.scope),
             )
