@@ -79,29 +79,22 @@ export const ExperimentalPaths = {
   resource: "/experimental/resource",
 } as const
 
-/** NamedError on the wire, matching the hono ErrorMiddleware contract:
- * Worktree* failures answer 400 with `name` + `data` so clients read the
- * message and key flows off the NAME (boxbox's conflict send-back
- * string-matches `MergeConflict`; the mid-turn busy guard's message must
- * reach the human). A TAGGED ErrorClass, not a bare struct: the live
- * error union includes the auth middleware's Unauthorized, and an
- * untagged struct mis-encoded there — every worktree failure answered
- * 401-empty live while passing 400 in the bridge harness (no auth member
- * in the union). Live-caught twice in one drive, 2026-07-23. */
-export class WorktreeError extends Schema.ErrorClass<WorktreeError>("opencode/WorktreeError")(
-  {
-    _tag: Schema.tag("WorktreeError"),
-    name: Schema.String,
-    data: Schema.Struct({
-      message: Schema.optional(Schema.String),
-      files: Schema.optional(Schema.Array(Schema.String)),
-    }),
-  },
-  {
-    description: "Worktree failure — {name, data} per the NamedError wire contract",
-    httpApiStatus: 400,
-  },
-) {}
+/** OpenAPI documentation of the worktree failure shape — the handlers
+ * respond with a RAW 400 `{name, data}` (NamedError.toObject(), the hono
+ * ErrorMiddleware contract) because effect's security middleware eats
+ * typed errors from the declared union (any Effect.fail through an
+ * auth-wrapped endpoint answers 401-empty — stock HttpApiError paths
+ * included, live-proven 2026-07-23). This schema keeps the docs honest;
+ * the wire truth is produced in handlers/experimental.ts. */
+export const WorktreeError = Schema.Struct({
+  name: Schema.String,
+  data: Schema.Struct({
+    message: Schema.optional(Schema.String),
+    files: Schema.optional(Schema.Array(Schema.String)),
+  }),
+})
+  .annotate({ identifier: "WorktreeError" })
+  .pipe(HttpApiSchema.status(400))
 
 export const ExperimentalApi = HttpApi.make("experimental")  .add(
     HttpApiGroup.make("experimental")

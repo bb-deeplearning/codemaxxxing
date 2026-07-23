@@ -5,6 +5,7 @@ import { Flag } from "@opencode-ai/core/flag/flag"
 import { Instance } from "../../src/project/instance"
 import { EventPaths } from "../../src/server/routes/instance/httpapi/event"
 import { GlobalPaths } from "../../src/server/routes/instance/httpapi/groups/global"
+import { ExperimentalPaths } from "../../src/server/routes/instance/httpapi/groups/experimental"
 import { PtyPaths } from "../../src/server/routes/instance/httpapi/groups/pty"
 import { ExperimentalHttpApiServer } from "../../src/server/routes/instance/httpapi/server"
 import { PtyID } from "../../src/pty/schema"
@@ -155,13 +156,30 @@ describe("HttpApi raw route authorization", () => {
     expect(await bad.json()).toMatchObject({ success: false })
   })
 
-  /* NOTE (2026-07-23): API-GROUP endpoints (experimental etc.) cannot be
-     auth-tested through this harness — the API-level Authorization
-     middleware does not read the test ConfigProvider's password the way
-     authorizationRouterMiddleware does, so authed requests 401 regardless
-     of code under test (verified: consoleSwitch 401s here on every
-     build). The worktree error-union-under-auth behavior (tagged
-     WorktreeError encoding next to Unauthorized) is covered by the
-     no-auth pin in httpapi-experimental.test.ts for shape, and was
-     verified LIVE on the vm serve for the auth union. */
+  test("worktree failures answer 400 with {name, data} THROUGH the auth middleware (typed-error unions 401 there)", async () => {
+    /* effect's security middleware eats typed errors: any Effect.fail
+       from an auth-wrapped API endpoint answers 401-empty — stock
+       HttpApiError.BadRequest paths included (consoleSwitch 401s here AND
+       live, every build). The worktree handlers therefore respond with a
+       RAW HttpServerResponse 400 carrying the hono ErrorMiddleware
+       contract {name, data} — this pin runs the full authed assembly and
+       is RED on any Effect.fail-based mapping. */
+    await using tmp = await tmpdir({ git: true, config: { formatter: false, lsp: false } })
+    const server = app({ password: "secret" })
+    const headers = {
+      "x-opencode-directory": tmp.path,
+      "content-type": "application/json",
+      authorization: basic("opencode", "secret"),
+    }
+
+    const refused = await server.request(ExperimentalPaths.worktreeMerge, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ directory: tmp.path }),
+    })
+    expect(refused.status).toBe(400)
+    const body = (await refused.json()) as { name: string; data: { message?: string } }
+    expect(body.name).toBe("WorktreeMergeFailedError")
+    expect(body.data.message).toContain("primary")
+  })
 })

@@ -13,7 +13,7 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { InstanceHttpApi } from "../api"
-import { ConsoleSwitchPayload, SessionListQuery, ToolListQuery, WorktreeError } from "../groups/experimental"
+import { ConsoleSwitchPayload, SessionListQuery, ToolListQuery } from "../groups/experimental"
 
 export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "experimental", (handlers) =>
   Effect.gen(function* () {
@@ -93,11 +93,22 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
     // 2026-07-23 e2e drive caught it — killing the app's conflict
     // send-back (string-matches MergeConflict in the body) and muting the
     // mid-turn busy guard. Same shape, same status, both backends.
+    // Worktree NamedErrors are THROWN (defects, per the effect-v4 catch
+    // gotcha). The hono twin maps Worktree* → 400 + err.toObject() in
+    // ErrorMiddleware; this backend answered EMPTY 500s (no mapping), and
+    // mapping via Effect.fail + declared error schemas answered EMPTY
+    // 401s under the live auth middleware — effect's security wrapper
+    // eats typed errors from the union (stock HttpApiError.BadRequest
+    // paths 401 the same way; live-proven on consoleSwitch, every
+    // build). The framework-blessed escape both backends agree on: a
+    // RAW HttpServerResponse from the handler (the session-list
+    // precedent) — honest 400, exact hono body {name, data}, no union,
+    // no middleware surprises.
     const worktreeErrors = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
         Effect.catchDefect((defect) =>
           defect instanceof NamedError && defect.name.startsWith("Worktree")
-            ? Effect.fail(new WorktreeError({ name: defect.name, data: defect.toObject().data }))
+            ? Effect.succeed(HttpServerResponse.jsonUnsafe(defect.toObject(), { status: 400 }))
             : Effect.die(defect),
         ),
       )
