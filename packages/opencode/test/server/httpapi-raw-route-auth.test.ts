@@ -154,4 +154,14 @@ describe("HttpApi raw route authorization", () => {
     expect(bad.status).toBe(400)
     expect(await bad.json()).toMatchObject({ success: false })
   })
+
+  /* NOTE (2026-07-23): API-GROUP endpoints (experimental etc.) cannot be
+     auth-tested through this harness — the API-level Authorization
+     middleware does not read the test ConfigProvider's password the way
+     authorizationRouterMiddleware does, so authed requests 401 regardless
+     of code under test (verified: consoleSwitch 401s here on every
+     build). The worktree error-union-under-auth behavior (tagged
+     WorktreeError encoding next to Unauthorized) is covered by the
+     no-auth pin in httpapi-experimental.test.ts for shape, and was
+     verified LIVE on the vm serve for the auth union. */
 })

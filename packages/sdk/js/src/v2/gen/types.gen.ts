@@ -1409,7 +1409,8 @@ export type Worktree = {
   directory: string
 }
 
-export type WorktreeError = {
+export type OpencodeWorktreeError = {
+  _tag: "WorktreeError"
   name: string
   data: {
     message?: string
@@ -4345,9 +4346,9 @@ export type WorktreeRemoveData = {
 
 export type WorktreeRemoveErrors = {
   /**
-   * WorktreeError
+   * Worktree failure — {name, data} per the NamedError wire contract
    */
-  400: WorktreeError
+  400: OpencodeWorktreeError
 }
 
 export type WorktreeRemoveError = WorktreeRemoveErrors[keyof WorktreeRemoveErrors]
@@ -4373,9 +4374,9 @@ export type WorktreeListData = {
 
 export type WorktreeListErrors = {
   /**
-   * WorktreeError
+   * Worktree failure — {name, data} per the NamedError wire contract
    */
-  400: WorktreeError
+  400: OpencodeWorktreeError
 }
 
 export type WorktreeListError = WorktreeListErrors[keyof WorktreeListErrors]
@@ -4401,9 +4402,9 @@ export type WorktreeCreateData = {
 
 export type WorktreeCreateErrors = {
   /**
-   * WorktreeError
+   * Worktree failure — {name, data} per the NamedError wire contract
    */
-  400: WorktreeError
+  400: OpencodeWorktreeError
 }
 
 export type WorktreeCreateError = WorktreeCreateErrors[keyof WorktreeCreateErrors]
@@ -4429,9 +4430,9 @@ export type WorktreeResetData = {
 
 export type WorktreeResetErrors = {
   /**
-   * WorktreeError
+   * Worktree failure — {name, data} per the NamedError wire contract
    */
-  400: WorktreeError
+  400: OpencodeWorktreeError
 }
 
 export type WorktreeResetError = WorktreeResetErrors[keyof WorktreeResetErrors]
@@ -4457,9 +4458,9 @@ export type WorktreeDiffData = {
 
 export type WorktreeDiffErrors = {
   /**
-   * WorktreeError
+   * Worktree failure — {name, data} per the NamedError wire contract
    */
-  400: WorktreeError
+  400: OpencodeWorktreeError
 }
 
 export type WorktreeDiffError = WorktreeDiffErrors[keyof WorktreeDiffErrors]
@@ -4485,9 +4486,9 @@ export type WorktreeMergeData = {
 
 export type WorktreeMergeErrors = {
   /**
-   * WorktreeError
+   * Worktree failure — {name, data} per the NamedError wire contract
    */
-  400: WorktreeError
+  400: OpencodeWorktreeError
 }
 
 export type WorktreeMergeError = WorktreeMergeErrors[keyof WorktreeMergeErrors]
@@ -4513,9 +4514,9 @@ export type WorktreeDiscardData = {
 
 export type WorktreeDiscardErrors = {
   /**
-   * WorktreeError
+   * Worktree failure — {name, data} per the NamedError wire contract
    */
-  400: WorktreeError
+  400: OpencodeWorktreeError
 }
 
 export type WorktreeDiscardError = WorktreeDiscardErrors[keyof WorktreeDiscardErrors]

@@ -13,7 +13,7 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { InstanceHttpApi } from "../api"
-import { ConsoleSwitchPayload, SessionListQuery, ToolListQuery, type WorktreeErrorShape } from "../groups/experimental"
+import { ConsoleSwitchPayload, SessionListQuery, ToolListQuery, WorktreeError } from "../groups/experimental"
 
 export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "experimental", (handlers) =>
   Effect.gen(function* () {
@@ -97,7 +97,7 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
       effect.pipe(
         Effect.catchDefect((defect) =>
           defect instanceof NamedError && defect.name.startsWith("Worktree")
-            ? Effect.fail(defect.toObject() as WorktreeErrorShape)
+            ? Effect.fail(new WorktreeError({ name: defect.name, data: defect.toObject().data }))
             : Effect.die(defect),
         ),
       )
