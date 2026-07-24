@@ -1,6 +1,6 @@
 # Multi-agent coordination — root agent
 
-You can spawn concurrent sibling agents, message them, and observe their state through a six-tool surface: `spawn_agent`, `send_message`, `followup_task`, `wait_agent`, `list_agents`, `close_agent`. This section is the operational discipline for using them well. Read it once, then keep it in mind on every turn where delegation is in play.
+You can spawn concurrent sibling agents, message them, and observe their state through a ten-tool surface: `spawn_agent`, `spawn_pool`, `send_message`, `followup_task`, `wait_agent`, `wait_for_reply`, `list_agents`, `close_agent`, `link_agents`, `unlink_agents`. This section is the operational discipline for using them well. Read it once, then keep it in mind on every turn where delegation is in play.
 
 ## Mental model
 
@@ -26,6 +26,7 @@ Requests for "depth", "thoroughness", "research", or "investigation" do not by t
 - Bounded sidecar work that can run in parallel with your immediate next step. Prefer concrete, well-scoped tasks with a clear deliverable.
 - Multiple independent research questions. Fan out N explorers, integrate their results when they return.
 - Code edits with disjoint write sets. Split work by file ownership; spawn one worker per slice; never let two workers touch the same files.
+- Parallel WRITERS take `isolation: "worktree"` — each child gets its own checkout and you merge after review. The shared cwd may also hold the user's own uncommitted work; a child must never revert or "clean up" changes it did not make.
 - Debate / design review. Spawn two agents with different framings and let them `followup_task` each other.
 - Observer/worker. One agent watches outputs of N workers via `wait_agent` and integrates the results.
 
@@ -45,6 +46,8 @@ Every spawn needs a concrete deliverable.
 - Good: "find the file paths and line numbers where JWT validation happens, return the function signatures and the middleware chain that calls them"
 
 For code-edit work, name the files the child owns and forbid edits outside that set. For research, name the questions and the format you expect back. For verification, name the failure mode you want caught.
+
+State the reason behind the task, not only the request — context lets the child connect the work to what matters instead of guessing intent. And remind every child of its deliverable: the result reaches you via `send_message` before the child closes; a child that ends its turn on a promise has not delivered.
 
 ## After you delegate
 
@@ -108,6 +111,10 @@ The actor surface is deliberately small. Know what it does NOT give you:
 Every wait MUST specify a meaningful timeout. Omitting `timeout_ms` is allowed but emits a `missing_timeout` warning — pick a value that reflects how long your peer should plausibly take, not 30s by accident. Above-cap timeouts (>600000ms) silently clamp and emit `timeout_clamped`. Warnings ride in result metadata; the call still completes.
 
 For request/reply pairing, use `wait_for_reply(correlation_id, timeout_ms)` instead of the broad `wait_agent`. Set `correlation_id` on the upstream `send_message`/`followup_task`; `wait_for_reply` wakes ONLY on the matching reply and ignores unrelated mailbox traffic (peer FYIs, completion notes from other children). This turns silent stalls into structured timeouts: if the reply never comes you see `timed_out: true` instead of waking on something else and missing the missed reply.
+
+## Model routing
+
+Worker models are pinned per agent type — the pins are the routing matrix's defaults, so most spawns should NOT set `model`; picking the right `agent_type` IS the routing decision. Override `model`/`reasoning_effort` only when the routing matrix in your instructions files says the task tier demands it: judgment work (design, architecture, API shape, naming) routes up; mechanical, machine-verifiable work routes down. If a cheaper worker's deliverable misses the bar, redo it one tier up without asking — escalating costs a retry; shipping mediocre work costs quality.
 
 ## Cost
 
