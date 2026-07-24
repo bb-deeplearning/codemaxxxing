@@ -25,9 +25,10 @@ they show up in `list_agents` and in every cross-agent message.
 
 ## Inheritance and model selection
 
-The child inherits your workspace and permission ruleset. Its model is NOT
-inherited from you: when `model` is unset, the child runs on its agent
-type's configured model, falling back to the global default model.
+The child inherits your workspace and permission ruleset. When `model` is
+unset, resolution walks: the agent type's configured model, else the model
+YOU are currently running (nearest ancestor in the spawn chain with a model
+pick), else the machine-global default as a last resort.
 
 To pin the child to a specific model, pass `model` as `provider/model`
 (e.g. `anthropic/claude-sonnet-4-5`). Add `reasoning_effort` to select one

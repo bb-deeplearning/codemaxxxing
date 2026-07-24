@@ -963,8 +963,26 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
 
     const lastModel = Effect.fnUntraced(function* (sessionID: SessionID) {
-      const match = yield* sessions.findMessage(sessionID, (m) => m.info.role === "user" && !!m.info.model)
-      if (Option.isSome(match) && match.value.info.role === "user") return match.value.info.model
+      // Nearest model wins: this session's newest user pick, else the parent
+      // chain's. A freshly-spawned child has no user messages yet — its model
+      // must come from the agent that spawned it, NOT from defaultModel(),
+      // whose last-resort catalog sort resolves absurd picks on machines with
+      // no pick history (the headless boxbox serve handed every model-less
+      // `general` spawn google/gemini-3-pro-image-preview and each one
+      // faulted on the vertex proxy — live incident 2026-07-24). The seen-set
+      // guards a corrupt parentID cycle from hanging the prompt path.
+      const seen = new Set<SessionID>()
+      let current: SessionID | undefined = sessionID
+      while (current && !seen.has(current)) {
+        seen.add(current)
+        const match = yield* sessions.findMessage(current, (m) => m.info.role === "user" && !!m.info.model)
+        if (Option.isSome(match) && match.value.info.role === "user") return match.value.info.model
+        current = yield* sessions.get(current).pipe(
+          Effect.map((s) => s.parentID),
+          // sessions.get defects on a deleted parent — stop the walk, not the turn.
+          Effect.catchDefect(() => Effect.succeed(undefined)),
+        )
+      }
       return yield* provider.defaultModel()
     })
 

@@ -798,6 +798,98 @@ it.live("trigger_turn pending defers loop exit even when assistant has finished"
   ),
 )
 
+// The gemini-3-pro-image-preview incident (2026-07-24): a spawned child with
+// no model anywhere (no spawn param, no agent-type config, empty session)
+// fell through lastModel straight to provider.defaultModel(), whose catalog
+// sort resolves absurd picks on machines with no pick history — the headless
+// boxbox serve handed every model-less `general` spawn an image-preview
+// model and each one faulted on the vertex proxy. lastModel now walks the
+// parent chain first: the child runs what its spawner runs.
+it.live(
+  "spawned child with no model inherits the spawner's model via the parent chain",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const chat = yield* sessions.create({
+          title: "model-inheritance",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* control.registerSessionRoot(chat.id)
+
+        // The spawner's current model is parent-model — deliberately NOT
+        // what defaultModel()'s catalog fallback would pick for this
+        // provider (sort()[0] is test-model on id-desc). Landing on
+        // parent-model proves inheritance, not fallback.
+        const msg = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: chat.id,
+          agent: "build",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("parent-model") },
+          time: { created: Date.now() },
+        })
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: msg.id,
+          sessionID: chat.id,
+          type: "text",
+          text: "hello",
+        })
+
+        yield* llm.text("child done")
+
+        const child = yield* control.spawnAgent({
+          parentID: chat.id,
+          parentPath: AgentPath.root(),
+          task_name: "modelheir",
+          initial_message: "who are you",
+        })
+
+        // The child's run loop drains its mailbox and injects the first user
+        // message carrying the resolved model — that message IS the pick.
+        const model = yield* Effect.promise(async () => {
+          const end = Date.now() + 5_000
+          while (Date.now() < end) {
+            const msgs = await Effect.runPromise(MessageV2.filterCompactedEffect(child.thread_id))
+            const u = msgs.find((item) => item.info.role === "user")
+            if (u && u.info.role === "user" && u.info.model) return u.info.model
+            await new Promise((done) => setTimeout(done, 20))
+          }
+          throw new Error("timed out waiting for the child's injected user message")
+        })
+
+        expect(model.providerID).toBe(ProviderID.make("test"))
+        expect(model.modelID).toBe(ModelID.make("parent-model"))
+      }),
+      {
+        git: true,
+        config: (url) => {
+          const base = providerCfg(url)
+          return {
+            ...base,
+            provider: {
+              ...base.provider,
+              test: {
+                ...base.provider.test,
+                models: {
+                  ...base.provider.test.models,
+                  "parent-model": {
+                    ...base.provider.test.models["test-model"],
+                    id: "parent-model",
+                    name: "Parent Model",
+                  },
+                },
+              },
+            },
+          }
+        },
+      },
+    ),
+  10_000,
+)
+
 // Wave 4 (replace-bash-task-2026-05-15) — `task` is no longer in the
 // model-facing tool list (registry's builtin array dropped tool.task).
 // The LLM stub `llm.tool("task", ...)` queues a tool call the model

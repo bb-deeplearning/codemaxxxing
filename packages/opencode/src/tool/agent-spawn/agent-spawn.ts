@@ -59,7 +59,7 @@ export const Parameters = Schema.Struct({
   }),
   model: Schema.optional(Schema.String).annotate({
     description:
-      'Optional model override for the new agent, as "provider/model" (e.g. "anthropic/claude-sonnet-4-5"). Leave unset to use the agent type\'s configured model (or the global default). Only set when the user explicitly asks for a different model or the task clearly requires one. Unknown models fail the call.',
+      'Optional model override for the new agent, as "provider/model" (e.g. "anthropic/claude-sonnet-4-5"). Leave unset to use the agent type\'s configured model, else the model you are currently running. Only set when the user explicitly asks for a different model or the task clearly requires one. Unknown models fail the call.',
   }),
   reasoning_effort: Schema.optional(Schema.String).annotate({
     description:
