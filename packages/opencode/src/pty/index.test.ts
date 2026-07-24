@@ -502,6 +502,32 @@ describe("Pty.create origin field", () => {
   })
 })
 
+describe("Pty.create login flag ordering", () => {
+  test("login-capable shell with -c args spawns a real login shell (-l precedes -c)", async () => {
+    if (process.platform === "win32") return
+    await withPty((pty) =>
+      Effect.gen(function* () {
+        // Regression: `-l` used to be push()ed AFTER ["-c", cmd], where the
+        // shell parses it as $0 — not a flag. Assert real login-shell state
+        // from inside the spawn, not argv shape alone.
+        const callerArgs = ["-c", "shopt -q login_shell && echo LOGIN=yes || echo LOGIN=no"]
+        const info = yield* pty.create({
+          command: "/bin/bash",
+          args: callerArgs,
+          title: "login-flag",
+          origin: "model",
+        })
+        expect(info.args[0]).toBe("-l")
+        // input.args must not be mutated (the old code pushed into it).
+        expect(callerArgs).toHaveLength(2)
+        yield* Effect.promise(() => waitForOutput(pty, info.id, 5))
+        const result = yield* pty.read(info.id, 0, 3000, 1024 * 1024)
+        expect(decode(result!.output)).toContain("LOGIN=yes")
+      }),
+    )
+  })
+})
+
 describe("Pty backward compat (existing connect protocol)", () => {
   test("connect handler still works without origin field", async () => {
     if (process.platform === "win32") return

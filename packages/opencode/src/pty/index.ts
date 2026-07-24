@@ -317,10 +317,12 @@ export const layer = Layer.effect(
       const cfg = yield* config.get()
       const id = PtyID.ascending()
       const command = input.command || Shell.preferred(cfg.shell)
-      const args = input.args || []
-      if (Shell.login(command)) {
-        args.push("-l")
-      }
+      // `-l` must PRECEDE any caller-supplied `-c <cmd>`: POSIX shells stop
+      // option parsing at -c's command string, so a trailing "-l" is parsed
+      // as $0 rather than a flag. Appending it (the old behavior) silently
+      // made every model-origin exec_command spawn a non-login shell stuck
+      // with the daemon's stripped PATH — no profile ever ran.
+      const args = Shell.login(command) ? ["-l", ...(input.args ?? [])] : (input.args ?? [])
 
       const cwd = input.cwd || s.dir
       const shell = yield* plugin.trigger("shell.env", { cwd }, { env: {} })
