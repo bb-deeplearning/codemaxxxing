@@ -11,7 +11,7 @@ Iteration 10 ([PROMPT_ITERATIONS/2026-07-24-fable-5-overhaul.md](../PROMPT_ITERA
 - `agent/prompt/general/gemini.txt` — Tool Delegation + Notes re-idiomed from Task tool to spawn_agent.
 - `agent/prompt/explore.txt` — caveman section → "Reporting style" (path+line first, complete sentences, verbatim evidence, explicit negatives).
 - `agent/prompt/multi-agent-root.txt` — ten-tool surface named; parallel-writer worktree bullet; brief requirements (reason + delivery reminder); new "## Model routing" section (pins are defaults; escalate one tier up without asking).
-- `agent/prompt/multi-agent-subagent.txt` — delivery contract gains the end-turn check (mitigation for the triple silent-delivery incident, sessions `ses_06dd00e78ffe` / `ses_06dcff0d3ffe` / `ses_06dcfcf76ffe`).
+- `agent/prompt/multi-agent-subagent.txt` — delivery contract gains the end-turn check (mitigation for the long-horizon silent-delivery failure mode; specimen `ses_076dbcccbf` on bbtws — 90-message review agent, `finish: stop`, zero send_message).
 - `tool/agent-spawn/agent-spawn.txt` — "Leave both unset unless the user explicitly asks" → routing-first model-selection prose.
 - `session/prompt/max-steps.txt` — calm register; grounded summary requirement.
 - `session/prompt/plan.txt` — audited, unchanged (already current).
