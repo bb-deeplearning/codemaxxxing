@@ -2,64 +2,46 @@
 
 ![codemaxxxing](./hero.png)
 
-the question driving everything here is simple: how large a task can I hand off and leave running in the background while I do something else? every iteration — the prompts, the wave runner FSM, the OTP-style multi-agent actor system (supervision, links, bounded mailboxes, behavior contracts), the persistent processes, the observability metrics, the integration invariants — is in service of pushing the answer further. the actor-discipline work that just landed was itself a 6-hour unsupervised wave campaign: 10 waves, 35 generator+evaluator pairs, the harness orchestrating itself end-to-end while I worked on something else. that's where the current answer sits. it isn't a product or a configurable platform; it's an instrument, and every hour spent on it expands the radius of work I can hand off.
+the question driving this repo started simple: how large a task can I hand off and leave running while I do something else? the models kept answering it, and every time they did the question changed units. one task at a time became one long task, then a few tasks on one machine, now many tasks across many machines. the current form is different in kind: how many agents can run without me, how far from the keyboard can I be, and what actually earns my attention when something blocks?
 
-this repo plays two roles in chasing that. it's the daily tool I use to build things at [clauseo](https://clauseo.chat) and other [bbdeeplearning.systems](https://bbdeeplearning.systems) projects, and it's the surface where I experiment with how to build longer-running agents at all. the multi-agent actor system, persistent process tools, integration-invariants discipline, durable wave campaigns — these are experimental shapes that prove out here first, then get adapted into clauseo's production agents. nothing in this README is load-bearing dogma; it's the current iteration, and some of it will get re-litigated when the next model ships or a campaign surfaces something I got wrong. shares a file tree with [opencode](https://github.com/anomalyco/opencode) and very little else — the architecture has diverged on every surface I cared about.
+cmx is how I chase that. it began as prompt modifications on top of [opencode](https://github.com/anomalyco/opencode), grew a wave runtime when models degraded over long sessions, grew an actor system when I wanted real concurrency, and is now the runtime under a fleet: always-on `cmx serve` daemons on my mac and a handful of vms, running agent trees around the clock, driven from wherever I am. it is the daily tool for [clauseo](https://clauseo.chat) and other [bbdeeplearning.systems](https://bbdeeplearning.systems) work, and the surface where longer-running agent shapes get proven before they reach clauseo's production agents. it shares a file tree with upstream and very little else. nothing here is a product or a configurable platform; it is an instrument I evolve as my own needs evolve, and parts of it get re-litigated every time a model ships.
 
-what I wanted that the upstream defaults didn't give:
+two windows sit on this runtime:
 
-- a way to drive multi-hour, multi-session tasks without sitting on the keyboard. a finite state machine on disk with auto-retry, conversational user pauses, and a full git audit trail. → [**wave runner**](#wave-runner).
-- subagents that behave like real actors instead of fire-and-forget RPC calls — concurrent, addressable, supervisable, with mailboxes, links, bounded queues, and per-agent_type behavior contracts. erlang/otp/akka conceptual lineage adapted for LLM constraints. → [**multi-agent actor system**](#multi-agent-architecture).
+- **boxbox** is the primary one now. a web pit wall for the fleet: next.js pwa, one codebase for phone, tablet and desktop, running on its own always-on vm. it watches every serve server-side and inverts attention: everything blocking any agent on any machine flows into one ranked needs-you inbox, web push carries the call to my lock screen, and review requests from agent checkouts arrive as cards I can merge from the phone. named for the f1 radio call that means come in NOW. the repo is private while it hardens; it will be public.
+- **the tui** is the other: the comfort cockpit. it exists for the setups where a terminal is the right surface (ssh or mosh, tmux, an ipad or even a phone, hotel wifi) and stays light enough to feel good there. these days it opens mostly while I build boxbox, and whenever boxbox can't be the surface I work from.
+
+what the runtime grew that upstream doesn't have:
+
+- a serve layer built for fleets, not sessions: multi-client sse, a global event and control surface, config hot-reload, host-scoped run locks, two http backends held to parity. → [**the runtime and the fleet**](#the-runtime-and-the-fleet).
+- subagents that behave like real actors instead of fire-and-forget RPC calls: concurrent, addressable, supervisable, with mailboxes, links, bounded queues, and per-agent_type behavior contracts. plus git worktree checkouts with declared review, so parallel writers never share a working directory. → [**multi-agent actor system**](#multi-agent-architecture).
 - shell tools that hold state between calls so REPLs keep their imports, dev servers stay running while I observe their logs, file watchers report new diagnostics as edits land. → [**persistent processes**](#persistent-processes).
-- a TUI that's readable on the setup I actually live in (mosh + tmux + iPad over hotel wifi on a long flight). no borders anywhere, structure made of fades, information has temperature, a wave campaign dashboard so the FSM is observable. → [**afterglow TUI**](#tui).
-- system prompts that don't over-engineer, don't moralise, distinguish questions from action requests, and parallelize aggressively. constantly reworked — ten iterations and counting, because the right prompt for Opus 4.6 isn't the right prompt for Opus 4.7. → [**rewritten prompts**](#prompts).
+- a wave runner for the work that still outruns the current models: a finite state machine on disk with auto-retry, conversational user pauses, and a full git audit trail. → [**wave runner**](#wave-runner).
+- a TUI that's readable on the setups above: no borders anywhere, structure made of fades, information has temperature. → [**afterglow TUI**](#tui).
+- system prompts that don't over-engineer, don't moralise, distinguish questions from action requests, and parallelize aggressively. ten iterations and counting, now net-deleting prose as the models absorb the basics. → [**rewritten prompts**](#prompts).
 
 the rest of the README walks through each one and how to install. there's a separate [WAVES.md](./WAVES.md) for the full wave-runner algorithm, [GOTCHAS.md](./GOTCHAS.md) for the sharp edges accumulated along the way, and per-campaign engineering references in [specs/](./specs/).
 
-## wave runner
+## the runtime and the fleet
 
-long agent sessions degrade. the context window is a sliding window. early details rot, compaction makes knowledge shallow, late-stage errors compound. the wave runner splits large tasks across many small fresh sessions, persists progress on disk as a finite state machine, and recovers from failures by patching the plan or asking me. no babysitting between waves.
+the center of gravity is `cmx serve`: a long-lived daemon, one per machine. the tui attaches to it, boxbox proxies to all of them, the js sdk hits the same api. sessions live server-side; a client is a viewport, never the runtime. that inversion is what makes "close the laptop, check the phone later" a non-event: sse reconnect is a resync, not a recovery.
 
-three agents:
+what being an engine (instead of an app) forced:
 
-- `wave_plan` decomposes a plan markdown file into a campaign directory under `.wave/campaigns/<id>/`.
-- `wave_verify` sanity-checks the campaign before any wave runs (probes reality with cheap shell commands to catch planner blind spots), and re-amends it whenever a wave fails because the spec was wrong.
-- an executor agent (caveman, build, my choice) runs each wave. reads its `WAVE.md`, dispatches sub-agents, runs verification, commits, updates state.
+- **multi-client by default.** any number of clients can watch one session over sse (pubsub fan-out), and a host-scoped run lock (an on-disk flock protocol with heartbeats) guarantees at most one agent loop per session across instances and processes. a phone tap and a terminal keystroke can never race two laps onto one transcript. session verbs that arrive without routing headers resolve to the session's home directory, not the receiving process's cwd.
+- **a global surface for fleet clients.** `GET /global/event` multiplexes every instance on a host into one envelope stream. `GET /global/fs` browses the host's directories, so a session can be composed into any repo on any machine from anywhere. `POST /global/reload` flushes config, skill and mcp caches live; `POST /global/restart` exits cleanly for the supervisor to relaunch. config edits hot-reload into running serves, so a restart means a binary upgrade and nothing else.
+- **instance routing.** an `x-opencode-directory` header selects (and can boot) the project instance a request lands in. one serve fronts every repo on its machine.
+- **two http backends, one contract.** every route lands in both the hono backend and the effect httpapi backend, held together by json-parity pins; the openapi doc and the sdk generate from the httpapi contract.
+- **tool output structured for rendering, not just for models.** grep and glob ship typed hits in metadata so clients render designed cards instead of parsing prose. shell tools attach freshly written screenshots as image parts: "screenshot saved to /tmp/x.png" becomes pixels in the transcript on whatever device I read it from.
+- **fleet-shaped hardening.** provider byte-size ceilings classify as context overflow instead of wedging a session forever; worktree failures ride typed 400s through the auth middleware on both backends; version skew between machines is treated as an incident, not a shrug. the scar tissue lives in [GOTCHAS.md](./GOTCHAS.md).
 
-a loop in `packages/opencode/src/wave/loop.ts` orchestrates everything. after I arm it once, every wave completion auto-spawns the next, transient failures auto-retry up to 3 times, and `PLAN UNDOABLE` outcomes auto-escalate to the verifier. when an agent needs user input it pauses conversationally. the session stays alive, I reply in chat, the same agent resumes mid-thread. every outcome (success, failure, undoable, paused, crash) produces a git commit, so the working tree is always clean between sessions and I have a full audit trail in `git log`.
-
-**workflow**:
-
-1. **plan.** write a plan in plain markdown anywhere, or use `/mode plan` (iterative) or `/agent plan_structured` (4-phase pipeline) to produce one in `.opencode/plans/`.
-
-2. **decompose.** new session, switch to wave_plan via the `/wave-plan` slash command. the slash pre-fills a prompt asking for the plan path and executor agent. model is optional, leave unspecified to use codemaxxxing's default.
-
-   ```
-   /wave-plan
-   Decompose @.opencode/plans/my-plan.md. Executor agent: caveman.
-   ```
-
-   this produces `.wave/campaigns/<id>/`. no source code is modified.
-
-3. **arm and walk away.** open `/wave` in the TUI. press `r`. the verifier runs first (sanity-checks the campaign). then the executor spawns wave 0, runs it, commits, advances state. the loop sees the settle, spawns wave 1. repeats until `all_complete`.
-
-4. **respond to questions.** when the dashboard shows a USER ATTENTION banner, press `↵` on the wave row to open the session in chat. read the agent's full contextual question, reply normally. the agent picks up the reply and continues.
-
-### orchestrated waves
-
-per-wave executors aren't limited to single-session runs. for non-trivial waves the executor itself spawns subagents: a **planner** that breaks the wave into PLAN.json tasks (one file or one tight bundle per task), then per-task **generator + evaluator** pairs that build and grade independently. the executor's role is supervisor — it watches for set-phrases and reads CONTRACT.json but never grades criteria directly. the evaluator is asymmetric and adversarial, judging only the OUTPUT (never the generator's reasoning trace), using tools (greps, type-checks, `bun test`, verify recipes) to verify behavior rather than inspect code.
-
-this is the discipline that lets a wave with 5-15 file changes ship in one orchestrated session without a human review pass: the per-task evaluator catches the bugs the generator missed, the orchestrator drafts CONTRACT.json upfront from the wave spec (pre-agreed contract pattern), and disjoint-write tasks run in parallel via the multi-agent surface. the actor-discipline campaign (iteration 9) validated this shape across 10 waves: 35 generator+evaluator pairs, 340 contract criteria, zero pivots in Phase 3, T2+T3+T4 3-way parallelized in Wave 8. each wave's full orchestration trace lives in `.wave/campaigns/<id>/waves/wave_N/NOTES.md`.
-
-self-evaluation is a trap (a builder tuned to be self-critical doesn't critique). orchestrated waves always spawn a separate evaluator subagent; the generator never grades its own work. the same agent never holds both roles.
-
-read more: [WAVES.md](./WAVES.md) for the full algorithm, FSM states, set phrases, recovery paths, and architectural choices.
+the fleet this serves today: my mac plus always-on vms, every machine running one persistent serve, agents coding whether or not a laptop lid is open. boxbox watches all of it. the failure modes are fleet failure modes now (locks across processes, clients racing, machines drifting apart), and the recent git history is mostly the runtime earning that.
 
 ## multi-agent architecture
 
 upstream's `task` is fire-and-forget. parent calls task, child runs to completion, parent gets back a single text string. no channel back during execution. no concurrent siblings. no observable status. no supervision. fine for "go grep the codebase". falls apart for everything else I kept wanting to do: parallel fan-out with N explorers, observer + worker patterns, debate between two framings, long-running siblings the parent checks in on later, fault tolerance when one of those siblings crashes mid-flight.
 
-I replaced it with a real actor system. ten tools, all backed by an `AgentControl` service with per-root agent registry, per-session bounded mailboxes, supervision strategies, link cascades, and per-`agent_type` behavior contracts. erlang/otp/akka conceptual lineage adapted for LLM constraints — `on_failure: respawn` mirrors OTP supervisor `restart: permanent`, `pool_strategy: one_for_all` is OTP one_for_all, `link_agents`/`unlink_agents` are erlang `link/1`/`unlink/1`. deliberately NOT imported: lifecycle hooks (preStart/postStop don't help LLM subagents), deep escalation chains (LLM cost makes them expensive), or persistence (state lives in messages, not in subagent memory across crashes).
+I replaced it with a real actor system. ten tools, all backed by an `AgentControl` service with per-root agent registry, per-session bounded mailboxes, supervision strategies, link cascades, and per-`agent_type` behavior contracts. erlang/otp/akka conceptual lineage adapted for LLM constraints: `on_failure: respawn` mirrors OTP supervisor `restart: permanent`, `pool_strategy: one_for_all` is OTP one_for_all, `link_agents`/`unlink_agents` are erlang `link/1`/`unlink/1`. deliberately NOT imported: lifecycle hooks (preStart/postStop don't help LLM subagents), deep escalation chains (LLM cost makes them expensive), or persistence (state lives in messages, not in subagent memory across crashes).
 
 ### the ten tools, grouped
 
@@ -67,8 +49,8 @@ I replaced it with a real actor system. ten tools, all backed by an `AgentContro
 
 | Tool | What it does |
 |---|---|
-| `spawn_agent` | fire-and-keep-running. returns immediately with the child's canonical path. parent keeps working. accepts `on_failure: respawn / escalate / ignore / kill_pool` and `pool_strategy: one_for_one / one_for_all / rest_for_one`. `model` overrides the child's model as `provider/model`, `reasoning_effort` picks a variant — both validated at spawn time (unknown model or invalid variant fails the call instead of silently spawning on the wrong model); unset means the child runs its agent type's configured model, else inherits the spawner's model (nearest ancestor in the spawn chain with a model pick), else the machine-global default. `files` attaches file contents to the child's first message; `fork_turns` controls inherited history (`all` / `none` / last-N). |
-| `close_agent` | release a slot. cascades through descendants. `target` is optional (self-close); returns `already_terminated` (success — child exited before close arrived) vs `path_invalid` (model bug — wrong path). |
+| `spawn_agent` | fire-and-keep-running. returns immediately with the child's canonical path. parent keeps working. accepts `on_failure: respawn / escalate / ignore / kill_pool` and `pool_strategy: one_for_one / one_for_all / rest_for_one`. `model` overrides the child's model as `provider/model`, `reasoning_effort` picks a variant; both are validated at spawn time (unknown model or invalid variant fails the call instead of silently spawning on the wrong model). unset means the child runs its agent type's configured model, else inherits the spawner's model (nearest ancestor in the spawn chain with a model pick), else the machine-global default. `isolation: "worktree"` gives the child its own git checkout. `files` attaches file contents to the child's first message. `fork_turns` controls inherited history and defaults to `none`: children are isolated context windows, history copy (`all` / last-N) is a deliberate opt-in. |
+| `close_agent` | release a slot. cascades through descendants. `target` is optional (self-close); returns `already_terminated` (success: child exited before close arrived) vs `path_invalid` (model bug: wrong path). |
 
 **messaging**
 
@@ -88,7 +70,7 @@ I replaced it with a real actor system. ten tools, all backed by an `AgentContro
 
 | Tool | What it does |
 |---|---|
-| `spawn_pool` | declarative N-worker fan-out under a shared pool_id. three collect strategies: `all` (wait for every member), `first` (race; runtime closes losers), `any_n` (quorum — return when K members deliver, leave the rest alive). non-atomic spawning — failures land in a `failures[]` array. |
+| `spawn_pool` | declarative N-worker fan-out under a shared pool_id. three collect strategies: `all` (wait for every member), `first` (race; runtime closes losers), `any_n` (quorum: return when K members deliver, leave the rest alive). spawning is non-atomic; failures land in a `failures[]` array. members can take worktree isolation too: N writers, zero trampling. |
 
 **linking**
 
@@ -109,27 +91,37 @@ the spawn tree is depth-limited (4 levels under `/root`). each agent runs in its
 
 a sibling watcher fiber forks at every spawn. when the child reaches a final, non-shutdown status, the watcher posts a completion notification to the parent's mailbox. parent's `wait_agent` wakes within milliseconds.
 
+### worktree isolation and declared review
+
+parallel writers don't share a working directory. with `isolation: "worktree"` the child gets its own git checkout on its own branch (named from its task name) under the data dir, booted alive before its first turn: tracked files, `.worktreeinclude`-declared ignored files (.env, node_modules), a running instance, start scripts. clean checkouts remove themselves at terminal status; checkouts with commits are kept, and the completion notification reports branch, commits ahead and dirt so the parent merges, sends back, or discards. respawned children continue in the same checkout. creation refuses under low disk or past a per-project checkout cap, because a fleet machine is a shared machine.
+
+review is declared, never inferred. a checkout-homed root calls `request_review` when the deliverable is done (committed, verified, coherent as one unit); that emits `worktree.review.requested` on the checkout's own directory, and clients raise the review lane on that event and only that event. the note becomes the review card's headline. merge is a local squash-merge on the machine that owns the checkout, discard snapshots dirty work to a rescue commit first, and both refuse to touch a checkout while an agent holds its run lock: a tap on a phone can never delete a working directory under a running agent. checkout-homed sessions are told their role at bootstrap: children commit and never push (the parent decides), roots integrate child branches and then declare.
+
 ### supervision
 
-`spawn_agent` accepts `on_failure` to declare what happens when a child terminates non-gracefully: `escalate` (default; the runtime forwards the completion notification with terminal status), `respawn` (re-spawn at the same task_name with a fresh session id, capped at 3 attempts then escalates with `transient_tool_error`), `ignore` (swallow the failure silently — no completion notification; use for fire-and-forget probes), `kill_pool` (cascade to the pool — applies to pool members only).
+`spawn_agent` accepts `on_failure` to declare what happens when a child terminates non-gracefully: `escalate` (default; the runtime forwards the completion notification with terminal status), `respawn` (re-spawn at the same task_name with a fresh session id, capped at 3 attempts then escalates with `transient_tool_error`), `ignore` (swallow the failure silently, no completion notification; for fire-and-forget probes), `kill_pool` (cascade to the pool; applies to pool members only).
 
 `pool_strategy` controls how a failure in one pool member affects siblings (OTP-style): `one_for_one` (default; failures are isolated), `one_for_all` (any single failure tears down the entire pool), `rest_for_one` (any failure tears down members spawned after the failing one).
 
+### model routing
+
+worker models are pinned per agent type, so picking the agent type is the routing decision: fable 5 drives, `general` runs opus 4.8 for specced parallel engineering, `worker` runs sonnet 5 for fully-specced mechanical edits, `mule` runs gemini 3.6 flash for bulk reads, explore runs sonnet 5. spawn-time overrides route judgment work up and mechanical work down. the matrix, the three-condition delegation gate (complete spec, machine-checkable success, disposable output) and the escalation ratchet live in a per-machine `~/.config/opencode/AGENTS.md` (iteration 10), not in code: routing policy changes faster than binaries ship.
+
 ### bounded mailboxes
 
-every agent's mailbox is bounded (default 32 user messages). sends to a full mailbox return `{ error: "mailbox_full", retry_after_ms: 250 }` instead of queueing. callers retry with backoff or use `followup_task` to wake the recipient so it drains. completion notifications from terminating subagents bypass the cap — your subagent crashing always notifies you regardless of mailbox state.
+every agent's mailbox is bounded (default 32 user messages). sends to a full mailbox return `{ error: "mailbox_full", retry_after_ms: 250 }` instead of queueing. callers retry with backoff or use `followup_task` to wake the recipient so it drains. completion notifications from terminating subagents bypass the cap: your subagent crashing always notifies you regardless of mailbox state.
 
-backpressure surfaces context rot before it cascades. the alternative — unbounded mailboxes — lets a stuck subagent's inbox accumulate hundreds of messages while the supervisor thinks everything is fine; the bound makes that situation visible as a tool error the model can react to.
+backpressure surfaces context rot before it cascades. the alternative (unbounded mailboxes) lets a stuck subagent's inbox accumulate hundreds of messages while the supervisor thinks everything is fine; the bound makes that situation visible as a tool error the model can react to.
 
 ### behavior contracts
 
-each `agent_type` declares a `BehaviorContract` (e.g. `general` requires `send_message_to_spawner` before terminating; `explore` requires read-only completion). at terminal-status time the runtime computes `BehaviorViolation`s against the declared contract and attaches them to the parent's notification as a `behavior_violation` struct. observer-only — spawn returns successfully regardless; the orchestrator decides whether to pivot, retry, or abort.
+each `agent_type` declares a `BehaviorContract` (e.g. `general` requires `send_message_to_spawner` before terminating; `explore` requires read-only completion). at terminal-status time the runtime computes `BehaviorViolation`s against the declared contract and attaches them to the parent's notification as a `behavior_violation` struct. observer-only: spawn returns successfully regardless; the orchestrator decides whether to pivot, retry, or abort.
 
 custom agents declared in `.opencode/agent/` inherit no contract by default. per-spawn override via `spawn_agent(..., behavior_version: "subagent_v2")`.
 
 ### per-root scoping
 
-per-root scoping is the structural invariant. two chat sessions opened against the same project don't see each other's subagents. each registered root gets its own slot (registry, mailboxes, statuses, fibers, supervision policies, links, behaviors). a `sessionToRoot` index resolves any session id to its root in O(1). every service method routes through the slot resolver before doing anything.
+per-root scoping is the structural invariant. two chat sessions opened against the same project don't see each other's subagents. each registered root gets its own slot (registry, mailboxes, statuses, fibers, supervision policies, links, behaviors). a `sessionToRoot` index resolves any session id to its root in O(1); a `sessionHome` index resolves any session to its owning instance, so isolated children in worktree checkouts still find their tree. every service method routes through the slot resolver before doing anything.
 
 ### the delivery contract
 
@@ -141,24 +133,24 @@ subagents can also emit `ABORT(<reason>): <details>` as their last assistant lin
 
 four bus events under the `agent.metric.*` prefix surface the rates worth watching:
 
-- **`deliverable_arrival_rate`** — fraction of subagent completions whose deliverable reached the spawner via explicit send or auto-extraction (NOT via the safety net). target: ~1.0; close to 0 means subagents are silently failing.
-- **`safety_net_firing_rate`** — count of safety-net warnings per completion. inverse twin. >0.1 over rolling window of 20+ is the canary that prompts aren't teaching the delivery contract.
-- **`sibling_deadlock_rate`** — count of `wait_agent`/`wait_for_reply` calls that exited via timeout. surfaces blocked-on-message-that-never-arrives shapes live.
-- **`subagent_tool_error_rate`** — count of multi-agent tool calls that returned a tool-recoverable error. context-rot canary.
+- **`deliverable_arrival_rate`**: fraction of subagent completions whose deliverable reached the spawner via explicit send or auto-extraction (NOT via the safety net). target ~1.0; close to 0 means subagents are silently failing.
+- **`safety_net_firing_rate`**: count of safety-net warnings per completion. inverse twin. >0.1 over a rolling window of 20+ is the canary that prompts aren't teaching the delivery contract.
+- **`sibling_deadlock_rate`**: count of `wait_agent`/`wait_for_reply` calls that exited via timeout. surfaces blocked-on-message-that-never-arrives shapes live.
+- **`subagent_tool_error_rate`**: count of multi-agent tool calls that returned a tool-recoverable error. context-rot canary.
 
 four pure rate helpers (`deliverableArrivalRate`, `safetyNetFiringRate`, `siblingDeadlockRate`, `subagentToolErrorRate`) compose with `Array.prototype.filter` / `slice` to scope by time window or session. consumers subscribe via `Bus.Service.subscribeCallback`; failure to attach is silent and safe.
 
 ### integration invariants
 
-scenario-level coverage lives at `packages/opencode/test/integration/multi-agent-invariants.test.ts`. 45 invariants — 17 pre-existing (multi-root scoping, child-completion-wakes-parent, cross-root-send-rejection, session-deletion-cleanup, parent-close-cascades) plus 28 D-series (delivery contract, sibling coordination, ask pattern, ABORT protocol, supervision, pools, links, bounded mailboxes, behavior contracts, observability). each `it.instance` walks the scenario the invariant describes and asserts what a user would observe. every wave touching multi-agent code must add at least one invariant before its production code lands.
+scenario-level coverage lives at `packages/opencode/test/integration/multi-agent-invariants.test.ts`. 45 invariants: 17 pre-existing (multi-root scoping, child-completion-wakes-parent, cross-root-send-rejection, session-deletion-cleanup, parent-close-cascades) plus 28 D-series (delivery contract, sibling coordination, ask pattern, ABORT protocol, supervision, pools, links, bounded mailboxes, behavior contracts, observability). each `it.instance` walks the scenario the invariant describes and asserts what a user would observe. any work touching multi-agent code must add at least one invariant before its production code lands.
 
 coverage alone is necessary but not sufficient. the harness is what catches the composed-primitives bugs (multi-chat collision, wait_agent never waking, agent_type not validated, silent delivery failure when child emits text + close_agent in the same turn, sibling deadlock when both peers wait on broadcasts that don't exist) that 100% line coverage missed.
 
 ### engineering references
 
-- [specs/actor-discipline.md](./specs/actor-discipline.md) — full surface as of iteration 9. supervision, pools, links, bounded mailboxes, behavior contracts, observability, integration invariants discipline.
-- [specs/codex-parity.md](./specs/codex-parity.md) — original 6-tool port that preceded actor-discipline.
-- [specs/codex-parity-hardening.md](./specs/codex-parity-hardening.md) — per-root scoping + completion watcher fixes after the initial port.
+- [specs/actor-discipline.md](./specs/actor-discipline.md): the full surface as of iteration 9. supervision, pools, links, bounded mailboxes, behavior contracts, observability, integration invariants discipline.
+- [specs/codex-parity.md](./specs/codex-parity.md): original 6-tool port that preceded actor-discipline.
+- [specs/codex-parity-hardening.md](./specs/codex-parity-hardening.md): per-root scoping + completion watcher fixes after the initial port.
 
 ## persistent processes
 
@@ -198,44 +190,79 @@ plugin migration: `tool.definition` hooks keyed on `bash` or `task` continue to 
 
 engineering reference: [specs/replace-bash-task.md](./specs/replace-bash-task.md).
 
+## wave runner
+
+the previous generation's answer, kept for the work that still outruns the current one.
+
+built may 2026, when long sessions degraded: the context window was a sliding window, early details rotted, compaction made knowledge shallow, late-stage errors compounded. the wave runner splits a large task across many small fresh sessions, persists progress on disk as a finite state machine, and recovers from failures by patching the plan or asking me. it ran real campaigns end to end; the actor system itself shipped as one (10 waves, 35 generator+evaluator pairs, 340 contract criteria, 6 hours unsupervised while I did something else).
+
+then the models got long and the median moved. fable 5 carries most of that scope inside one live actor tree, so the discipline the waves taught (planner decomposition, generator and evaluator held asymmetric, contracts agreed before the work, disjoint write sets) now runs as orchestrated spawns on the multi-agent surface instead of session splits on disk. no campaign has run since may. boxbox has no wave surface at all, and that absence is the honest signal of where waves live now: the exceptional tail. work so long it outruns even a fable session tree, where an on-disk fsm with a git audit trail beats any amount of context.
+
+the machinery stays maintained for exactly that tail. three agents:
+
+- `wave_plan` decomposes a plan markdown file into a campaign directory under `.wave/campaigns/<id>/`.
+- `wave_verify` sanity-checks the campaign before any wave runs (probes reality with cheap shell commands to catch planner blind spots), and re-amends it whenever a wave fails because the spec was wrong.
+- an executor agent (caveman, build, my choice) runs each wave. reads its `WAVE.md`, dispatches sub-agents, runs verification, commits, updates state.
+
+a loop in `packages/opencode/src/wave/loop.ts` orchestrates everything. after I arm it once, every wave completion auto-spawns the next, transient failures auto-retry up to 3 times, and `PLAN UNDOABLE` outcomes auto-escalate to the verifier. when an agent needs user input it pauses conversationally: the session stays alive, I reply in chat, the same agent resumes mid-thread. every outcome (success, failure, undoable, paused, crash) produces a git commit, so the working tree is always clean between sessions and I have a full audit trail in `git log`.
+
+**workflow**:
+
+1. **plan.** write a plan in plain markdown anywhere, or use `/mode plan` (iterative) or `/agent plan_structured` (4-phase pipeline) to produce one in `.opencode/plans/`.
+
+2. **decompose.** new session, switch to wave_plan via the `/wave-plan` slash command. the slash pre-fills a prompt asking for the plan path and executor agent.
+
+   ```
+   /wave-plan
+   Decompose @.opencode/plans/my-plan.md. Executor agent: caveman.
+   ```
+
+   this produces `.wave/campaigns/<id>/`. no source code is modified.
+
+3. **arm and walk away.** open `/wave` in the TUI. press `r`. the verifier runs first, then the executor spawns wave 0, runs it, commits, advances state. the loop sees the settle, spawns wave 1. repeats until `all_complete`.
+
+4. **respond to questions.** when the dashboard shows a USER ATTENTION banner, press `↵` on the wave row to open the session in chat, read the agent's full contextual question, reply normally. the agent picks up the reply and continues.
+
+self-evaluation is a trap: a builder tuned to be self-critical doesn't critique. orchestrated work always separates generator from evaluator, and the same agent never holds both roles. that rule was born in the wave era and outlived the fsm; it governs actor-tree orchestration today.
+
+read more: [WAVES.md](./WAVES.md) for the full algorithm, FSM states, set phrases, recovery paths, and architectural choices. one artifact for the record: the final commit of boxbox's abandoned native predecessor reads `wave 3 (crashed): session ended without state update`. the web rebuild that replaced it the next morning has never contained a `.wave/` directory.
+
 ## tui
 
 ![codemaxxxing](./screenshot.png)
 
-shaped for the setup I actually live in: mosh + tmux over hotel wifi on an iPad, sometimes splitscreen with notes or a browser, sometimes a 60-column window because the keyboard takes half the screen. every wasted line is a line of session history I can't see. personal preference, not a feature — but the constraints drove the shape.
+the comfort cockpit. shaped for the setups where a terminal is the right surface: mosh + tmux over hotel wifi on an iPad, sometimes splitscreen with notes or a browser, sometimes a 60-column window because the keyboard takes half the screen. every wasted line is a line of session history I can't see. boxbox took over the daily supervision, so the tui now opens mostly while boxbox itself is being built, and whenever boxbox can't be the surface I work from. it stays at full standard anyway: the fallback cockpit is the one that has to feel right when everything else isn't available.
 
-the current direction is **afterglow**: information has temperature. live things glow, finished things cool to embers, failures burn. no borders, boxes, badges, chips, meters, or spinner glyphs anywhere — structure is made of fades: rules dissolve, diff washes bleed out, collapsed output sinks into the dark. the cursor `█` is the only block glyph and the brightest thing on screen, except when an ask fires — one glow at a time: the busy line cools to `· paused` and the ask takes the heat. all chrome is lowercase. status is words-in-color, never glyphs — context pressure reads `84% full · compact soon` in warning past 70%, `compact now` in error past 90%, instead of a meter.
+the current direction is **afterglow**: information has temperature. live things glow, finished things cool to embers, failures burn. no borders, boxes, badges, chips, meters, or spinner glyphs anywhere. structure is made of fades: rules dissolve, diff washes bleed out, collapsed output sinks into the dark. the cursor `█` is the only block glyph and the brightest thing on screen, except when an ask fires. one glow at a time: the busy line cools to `· paused` and the ask takes the heat. all chrome is lowercase. status is words-in-color, never glyphs: context pressure reads `84% full · compact soon` in warning past 70%, `compact now` in error past 90%, instead of a meter.
 
 what the surfaces look like now:
 
 - my words render bold in `borderActive` with a dissolving rule under them; speaker gutter marks are gone
-- quiet/loud tool hierarchy: read/grep/glob coalesce into one dim `·`-joined line; edit/run/write/asks are objects — colored header word, bold title, right-edge whisper (verdict + duration), indented body, air above and below
+- quiet/loud tool hierarchy: read/grep/glob coalesce into one dim `·`-joined line; edit/run/write/asks are objects with a colored header word, bold title, right-edge whisper (verdict + duration), indented body, air above and below
 - diffs render as bleed washes (row bg strongest at the left, gone by the right edge; transparent themes skip the wash), collapsing past 12 changed rows into a sunk "n more" whisper
-- the busy state is a kinetic sentence — a gradient whose tail glows hotter than its head, colored by agent identity, with a traveling pulse as the single animated line the perf budget allows. static gradients doing the work of animation, because mosh
-- the return glance: coming back to a finished session, `done — changed token.ts · 31s · $0.04` sits right above the cursor — verdict word bold in success, the rest a dim whisper. never scroll to learn what happened
+- the busy state is a kinetic sentence: a gradient whose tail glows hotter than its head, colored by agent identity, with a traveling pulse as the single animated line the perf budget allows. static gradients doing the work of animation, because mosh
+- the return glance: coming back to a finished session, the verdict line (`done`, what changed, duration, cost) sits right above the cursor, verdict word bold in success, the rest a dim whisper. never scroll to learn what happened
 - the bottom edge is sacred: fade rule → cursor → one status whisper (`agent · model · context words · cost today`)
-- home is a letter-spaced gradient wordmark over a dissolving rule (replaces the figlet ignition on purpose — static paint), one status sentence ("saturday. fable-5 is up."), recent session rows with identity-hashed colors and age whispers, `type to start`
-- dialogs are borderless floating panels — panel fill when the theme has one, fades and air inside, fade-rule headers; the command palette rides the same list template
+- home is a letter-spaced gradient wordmark over a dissolving rule (replaces the figlet ignition on purpose: static paint), one status sentence ("saturday. fable-5 is up."), recent session rows with identity-hashed colors and age whispers, `type to start`
+- dialogs are borderless floating panels: panel fill when the theme has one, fades and air inside, fade-rule headers; the command palette rides the same list template
 - the sidebar keeps its live stats block (messages, tokens, cost, duration) and gains sunk lowercase section headers with short dissolving rules; no left border
-- the subagent footer strip is per-child: identity-tinted rule, `agent · n of m · status word` (running / waiting / completed / errored), a facts whisper (model — including per-spawn overrides — variant, context, cost), parent/prev/next navigation at any depth
+- the subagent footer strip is per-child: identity-tinted rule, `agent · n of m · status word` (running / waiting / completed / errored), a facts whisper (model including per-spawn overrides, variant, context, cost), parent/prev/next navigation at any depth
 
-the design is theme-token pure — zero hex literals in the ported surfaces, every color a token or an interpolation between two tokens. a gauntlet test renders every glow device across all bundled + user themes × dark/light × 100 and 64 cols, checks exact rule geometry, and asserts transparent themes (lucent-orng) degrade to fg-only. narrow-first: every surface holds at 64 cols.
+the design is theme-token pure: zero hex literals in the ported surfaces, every color a token or an interpolation between two tokens. a gauntlet test renders every glow device across all bundled + user themes × dark/light × 100 and 64 cols, checks exact rule geometry, and asserts transparent themes (lucent-orng) degrade to fg-only. narrow-first: every surface holds at 64 cols.
 
-the design lives as a deck of frames in `design/deck/` — frames are the source of truth, the TUI is the port. the loop: edit the frame, `bun design/deck/verify.ts` (geometry + zero-hex across every theme/mode/width), `bun design/deck/render-html.ts`, screenshot, look, iterate, then port. engineering reference: [specs/tui-redesign.md](./specs/tui-redesign.md).
+the design lives as a deck of frames in `design/deck/`: frames are the source of truth, the TUI is the port. the loop: edit the frame, `bun design/deck/verify.ts` (geometry + zero-hex across every theme/mode/width), `bun design/deck/render-html.ts`, screenshot, look, iterate, then port. engineering reference: [specs/tui-redesign.md](./specs/tui-redesign.md).
 
-the still above shows codemaxxxing in toybox-noir with the caveman agent active, mid-response — history cooling above the live edge. reproduce it with `vhs screenshot.tape`.
+the still above shows codemaxxxing in toybox-noir with the caveman agent active, mid-response, history cooling above the live edge. reproduce it with `vhs screenshot.tape`.
 
 sidebar footer still reads `codema(xxx)ing for clauseo`. home footer `by clauseo`. OSC terminal title `codemaxxxing` (home) or `cmx | <session>` (sessions).
 
 also:
 
 - collapsible web search and code search result displays
-- semantic rendering of multi-agent v2 tool calls (spawn / send / wait / list show as proper components, not just JSON blobs)
+- semantic rendering of multi-agent tool calls (spawn / send / wait / list show as proper components, not just JSON blobs)
 - cross-agent mailbox messages render distinct from regular user input, prefixed with `[from <author_path>]`, click-to-expand
 - **flush queued messages on demand.** hit Enter while a turn is running, the message lands in the session log with a ` queued ` badge as today. press `<leader> ⏎` (default `ctrl+x` then `return`) to interrupt the current model stream and process the whole queue immediately. partial assistant text and in-flight tool calls are preserved on the abort so the model sees what it was in the middle of doing, then the queued messages, then responds. while a turn is running the busy line's whisper appends `· <leader> ⏎ flush N queued`, with `esc to stop` right-aligned on the same row. configurable via `keybinds.session_flush_queued`. see [flush-queued change notes](./CHANGES/2026-05-18-flush-queued.md).
-- `/wave` slash command for the wave campaign dashboard
-- `/wave-plan`, `/wave-run`, `/wave-pause`, `/wave-stop`, `/wave-next` slash commands for campaign control
-- active campaign status on the home footer as words-in-color (`wave 3/7`, `waves done`)
+- `/wave` slash command for the wave campaign dashboard, `/wave-plan`, `/wave-run`, `/wave-pause`, `/wave-stop`, `/wave-next` for campaign control, active campaign status on the home footer as words-in-color (`wave 3/7`, `waves done`)
 
 ## prompts
 
@@ -246,7 +273,7 @@ I keep iteration logs in [`PROMPT_ITERATIONS/`](./PROMPT_ITERATIONS/) and corres
 3. **solution**. exact files changed and why.
 4. **observe**. what to watch for to know if it worked.
 
-prompts are alive here. the right framing for Opus 4.6 isn't the right framing for Opus 4.7 — 4.7 stopped inferring implicit contracts and I had to rewrite the multi-agent prose to state the delivery contract literally (iteration 9). fable 5 arrived and the official guidance flipped from "state everything" to "prompts that are too prescriptive degrade output" — iteration 10 is the corresponding net deletion. every model release prompts a re-evaluation; sections get added, deleted, reframed. ten iterations in, the prompts barely resemble the upstream defaults.
+prompts are alive here, and their direction reversed with the models. the right framing for Opus 4.6 wasn't the right framing for Opus 4.7 (4.7 stopped inferring implicit contracts, so iteration 9 spelled the delivery contract out literally). then fable 5 arrived and the official guidance flipped from "state everything" to "prompts that are too prescriptive degrade output"; iteration 10 is the corresponding net deletion. the prompts used to compensate for what models couldn't do. now they mostly route what models can do. ten iterations in, they barely resemble the upstream defaults.
 
 a full index of files differing from upstream is in [`CHANGES/INDEX.md`](./CHANGES/INDEX.md).
 
@@ -265,14 +292,15 @@ a full index of files differing from upstream is in [`CHANGES/INDEX.md`](./CHANG
 
 ### system prompts
 
-the Anthropic, Gemini, and default (GLM/Qwen/other) system prompts have all been rewritten with my flavour:
+the Anthropic, Gemini, and default (GLM/Kimi/other) system prompts have all been rewritten with my flavour:
 
 - **anti-over-engineering**. don't add features, abstractions, error handling, or comments beyond what was asked.
 - **inquiry vs directive awareness**. distinguish questions and discussions from action requests. don't start implementing when the user is exploring ideas.
 - **security awareness**. actively watch for OWASP top 10 vulnerabilities in generated code.
 - **no time estimates**. never predict how long tasks will take.
 - **blast radius awareness**. freely take reversible actions, flag destructive ones before proceeding.
-- **parallelism**. the prompts encourage parallel tool calls and parallel subagent launches wherever independent work exists. this keeps sessions shorter, context cleaner, and is what makes patterns like the wave runner practical.
+- **parallelism**. the prompts encourage parallel tool calls and parallel subagent launches wherever independent work exists. this keeps sessions shorter and context cleaner, and it's what makes fleet-wide orchestration practical.
+- **machine awareness**. the env block carries the hostname; per-machine rules (dev server binding, tailscale handoff, what never gets restarted) live in a per-machine global AGENTS.md.
 
 the Gemini prompt is adapted for Gemini's response patterns: prescriptive framing over prohibitions, context efficiency guidance, Directives/Inquiries distinction, Research-Strategy-Execution lifecycle. see [iteration 3](./PROMPT_ITERATIONS/2026-02-22-prompt-parity/ITERATION.md) and the [research learnings](./PROMPT_ITERATIONS/2026-02-22-prompt-parity/LEARNINGS.md) for the rationale.
 
@@ -308,7 +336,7 @@ the main agent's delegation to explore has been tuned to prevent context bloat (
 - the main agent uses Read directly when it already knows file paths, instead of wasting an explore agent on file reading
 - explore agents are always given a thoroughness level and starting-point directories
 
-my setup uses Claude Fable 5 as the primary model with per-agent-type worker pins — explore and the `worker` line-worker on Claude Sonnet 5, `general` on Claude Opus 4.8, and a `mule` context agent on Gemini 3.6 Flash (the routing matrix + delegation gate live in `~/.config/opencode/AGENTS.md`, iteration 10). to pin explore, add the following to your `opencode.json`:
+my setup uses Claude Fable 5 as the primary model with per-agent-type worker pins: explore and the `worker` line-worker on Claude Sonnet 5, `general` on Claude Opus 4.8, and a `mule` context agent on Gemini 3.6 Flash (the routing matrix and delegation gate live in `~/.config/opencode/AGENTS.md`, iteration 10). to pin explore, add the following to your `opencode.json`:
 
 ```json
 {
@@ -336,7 +364,7 @@ use `/mode plan` when you're still figuring out what you want. you have a rough 
 
 ### subagent permissions
 
-the explore agent's bash access is locked down with explicit deny rules for destructive commands (`rm`, `git push`, `npm install`, etc.) while allowing read-only commands (`ls`, `find`, `git log`, etc.). per-built-in defaults for the new multi-agent and persistent-process tools live at `packages/opencode/src/agent/agent.ts:107-301`. `build` and `general` allow everything; `explore` allows messaging but not spawning or closing; `plan` denies all new tools; `compaction`, `title`, and `summary` deny everything wildcard-wise.
+the explore agent's bash access is locked down with explicit deny rules for destructive commands (`rm`, `git push`, `npm install`, etc.) while allowing read-only commands (`ls`, `find`, `git log`, etc.). per-built-in defaults for the multi-agent and persistent-process tools live at `packages/opencode/src/agent/agent.ts:107-301`. `build` and `general` allow everything; `explore` allows messaging but not spawning or closing; `plan` denies all new tools; `compaction`, `title`, and `summary` deny everything wildcard-wise.
 
 ### caveman agent
 
@@ -346,7 +374,7 @@ the system prompt is a 1:1 copy of `anthropic.txt` with caveman communication ru
 
 the `build` agent remains the default for normal conversational use. I use `caveman` when I want maximum speed and token efficiency and don't need verbose explanations.
 
-the always-on caveman rules that used to live in the general and explore subagent prompts were retired in iteration 10: Anthropic's fable-5 guidance names compression-by-fragments/arrow-chains as an anti-pattern for current models, so subagent reports now use selectivity instead — outcome first, complete sentences, exact identifiers verbatim, shorter by omission rather than by shorthand. caveman survives as the opt-in `caveman` primary agent described above.
+the always-on caveman rules that used to live in the general and explore subagent prompts were retired in iteration 10: Anthropic's fable-5 guidance names compression-by-fragments and arrow chains as an anti-pattern for current models, so subagent reports now use selectivity instead. outcome first, complete sentences, exact identifiers verbatim, shorter by omission rather than by shorthand. caveman survives as the opt-in `caveman` primary agent described above.
 
 ### custom agents
 
@@ -366,9 +394,9 @@ cp custom_agents/docs.md custom_agents/plan_structured.md custom_agents/wave_pla
 
 two artifacts that emerged from the campaigns and have outsized value going forward.
 
-[`GOTCHAS.md`](./GOTCHAS.md) is the sharp-edges knowledge base. each entry is one painful debugging session distilled to a fix pattern. progressive disclosure: load the indexes first (`Read GOTCHAS.md limit=200` for about 4 KB), then jump to specific entries by slug with offset reads. covers Effect v4 renames, Bus and InstanceState lifetime traps, opentui render antipatterns, Bun coverage quirks, PTY origin gating, perf bench methodology, permission routing, the D5 extractor's terse-follow-up-status-line edge case, the D11 ABORT parser's last-line-only anchor. read before doing the matching kind of work; you'll save the same hours I did.
+[`GOTCHAS.md`](./GOTCHAS.md) is the sharp-edges knowledge base. each entry is one painful debugging session distilled to a fix pattern. progressive disclosure: load the indexes first (`Read GOTCHAS.md limit=200` for about 4 KB), then jump to specific entries by slug with offset reads. covers Effect v4 renames, Bus and InstanceState lifetime traps, opentui render antipatterns, Bun coverage quirks, PTY origin gating, perf bench methodology, permission routing, flock liveness, cross-instance fiber ownership, the D5 extractor's terse-follow-up-status-line edge case, the D11 ABORT parser's last-line-only anchor. read before doing the matching kind of work; you'll save the same hours I did.
 
-`INTEGRATION_INVARIANTS.md` (per-campaign, lives in each campaign's archive under `.wave/campaigns/<id>/plan/`) plus the test harness at `packages/opencode/test/integration/` is the discipline. each invariant names a scenario the system must hold. each `it.instance` walks the scenario and asserts what a user would observe. coverage is necessary; the harness is sufficient. the structural bugs that survived 100% line coverage in the codex-parity campaign (multi-chat collision, wait_agent never waking, agent_type not validated) and the actor-discipline campaign (silent delivery failure when subagent emits text + close_agent in the same turn, sibling deadlock when peers wait on broadcasts that don't exist) are the empirical proof. the harness now holds 45 invariants — 17 pre-existing scoping/lifecycle plus 28 D-series covering delivery contract, sibling coordination, ask pattern, ABORT protocol, supervision, pools, links, bounded mailboxes, behavior contracts, observability. future work touching multi-agent or tool-surface code must add at least one invariant before its production code lands.
+`INTEGRATION_INVARIANTS.md` (per-campaign, lives in each campaign's archive under `.wave/campaigns/<id>/plan/`) plus the test harness at `packages/opencode/test/integration/` is the discipline. each invariant names a scenario the system must hold. each `it.instance` walks the scenario and asserts what a user would observe. coverage is necessary; the harness is sufficient. the structural bugs that survived 100% line coverage in the codex-parity campaign (multi-chat collision, wait_agent never waking, agent_type not validated) and the actor-discipline campaign (silent delivery failure when a subagent emits text + close_agent in the same turn, sibling deadlock when peers wait on broadcasts that don't exist) are the empirical proof. the harness holds 45 invariants: 17 pre-existing scoping/lifecycle plus 28 D-series covering delivery contract, sibling coordination, ask pattern, ABORT protocol, supervision, pools, links, bounded mailboxes, behavior contracts, observability. any future work touching multi-agent or tool-surface code must add at least one invariant before its production code lands.
 
 ## if you ever fork this
 
@@ -415,6 +443,16 @@ make sure `~/.local/bin` is in your `PATH`. if not, add to your `.zshrc`:
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+### fleet serve
+
+how it actually runs day to day: every machine in the fleet keeps one persistent serve alive, and clients come to it.
+
+```bash
+cmx serve --port 4096 --hostname 0.0.0.0
+```
+
+bind `0.0.0.0` only on machines that live behind a tailnet; anything with a public interface binds loopback behind its own front. set `OPENCODE_SERVER_PASSWORD` so fleet clients can authenticate, and keep the serve alive with launchd or a systemd user unit. config and skill edits hot-reload into a running serve; a restart means a binary upgrade and nothing else.
 
 ## license
 
