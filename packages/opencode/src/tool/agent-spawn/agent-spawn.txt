@@ -114,11 +114,13 @@ time.
 ## fork_turns
 
 Controls how much of your conversation history the child inherits.
-- `"all"` (default): full history. Use when the child needs your full
-  context to make sense of the task.
-- `"none"`: no history. Use for fully self-contained tasks where the
-  initial message is enough.
-- A positive integer string (e.g. `"3"`): the most recent N turns. Use
+- `"none"` (default): no history. Children are isolated context windows —
+  that is the point of spawning. Write a complete brief; attach `files`
+  for artifacts.
+- `"all"`: full history, copied into the child at spawn. Opt-in, and you
+  pay its full token cost on the child's first model call. For agents
+  that genuinely need the conversation record (design review, debate).
+- A positive integer string (e.g. `"3"`): the most recent N turns, for
   when only recent context matters.
 
 Only completed turns are copied — your in-flight turn (the one making

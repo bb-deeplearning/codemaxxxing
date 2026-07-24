@@ -37,8 +37,10 @@ whole call. Always check the `failures` array.
 - `task_prefix` — leaf prefix for member task names. Defaults to `pool`.
 - `timeout_ms` — collect deadline in milliseconds. If omitted the call
   blocks until the strategy is satisfied. Tests should always pass one.
-- `fork_turns` — `all` (default) | `none` | positive integer string.
-  Controls how much parent history each member inherits.
+- `fork_turns` — `none` (default) | `all` | positive integer string.
+  Controls how much parent history each member inherits. Members are
+  isolated context windows by default; history copy is opt-in and each
+  member pays its token cost separately.
 
 ## Collect semantics
 

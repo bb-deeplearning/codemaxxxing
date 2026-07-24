@@ -84,7 +84,7 @@ export const Parameters = Schema.Struct({
   }),
   fork_turns: Schema.optional(Schema.String).annotate({
     description:
-      "How much of your conversation history each member inherits. `all` (default) forks the full history; `none` starts fresh with only the initial message; a positive integer string like `3` forks the last N turns. Use `none` for self-contained tasks.",
+      "How much of your conversation history each member inherits. `none` (default) starts members fresh with only the initial message — members are isolated context windows, and each one pays the copy's token cost separately. `all` copies the full history; a positive integer string like `3` forks the last N turns.",
   }),
   isolation: Schema.optional(Schema.Union([Schema.Literal("none"), Schema.Literal("worktree")])).annotate({
     description:

@@ -51,7 +51,7 @@ export const Parameters = Schema.Struct({
   }),
   fork_turns: Schema.optional(Schema.String).annotate({
     description:
-      "How much of your conversation history the child inherits. `all` (default) forks the full history; `none` starts the child fresh with only the initial message; a positive integer string like `3` forks the last N turns. Use `none` for self-contained tasks; `all` when the child needs your full context.",
+      "How much of your conversation history the child inherits. `none` (default) starts the child fresh with only the initial message — children are isolated context windows. `all` copies your full history into the child at spawn (opt-in; you pay its token cost on the child's first call). A positive integer string like `3` forks the last N turns.",
   }),
   files: Schema.optional(Schema.Array(Schema.String)).annotate({
     description:

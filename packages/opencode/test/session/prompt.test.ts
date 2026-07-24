@@ -849,8 +849,8 @@ it.live(
 
         // The child's run loop drains its mailbox and injects the first user
         // message carrying the resolved model — that message IS the pick.
-        // (find the non-forked one: fork_turns "all" also copies the parent's
-        // history in, and those copies carry the parent's model by design.)
+        // (find the non-forked one so this stays correct under any
+        // fork_turns value; the default copies nothing.)
         const model = yield* Effect.promise(async () => {
           const end = Date.now() + 5_000
           while (Date.now() < end) {
@@ -894,10 +894,11 @@ it.live(
 
 // fork_turns (2026-07-24) — the setting was decoded, validated, stored, and
 // consumed by nothing; every child started blind. These pin the implemented
-// contract: "all" copies the spawner's completed history (marked forked,
-// in-flight turns excluded), "none" copies nothing, N keeps the last N user
-// turns. Forked copies are context — the injected task message stays the
-// driving turn and the child's own agent/model resolution is untouched.
+// contract: default is "none" (children are isolated context windows — the
+// point of spawning), "all" opts in to a copy of the spawner's completed
+// history (marked forked, in-flight turns excluded), N keeps the last N
+// user turns. Forked copies are context — the injected task message stays
+// the driving turn and the child's own agent/model resolution is untouched.
 
 const completedTurn = Effect.fn("test.completedTurn")(function* (sessionID: SessionID, userText: string) {
   const session = yield* Session.Service
@@ -954,7 +955,7 @@ const childMessages = (sessionID: SessionID, ready: (msgs: MessageV2.WithParts[]
   })
 
 it.live(
-  "fork_turns default copies the spawner's completed history into the child and the model sees it",
+  "fork_turns all copies the spawner's completed history into the child and the model sees it",
   () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
@@ -1006,6 +1007,7 @@ it.live(
           parentPath: AgentPath.root(),
           task_name: "forkall",
           initial_message: "what is the secret word?",
+          options: { fork_turns: "all" },
         })
         yield* llm.text("kumquat, obviously")
 
@@ -1045,7 +1047,7 @@ it.live(
 )
 
 it.live(
-  "fork_turns none spawns a blind child — no forked messages, no leaked context",
+  "fork_turns defaults to none — children are isolated context windows, nothing leaks",
   () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
@@ -1058,12 +1060,12 @@ it.live(
         yield* control.registerSessionRoot(chat.id)
         yield* completedTurn(chat.id, "the secret word is kumquat")
 
+        // No options at all — this pins the DEFAULT, not the explicit value.
         const child = yield* control.spawnAgent({
           parentID: chat.id,
           parentPath: AgentPath.root(),
           task_name: "forknone",
           initial_message: "hello",
-          options: { fork_turns: "none" },
         })
         yield* llm.text("hi")
 

@@ -318,7 +318,7 @@ describe("tool.spawn_agent", () => {
     ),
   )
 
-  it.live("fork_turns='all' (default-equivalent) passes through", () =>
+  it.live("fork_turns='all' passes through (explicit opt-in)", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         yield* installNeverLoop

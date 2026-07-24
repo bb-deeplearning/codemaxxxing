@@ -1249,10 +1249,13 @@ export const layer = Layer.effect(
             // Seed forked history BEFORE the mailbox is primed: the run
             // loop's first drain (injectMailboxMessages) must see the full
             // copied transcript so the injected task message lands newest.
+            // Default is "none": the fleet ran the no-op era as fresh
+            // children on every spawn — history copy is opt-in, its token
+            // cost paid deliberately, never by default (2026-07-24).
             yield* seedForkedHistory({
               parentID: input.parentID,
               childID: child.id,
-              fork_turns: input.options?.fork_turns ?? "all",
+              fork_turns: input.options?.fork_turns ?? "none",
             })
 
             yield* emitSpawn({
