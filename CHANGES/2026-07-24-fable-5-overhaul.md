@@ -30,7 +30,7 @@ Iteration 10 ([PROMPT_ITERATIONS/2026-07-24-fable-5-overhaul.md](../PROMPT_ITERA
 
 ## Docs
 
-- `README.md` — iteration table row 10; spawn model-inheritance semantics corrected (children inherit the spawner's model when the agent type has no pin, per e09dfc0); explore default-setup paragraph (sonnet-5); fork-identity file list (`qwen.txt` → `default.txt`); caveman section scoped to the opt-in primary agent.
+- `README.md` — iteration table row 10; spawn model-inheritance semantics corrected (children inherit the spawner's model when the agent type has no pin, per e09fdc0); explore default-setup paragraph (sonnet-5); fork-identity file list (`qwen.txt` → `default.txt`); caveman section scoped to the opt-in primary agent.
 - `CHANGES/INDEX.md` — prompt rows updated; stale `qwen.txt` row corrected.
 
 ## Tests

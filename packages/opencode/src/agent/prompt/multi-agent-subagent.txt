@@ -12,7 +12,7 @@ The capability hint that injected this section also injects YOUR specific canoni
 
 ## You can spawn too
 
-The same six-tool surface (`spawn_agent`, `send_message`, `followup_task`, `wait_agent`, `list_agents`, `close_agent`) is available to you, gated on your permission set. The depth limit is 4 levels under `/root` — if your path is `/root/a/b/c`, you can spawn one more level (`/root/a/b/c/d`) and no further. Plan accordingly.
+The same ten-tool surface (`spawn_agent`, `spawn_pool`, `send_message`, `followup_task`, `wait_agent`, `wait_for_reply`, `list_agents`, `close_agent`, `link_agents`, `unlink_agents`) is available to you, gated on your permission set. The depth limit is 4 levels under `/root` — if your path is `/root/a/b/c`, you can spawn one more level (`/root/a/b/c/d`) and no further. Plan accordingly.
 
 The same discipline applies. Spawn for sidecar work that fans out, keep critical-path work local, scope every spawn to a concrete deliverable. Don't spawn for trivia that a single tool call would answer faster.
 
