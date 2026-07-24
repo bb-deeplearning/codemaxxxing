@@ -849,11 +849,13 @@ it.live(
 
         // The child's run loop drains its mailbox and injects the first user
         // message carrying the resolved model — that message IS the pick.
+        // (find the non-forked one: fork_turns "all" also copies the parent's
+        // history in, and those copies carry the parent's model by design.)
         const model = yield* Effect.promise(async () => {
           const end = Date.now() + 5_000
           while (Date.now() < end) {
             const msgs = await Effect.runPromise(MessageV2.filterCompactedEffect(child.thread_id))
-            const u = msgs.find((item) => item.info.role === "user")
+            const u = msgs.find((item) => item.info.role === "user" && !item.info.forked)
             if (u && u.info.role === "user" && u.info.model) return u.info.model
             await new Promise((done) => setTimeout(done, 20))
           }
@@ -888,6 +890,231 @@ it.live(
       },
     ),
   10_000,
+)
+
+// fork_turns (2026-07-24) — the setting was decoded, validated, stored, and
+// consumed by nothing; every child started blind. These pin the implemented
+// contract: "all" copies the spawner's completed history (marked forked,
+// in-flight turns excluded), "none" copies nothing, N keeps the last N user
+// turns. Forked copies are context — the injected task message stays the
+// driving turn and the child's own agent/model resolution is untouched.
+
+const completedTurn = Effect.fn("test.completedTurn")(function* (sessionID: SessionID, userText: string) {
+  const session = yield* Session.Service
+  const msg = yield* session.updateMessage({
+    id: MessageID.ascending(),
+    role: "user",
+    sessionID,
+    agent: "build",
+    model: ref,
+    time: { created: Date.now() },
+  })
+  yield* session.updatePart({
+    id: PartID.ascending(),
+    messageID: msg.id,
+    sessionID,
+    type: "text",
+    text: userText,
+  })
+  const assistant: MessageV2.Assistant = {
+    id: MessageID.ascending(),
+    role: "assistant",
+    parentID: msg.id,
+    sessionID,
+    mode: "build",
+    agent: "build",
+    cost: 0,
+    path: { cwd: "/tmp", root: "/tmp" },
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    modelID: ref.modelID,
+    providerID: ref.providerID,
+    time: { created: Date.now(), completed: Date.now() },
+    finish: "stop",
+  }
+  yield* session.updateMessage(assistant)
+  yield* session.updatePart({
+    id: PartID.ascending(),
+    messageID: assistant.id,
+    sessionID,
+    type: "text",
+    text: "ack",
+  })
+  return { user: msg, assistant }
+})
+
+const childMessages = (sessionID: SessionID, ready: (msgs: MessageV2.WithParts[]) => boolean) =>
+  Effect.promise(async () => {
+    const end = Date.now() + 5_000
+    while (Date.now() < end) {
+      const msgs = await Effect.runPromise(MessageV2.filterCompactedEffect(sessionID))
+      if (ready(msgs)) return msgs
+      await new Promise((done) => setTimeout(done, 20))
+    }
+    throw new Error("timed out waiting for child session state")
+  })
+
+it.live(
+  "fork_turns default copies the spawner's completed history into the child and the model sees it",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const chat = yield* sessions.create({
+          title: "fork-all",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* control.registerSessionRoot(chat.id)
+        yield* completedTurn(chat.id, "the secret word is kumquat")
+
+        // The spawner's in-flight turn at spawn time: unfinished assistant
+        // with a running tool part. Must NOT be copied — an unpaired
+        // tool_use in the child's transcript is a provider 400.
+        const inflightUser = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: chat.id,
+          agent: "build",
+          model: ref,
+          time: { created: Date.now() },
+        })
+        const inflight: MessageV2.Assistant = {
+          id: MessageID.ascending(),
+          role: "assistant",
+          parentID: inflightUser.id,
+          sessionID: chat.id,
+          mode: "build",
+          agent: "build",
+          cost: 0,
+          path: { cwd: "/tmp", root: "/tmp" },
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: ref.modelID,
+          providerID: ref.providerID,
+          time: { created: Date.now() },
+        }
+        yield* sessions.updateMessage(inflight)
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: inflight.id,
+          sessionID: chat.id,
+          type: "text",
+          text: "IN-FLIGHT-BODY",
+        })
+
+        const child = yield* control.spawnAgent({
+          parentID: chat.id,
+          parentPath: AgentPath.root(),
+          task_name: "forkall",
+          initial_message: "what is the secret word?",
+        })
+        yield* llm.text("kumquat, obviously")
+
+        const msgs = yield* childMessages(child.thread_id, (m) =>
+          m.some((item) => item.info.role === "assistant" && !item.info.forked && item.info.finish !== undefined),
+        )
+
+        // Copies landed, marked forked, in original order, before the task.
+        const forkedUsers = msgs.filter((item) => item.info.role === "user" && item.info.forked)
+        const forkedAssistants = msgs.filter((item) => item.info.role === "assistant" && item.info.forked)
+        expect(forkedUsers.length).toBe(2) // completed turn's user + trailing in-flight user
+        expect(forkedAssistants.length).toBe(1) // ONLY the completed assistant
+        expect(
+          forkedUsers.some((item) => item.parts.some((p) => p.type === "text" && p.text.includes("kumquat"))),
+        ).toBe(true)
+        expect(JSON.stringify(msgs)).not.toContain("IN-FLIGHT-BODY")
+
+        // The forked assistant's parentID was remapped into the child's ID space.
+        const fa = forkedAssistants[0].info
+        if (fa.role === "assistant") {
+          const pid = fa.parentID
+          expect(msgs.some((item) => item.info.id === pid)).toBe(true)
+        }
+
+        // The injected task message is the newest user message and drove the turn.
+        const driving = msgs.findLast((item) => item.info.role === "user")
+        expect(driving?.info.forked).toBeUndefined()
+        expect(driving?.parts.some((p) => p.type === "text" && p.text.includes("what is the secret word"))).toBe(true)
+
+        // The model actually SAW the forked context.
+        const inputs = yield* llm.inputs
+        expect(JSON.stringify(inputs.at(-1)?.messages)).toContain("kumquat")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  15_000,
+)
+
+it.live(
+  "fork_turns none spawns a blind child — no forked messages, no leaked context",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const chat = yield* sessions.create({
+          title: "fork-none",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* control.registerSessionRoot(chat.id)
+        yield* completedTurn(chat.id, "the secret word is kumquat")
+
+        const child = yield* control.spawnAgent({
+          parentID: chat.id,
+          parentPath: AgentPath.root(),
+          task_name: "forknone",
+          initial_message: "hello",
+          options: { fork_turns: "none" },
+        })
+        yield* llm.text("hi")
+
+        const msgs = yield* childMessages(child.thread_id, (m) =>
+          m.some((item) => item.info.role === "assistant" && item.info.finish !== undefined),
+        )
+        expect(msgs.some((item) => item.info.forked)).toBe(false)
+        expect(JSON.stringify(msgs)).not.toContain("kumquat")
+
+        const inputs = yield* llm.inputs
+        expect(JSON.stringify(inputs.at(-1)?.messages)).not.toContain("kumquat")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  15_000,
+)
+
+it.live(
+  "fork_turns N keeps only the last N user turns",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const sessions = yield* Session.Service
+        const control = yield* AgentControl.Service
+        const chat = yield* sessions.create({
+          title: "fork-slice",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* control.registerSessionRoot(chat.id)
+        yield* completedTurn(chat.id, "alpha-secret first")
+        yield* completedTurn(chat.id, "beta-secret second")
+
+        const child = yield* control.spawnAgent({
+          parentID: chat.id,
+          parentPath: AgentPath.root(),
+          task_name: "forkslice",
+          initial_message: "go",
+          options: { fork_turns: 1 },
+        })
+        yield* llm.text("ok")
+
+        const msgs = yield* childMessages(child.thread_id, (m) =>
+          m.some((item) => item.info.role === "assistant" && !item.info.forked && item.info.finish !== undefined),
+        )
+        const rendered = JSON.stringify(msgs)
+        expect(rendered).toContain("beta-secret")
+        expect(rendered).not.toContain("alpha-secret")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  15_000,
 )
 
 // Wave 4 (replace-bash-task-2026-05-15) — `task` is no longer in the

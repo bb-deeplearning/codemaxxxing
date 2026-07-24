@@ -1490,7 +1490,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       // latest user message; freshly-spawned children have no user message
       // yet, so we fall back to the session's configured agent and that
       // agent's preferred model. Both fields are required by MessageV2.User.
-      const existing = yield* sessions.findMessage(sessionID, (m) => m.info.role === "user")
+      // Forked copies (fork_turns seeding) don't count as "this session's
+      // turns" — they carry the SPAWNER's agent/model and would hijack the
+      // child's agent_type if the existing-branch picked them up.
+      const existing = yield* sessions.findMessage(sessionID, (m) => m.info.role === "user" && !m.info.forked)
       let agentName: string
       let modelRef: { providerID: ProviderID; modelID: ModelID; variant?: string }
       if (Option.isSome(existing) && existing.value.info.role === "user") {
@@ -1607,7 +1610,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           let tasks: (MessageV2.CompactionPart | MessageV2.SubtaskPart)[] = []
           for (let i = msgs.length - 1; i >= 0; i--) {
             const msg = msgs[i]
-            if (!lastUser && msg.info.role === "user") lastUser = msg.info
+            // Forked history (fork_turns seeding) is context, never the
+            // driving turn — a forked user message as lastUser would run
+            // the child against the SPAWNER's last request.
+            if (!lastUser && msg.info.role === "user" && !msg.info.forked) lastUser = msg.info
             if (!lastAssistant && msg.info.role === "assistant") lastAssistant = msg.info
             if (!lastFinished && msg.info.role === "assistant" && msg.info.finish) lastFinished = msg.info
             if (lastUser && lastFinished) break

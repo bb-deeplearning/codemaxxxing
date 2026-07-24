@@ -380,6 +380,13 @@ export type ToolPart = Omit<Types.DeepMutable<Schema.Schema.Type<typeof ToolPart
 const messageBase = {
   id: MessageID,
   sessionID: SessionID,
+  // fork_turns (2026-07-24): messages copied from the spawner's history into
+  // a child session at spawn time carry forked: true. Forked messages are
+  // CONTEXT — the LLM sees them in the transcript, but they never drive a
+  // turn: runLoop's lastUser scan and injectMailboxMessages' fresh-child
+  // detection both skip them, so the child's agent/model resolution stays
+  // anchored to the child's own agent_type and spawn params.
+  forked: Schema.optional(Schema.Boolean),
 }
 
 export const User = Schema.Struct({

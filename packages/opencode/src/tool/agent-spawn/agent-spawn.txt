@@ -121,6 +121,11 @@ Controls how much of your conversation history the child inherits.
 - A positive integer string (e.g. `"3"`): the most recent N turns. Use
   when only recent context matters.
 
+Only completed turns are copied — your in-flight turn (the one making
+this spawn call) is excluded, so the child never sees your unfinished
+tool calls. Copies are context, not instructions: the child acts on the
+initial message, with your history as background.
+
 ## files
 
 Attach specific files to the child's first message. Each path (absolute,

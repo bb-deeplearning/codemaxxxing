@@ -15,7 +15,8 @@ import {
 } from "effect"
 import { Identifier } from "@/id/id"
 import { Session } from "@/session/session"
-import { SessionID } from "@/session/schema"
+import { MessageV2 } from "@/session/message-v2"
+import { MessageID, PartID, SessionID } from "@/session/schema"
 import type { ModelID, ProviderID } from "@/provider/schema"
 import { Bus } from "@/bus"
 import { BusEvent } from "@/bus/bus-event"
@@ -1088,6 +1089,70 @@ export const layer = Layer.effect(
       return fiber
     })
 
+    // fork_turns (2026-07-24) — the parameter was decoded, validated, cached
+    // for respawns, and consumed by NOTHING: every child started with an
+    // empty session regardless of the documented all/none/N contract. This
+    // seeds the child with a copy of the spawner's compaction-filtered
+    // history at spawn time. Copies carry forked: true (context, never a
+    // driving turn — runLoop's lastUser scan and injectMailboxMessages'
+    // fresh-child detection both skip them; see messageBase in
+    // message-v2.ts), get fresh ascending IDs in source order so the
+    // injected task message stays newest, and remap assistant parentID +
+    // compaction tail_start_id through the same idMap discipline as
+    // Session.fork. Excluded: unfinished assistants (the spawn call itself
+    // is a RUNNING tool part on the parent's in-flight turn — copying it
+    // would hand providers an unpaired tool_use), non-terminal tool parts,
+    // subtask parts (runLoop's tasks collector would re-execute the
+    // parent's queued work inside the child), and every part type that
+    // encodes parent-session control flow with no model-visible context
+    // (snapshot/patch/agent/retry/step-*). Compaction parts whose
+    // tail_start_id cannot remap into the copied set (in-flight compaction)
+    // are dropped. fork_turns=N keeps the last N user turns of what remains.
+    const seedForkedHistory = Effect.fn("AgentControl.seedForkedHistory")(function* (input: {
+      parentID: SessionID
+      childID: SessionID
+      fork_turns: "none" | "all" | number
+    }) {
+      if (input.fork_turns === "none") return
+      const source = yield* MessageV2.filterCompactedEffect(input.parentID)
+      const finished = source.filter(
+        (msg) => msg.info.role === "user" || (msg.info.role === "assistant" && msg.info.time.completed !== undefined),
+      )
+      const start =
+        typeof input.fork_turns === "number"
+          ? finished.flatMap((msg, i) => (msg.info.role === "user" ? [i] : [])).at(-input.fork_turns)
+          : undefined
+      const sliced = start === undefined ? finished : finished.slice(start)
+      const idMap = new Map<MessageID, MessageID>()
+      for (const msg of sliced) {
+        const newID = MessageID.ascending()
+        idMap.set(msg.info.id, newID)
+        yield* sessions.updateMessage({
+          ...msg.info,
+          id: newID,
+          sessionID: input.childID,
+          forked: true,
+          ...(msg.info.role === "assistant" ? { parentID: idMap.get(msg.info.parentID) ?? msg.info.parentID } : {}),
+        })
+        for (const part of msg.parts) {
+          const keep =
+            part.type === "text" ||
+            part.type === "file" ||
+            part.type === "reasoning" ||
+            (part.type === "tool" && (part.state.status === "completed" || part.state.status === "error")) ||
+            part.type === "compaction"
+          if (!keep) continue
+          const copy: MessageV2.Part = { ...part, id: PartID.ascending(), messageID: newID, sessionID: input.childID }
+          if (copy.type === "compaction") {
+            const mapped = copy.tail_start_id ? idMap.get(copy.tail_start_id) : undefined
+            if (!mapped) continue
+            copy.tail_start_id = mapped
+          }
+          yield* sessions.updatePart(copy)
+        }
+      }
+    })
+
     const spawnAgent: (input: SpawnAgentInput) => Effect.Effect<LiveAgent, SpawnError> = Effect.fn(
       "AgentControl.spawnAgent",
     )(function* (input: SpawnAgentInput) {
@@ -1180,6 +1245,15 @@ export const layer = Layer.effect(
             const child = yield* (input.isolation
               ? create.pipe(Effect.provideService(InstanceRef, input.isolation.context))
               : create)
+
+            // Seed forked history BEFORE the mailbox is primed: the run
+            // loop's first drain (injectMailboxMessages) must see the full
+            // copied transcript so the injected task message lands newest.
+            yield* seedForkedHistory({
+              parentID: input.parentID,
+              childID: child.id,
+              fork_turns: input.options?.fork_turns ?? "all",
+            })
 
             yield* emitSpawn({
               event: Event.SpawnStarted,
