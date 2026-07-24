@@ -113,6 +113,7 @@ describe("session.system", () => {
       expect(text).toContain("Working directory:")
       expect(text).toContain("Workspace root folder:")
       expect(text).toContain("Platform:")
+      expect(text).toContain("Hostname:")
       expect(text).toContain("anthropic/claude-3-7")
     }),
   )

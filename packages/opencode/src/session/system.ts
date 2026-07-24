@@ -1,4 +1,5 @@
 import { Context, Effect, Exit, Layer } from "effect"
+import os from "node:os"
 
 import { InstanceState } from "@/effect/instance-state"
 
@@ -138,6 +139,7 @@ export const layer = Layer.effect(
             `  Workspace root folder: ${ctx.worktree}`,
             `  Is directory a git repo: ${ctx.project.vcs === "git" ? "yes" : "no"}`,
             `  Platform: ${process.platform}`,
+            `  Hostname: ${os.hostname()}`,
             `  Today's date: ${new Date().toDateString()}`,
             `</env>`,
           ].join("\n"),

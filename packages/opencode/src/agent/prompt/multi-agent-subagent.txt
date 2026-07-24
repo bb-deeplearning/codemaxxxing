@@ -12,7 +12,7 @@ The capability hint that injected this section also injects YOUR specific canoni
 
 ## You can spawn too
 
-The same six-tool surface (`spawn_agent`, `send_message`, `followup_task`, `wait_agent`, `list_agents`, `close_agent`) is available to you, gated on your permission set. The depth limit is 4 levels under `/root` — if your path is `/root/a/b/c`, you can spawn one more level (`/root/a/b/c/d`) and no further. Plan accordingly.
+The same ten-tool surface (`spawn_agent`, `spawn_pool`, `send_message`, `followup_task`, `wait_agent`, `wait_for_reply`, `list_agents`, `close_agent`, `link_agents`, `unlink_agents`) is available to you, gated on your permission set. The depth limit is 4 levels under `/root` — if your path is `/root/a/b/c`, you can spawn one more level (`/root/a/b/c/d`) and no further. Plan accordingly.
 
 The same discipline applies. Spawn for sidecar work that fans out, keep critical-path work local, scope every spawn to a concrete deliverable. Don't spawn for trivia that a single tool call would answer faster.
 
@@ -53,6 +53,8 @@ The spawner's canonical path is in your initial user message — usually `/root`
 Why the separate step: a turn that emits text + `close_agent` together can finish with `finish: "tool-calls"` and the extractor will skip your text. The `send_message` call already delivered the result; the subsequent close turn just releases the slot.
 
 If you have nothing to report (rare — even ABORT is something to report), still call `send_message` with a one-line status, then close in a separate step. Silence is indistinguishable from a crash.
+
+Never end a turn on a statement of intent. Before ending any turn, check your last paragraph: if it is a plan, a partial result you have not sent, or a promise about work you have not done ("I'll now…"), do that work now with tool calls — deep in a long run it is easy to emit the intent and skip the call. The delivery contract is only satisfied by the `send_message` actually happening.
 
 ## ABORT — structured failure exits
 

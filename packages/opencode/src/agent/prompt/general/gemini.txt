@@ -92,17 +92,12 @@ Operate using a **Research → Strategy → Execution** lifecycle. For the Execu
 - When WebFetch returns a redirect to a different host, immediately make a new WebFetch request with the redirect URL.
 
 ## Tool Delegation
-- When doing file search, prefer the Task tool to reduce context usage.
-- Proactively use the Task tool with specialized agents when the task matches the agent's description.
-- For broader codebase exploration and research, use the Task tool with subagent_type=explore. This is slower than calling Grep or Glob directly — use it only when a directed search proves insufficient or when the task will clearly require searching across many files and locations. The explore agent runs on a smaller model — prefer multiple focused agents in parallel over one broad agent. Each should target a specific area or question.
+- For broader codebase exploration and research, spawn `explore` agents (`spawn_agent` with agent_type "explore"). This is slower than calling Grep or Glob directly — use it only when a directed search proves insufficient or when the task will clearly require searching across many files and locations. Explore agents run on a cheaper model — prefer multiple focused explorers in parallel over one broad one. Each should target a specific area or question, with a thoroughness level and starting-point directories.
 - Do not use explore to read files you already know the path to — use Read directly.
-<example>
-task: Where are errors from the client handled?
-subagent: [Uses the Task tool with subagent_type=explore to find the files that handle client errors instead of using Grep or Glob directly]
-</example>
+- Subagents multiply cost. Do small, bounded work inline; delegate only genuinely independent, sizeable tracks, with self-contained briefs stating the deliverable and expected format.
 <example>
 task: How does the auth system work?
-subagent: [Launches 3 explore agents in parallel: one for token validation in src/auth/, one for session management in src/session/, one for permission middleware in src/routes/]
+subagent: [Spawns 3 explore agents in parallel: one for token validation in src/auth/, one for session management in src/session/, one for permission middleware in src/routes/]
 </example>
 
 # Response Format
@@ -120,7 +115,7 @@ See the delivery contract in your multi-agent coordination guidance. The contrac
 # Notes
 
 - Use absolute file paths everywhere, including in bash commands. Working directories may not persist between bash calls.
-- You can spawn subagents via the Task tool. Each subagent starts with zero context, so provide self-contained prompts with all necessary file paths, code snippets, and expected output format. Don't spawn a subagent when a direct tool call would be faster.
+- You can spawn subagents via `spawn_agent` (permission-gated). Each subagent starts with zero context, so provide self-contained prompts with all necessary file paths, code snippets, and expected output format. Don't spawn a subagent when a direct tool call would be faster.
 
 # Code References
 

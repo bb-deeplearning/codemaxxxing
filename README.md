@@ -12,7 +12,7 @@ what I wanted that the upstream defaults didn't give:
 - subagents that behave like real actors instead of fire-and-forget RPC calls — concurrent, addressable, supervisable, with mailboxes, links, bounded queues, and per-agent_type behavior contracts. erlang/otp/akka conceptual lineage adapted for LLM constraints. → [**multi-agent actor system**](#multi-agent-architecture).
 - shell tools that hold state between calls so REPLs keep their imports, dev servers stay running while I observe their logs, file watchers report new diagnostics as edits land. → [**persistent processes**](#persistent-processes).
 - a TUI that's readable on the setup I actually live in (mosh + tmux + iPad over hotel wifi on a long flight). no borders anywhere, structure made of fades, information has temperature, a wave campaign dashboard so the FSM is observable. → [**afterglow TUI**](#tui).
-- system prompts that don't over-engineer, don't moralise, distinguish questions from action requests, and parallelize aggressively. constantly reworked — nine iterations and counting, because the right prompt for Opus 4.6 isn't the right prompt for Opus 4.7. → [**rewritten prompts**](#prompts).
+- system prompts that don't over-engineer, don't moralise, distinguish questions from action requests, and parallelize aggressively. constantly reworked — ten iterations and counting, because the right prompt for Opus 4.6 isn't the right prompt for Opus 4.7. → [**rewritten prompts**](#prompts).
 
 the rest of the README walks through each one and how to install. there's a separate [WAVES.md](./WAVES.md) for the full wave-runner algorithm, [GOTCHAS.md](./GOTCHAS.md) for the sharp edges accumulated along the way, and per-campaign engineering references in [specs/](./specs/).
 
@@ -67,7 +67,7 @@ I replaced it with a real actor system. ten tools, all backed by an `AgentContro
 
 | Tool | What it does |
 |---|---|
-| `spawn_agent` | fire-and-keep-running. returns immediately with the child's canonical path. parent keeps working. accepts `on_failure: respawn / escalate / ignore / kill_pool` and `pool_strategy: one_for_one / one_for_all / rest_for_one`. `model` overrides the child's model as `provider/model`, `reasoning_effort` picks a variant — both validated at spawn time (unknown model or invalid variant fails the call instead of silently spawning on the wrong model); unset means the child runs its agent type's configured model falling back to the global default, never the parent's. `files` attaches file contents to the child's first message; `fork_turns` controls inherited history (`all` / `none` / last-N). |
+| `spawn_agent` | fire-and-keep-running. returns immediately with the child's canonical path. parent keeps working. accepts `on_failure: respawn / escalate / ignore / kill_pool` and `pool_strategy: one_for_one / one_for_all / rest_for_one`. `model` overrides the child's model as `provider/model`, `reasoning_effort` picks a variant — both validated at spawn time (unknown model or invalid variant fails the call instead of silently spawning on the wrong model); unset means the child runs its agent type's configured model, else inherits the spawner's model (nearest ancestor in the spawn chain with a model pick), else the machine-global default. `files` attaches file contents to the child's first message; `fork_turns` controls inherited history (`all` / `none` / last-N). |
 | `close_agent` | release a slot. cascades through descendants. `target` is optional (self-close); returns `already_terminated` (success — child exited before close arrived) vs `path_invalid` (model bug — wrong path). |
 
 **messaging**
@@ -246,7 +246,7 @@ I keep iteration logs in [`PROMPT_ITERATIONS/`](./PROMPT_ITERATIONS/) and corres
 3. **solution**. exact files changed and why.
 4. **observe**. what to watch for to know if it worked.
 
-prompts are alive here. the right framing for Opus 4.6 isn't the right framing for Opus 4.7 — 4.7 stopped inferring implicit contracts and I had to rewrite the multi-agent prose to state the delivery contract literally (iteration 9). every model release prompts a re-evaluation; sections get added, deleted, reframed. nine iterations in, the prompts barely resemble the upstream defaults.
+prompts are alive here. the right framing for Opus 4.6 isn't the right framing for Opus 4.7 — 4.7 stopped inferring implicit contracts and I had to rewrite the multi-agent prose to state the delivery contract literally (iteration 9). fable 5 arrived and the official guidance flipped from "state everything" to "prompts that are too prescriptive degrade output" — iteration 10 is the corresponding net deletion. every model release prompts a re-evaluation; sections get added, deleted, reframed. ten iterations in, the prompts barely resemble the upstream defaults.
 
 a full index of files differing from upstream is in [`CHANGES/INDEX.md`](./CHANGES/INDEX.md).
 
@@ -261,6 +261,7 @@ a full index of files differing from upstream is in [`CHANGES/INDEX.md`](./CHANG
 | [7](./PROMPT_ITERATIONS/2026-05-06-wave-system.md)             | 2026-05-06 | Wave system overhaul: verifier agent, retry/escalation FSM, conversational user pause            |
 | [8](./PROMPT_ITERATIONS/2026-05-13-multi-agent-and-tool-overhaul.md) | 2026-05-13 | Multi-agent architecture + tool surface overhaul: replaced `task` and `bash` from the model's view |
 | [9](./PROMPT_ITERATIONS/2026-05-20-actor-discipline.md) | 2026-05-20 | Actor discipline: delivery contract prose, ask pattern + ABORT protocol, supervision + pools + links + bounded mailboxes + behavior contracts, observability metrics |
+| [10](./PROMPT_ITERATIONS/2026-07-24-fable-5-overhaul.md) | 2026-07-24 | Fable 5 era: routing matrix + delegation gate, prompt slimming per official fable/opus guides, caveman retirement, end-turn delivery hardening, machine awareness |
 
 ### system prompts
 
@@ -307,19 +308,19 @@ the main agent's delegation to explore has been tuned to prevent context bloat (
 - the main agent uses Read directly when it already knows file paths, instead of wasting an explore agent on file reading
 - explore agents are always given a thoroughness level and starting-point directories
 
-my setup uses Claude Fable 5 as the primary model with the explore agent specifically running on Gemini 3.1 Pro Preview. to use this, add the following to your `opencode.json`:
+my setup uses Claude Fable 5 as the primary model with per-agent-type worker pins — explore and the `worker` line-worker on Claude Sonnet 5, `general` on Claude Opus 4.8, and a `mule` context agent on Gemini 3.6 Flash (the routing matrix + delegation gate live in `~/.config/opencode/AGENTS.md`, iteration 10). to pin explore, add the following to your `opencode.json`:
 
 ```json
 {
   "agent": {
     "explore": {
-      "model": "google/gemini-3.1-pro-preview"
+      "model": "anthropic/claude-sonnet-5"
     }
   }
 }
 ```
 
-the explore prompt is structured to account for that pairing. consequences on different model setups are not tested.
+consequences on different model setups are not tested.
 
 ### plan mode
 
@@ -345,12 +346,7 @@ the system prompt is a 1:1 copy of `anthropic.txt` with caveman communication ru
 
 the `build` agent remains the default for normal conversational use. I use `caveman` when I want maximum speed and token efficiency and don't need verbose explanations.
 
-both the general and explore subagent prompts also have caveman output rules, tailored to each agent's role:
-
-- **general subagent**. terse implementation reporting. no progress narration. state file changed, what changed, why. failure reports state what was tried and where blocked.
-- **explore subagent**. terse search findings. no search narration. lead with file path + line number. group by area, not search order.
-
-subagent caveman rules are always active regardless of which primary agent is selected. they reduce token usage in agent-to-agent communication where no human reads the output.
+the always-on caveman rules that used to live in the general and explore subagent prompts were retired in iteration 10: Anthropic's fable-5 guidance names compression-by-fragments/arrow-chains as an anti-pattern for current models, so subagent reports now use selectivity instead — outcome first, complete sentences, exact identifiers verbatim, shorter by omission rather than by shorthand. caveman survives as the opt-in `caveman` primary agent described above.
 
 ### custom agents
 
@@ -379,7 +375,7 @@ two artifacts that emerged from the campaigns and have outsized value going forw
 the prompts contain my identity. if you happen to be using this, fork it, change the identity in these files first:
 
 - `packages/opencode/src/session/prompt/anthropic.txt`. name, org, and identity in the Anthropic system prompt.
-- `packages/opencode/src/session/prompt/qwen.txt`. same for the default prompt (GLM, Qwen, and other non-specifically-matched models).
+- `packages/opencode/src/session/prompt/default.txt`. same for the default prompt (GLM, Kimi, and other non-specifically-matched models).
 - `packages/opencode/src/session/prompt/gemini.txt`. same for the Gemini system prompt.
 - `packages/opencode/src/agent/prompt/explore.txt`. explore agent identity.
 - `packages/opencode/src/agent/prompt/general/anthropic.txt`. Anthropic general subagent identity.

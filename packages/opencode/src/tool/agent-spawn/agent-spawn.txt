@@ -30,13 +30,11 @@ unset, resolution walks: the agent type's configured model, else the model
 YOU are currently running (nearest ancestor in the spawn chain with a model
 pick), else the machine-global default as a last resort.
 
-To pin the child to a specific model, pass `model` as `provider/model`
-(e.g. `anthropic/claude-sonnet-4-5`). Add `reasoning_effort` to select one
+Agent-type pins are the routing matrix's defaults — for most spawns, leaving `model` unset and picking the right `agent_type` IS the routing decision. Override `model` (as `provider/model`, e.g. `anthropic/claude-opus-4-8`) when the task tier demands it per the routing matrix in your instructions files: judgment work routes to stronger models, mechanical machine-verifiable work routes to cheaper ones. Add `reasoning_effort` to select one
 of that model's reasoning variants (e.g. `low`, `high`); it requires
 `model` to be set. Both are validated at spawn time — an unknown model or
 an invalid variant fails the call (listing valid variants) instead of
-silently spawning the child on the wrong model. Leave both unset unless
-the user explicitly asks for an override or the task clearly demands one.
+silently spawning the child on the wrong model.
 
 `agent_type` selects which subagent definition to spawn — see the
 Subagents section below.
