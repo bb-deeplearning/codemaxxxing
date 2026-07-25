@@ -429,11 +429,13 @@ const OPENAI_EFFORTS = ["none", "minimal", ...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
 
 function anthropicOpus47OrLater(apiId: string) {
   // Matches "opus-4.7" (Anthropic/Bedrock/Vertex) and "claude-4.7-opus" (SAP AI Core inverted).
-  // Greedy \d+ correctly extends to multi-digit majors (e.g. "claude-10.0-opus") for forward compatibility.
-  const version = /opus-(\d+)[.-](\d+)(?:[.@-]|$)|claude-(\d+)[.-](\d+)-opus(?:[.@-]|$)/i.exec(apiId)
+  // The minor version is optional: Opus 5+ dropped it ("claude-opus-5"), and a
+  // missing minor is treated as 0. Greedy \d+ correctly extends to multi-digit
+  // majors (e.g. "claude-10.0-opus") for forward compatibility.
+  const version = /opus-(\d+)(?:[.-](\d+))?(?:[.@-]|$)|claude-(\d+)(?:[.-](\d+))?-opus(?:[.@-]|$)/i.exec(apiId)
   if (!version) return false
   const major = Number(version[1] ?? version[3])
-  const minor = Number(version[2] ?? version[4])
+  const minor = Number(version[2] ?? version[4] ?? 0)
   return major > 4 || (major === 4 && minor >= 7)
 }
 

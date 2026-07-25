@@ -2962,6 +2962,12 @@ describe("ProviderTransform.variants", () => {
         expectedHigh: { thinking: { type: "adaptive", display: "summarized" }, effort: "high" },
       },
       {
+        name: "opus 5",
+        apiIds: ["claude-opus-5", "claude-opus-5-20260724"],
+        efforts: ["low", "medium", "high", "xhigh", "max"],
+        expectedHigh: { thinking: { type: "adaptive", display: "summarized" }, effort: "high" },
+      },
+      {
         name: "sonnet 5",
         apiIds: ["claude-sonnet-5", "claude-sonnet-5-20260630"],
         efforts: ["low", "medium", "high", "xhigh", "max"],
