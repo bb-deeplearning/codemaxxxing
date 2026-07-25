@@ -41,7 +41,8 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | Defining a new tool with `Tool.define` | `tool-define-inner-effect-gen-closing-brace`, `tool-execute-needs-explicit-result-type-disjoint-metadata`, `tool-context-ask-typed-as-void` |
 | Lifting helpers out of `Tool.define` into a sibling module | `tool-define-execute-r-must-be-never-capture-services-in-closure` |
 | Adding a new dep to `ToolRegistry`'s layer | `agentcontrol-required-by-toolregistry-existing-test-layers` |
-| Spawning model PTYs (`origin: "model"`) | `pty-onexit-auto-remove-tui-only`, `pty-create-term-override-tui-only` |
+| Spawning model PTYs (`origin: "model"`) | `pty-onexit-auto-remove-tui-only`, `pty-create-term-override-tui-only`, `pty-exited-model-session-pins-ptmx-fds` |
+| Retaining any resource past its process's exit (PTY sessions, buffers, handles) | `pty-exited-model-session-pins-ptmx-fds` |
 | Adding a wave bench against the frozen baseline | `pty-bench-baseline-vs-new-work`, `runloop-bench-vs-baseline-methodology-mismatch`, `opentui-render-bench-noise-needs-best-of-n`, `bench-tool-yield-loses-transitive-deps` |
 | Writing e2e perf invariants | `e2e-perf-sibling-fanout-needs-median-of-n` |
 | Verifying a clamp's timing on a TTY-mode process | `tty-line-discipline-echo-defeats-clamp-timing-tests` |
@@ -124,6 +125,7 @@ Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offs
 - L613 `multi-ask-capture-needs-counter` — capture helpers that throw on the first `ctx.ask` truncate multi-ask tool flows; gate the throw on a counter.
 
 ### PTY
+- L891 `pty-exited-model-session-pins-ptmx-fds` — an exited model PTY keeps two `/dev/ptmx` fds until `kill()`; the per-directory LRU cap can never fire under worktree fan-out, so the host hits `kern.tty.ptmx_max` and ALL pty spawns fail.
 - L770 `pty-onexit-auto-remove-tui-only` — `proc.onExit` auto-removal must gate on `origin === "tui"` so model PTYs survive for post-exit drain.
 - L748 `pty-create-term-override-tui-only` — `Pty.create`'s `TERM=xterm-256color` overlay must gate on `origin === "tui"`.
 - L731 `pty-bench-baseline-vs-new-work` — combining new work into an existing baseline metric is apples-to-oranges; split metrics.
@@ -885,6 +887,34 @@ const env = (
 For model-origin spawns, `input.env` is applied LAST so the caller's overlay (TERM=dumb, NO_COLOR=1, etc.) is observed.
 **Why:** Hardcoded `TERM=xterm-256color` is correct for desktop terminal-pane callers (xterm-style readline expects it). `unified_exec` needs `TERM=dumb` to suppress color codes and pager prompts in CI-like contexts.
 **See also:** `pty-onexit-auto-remove-tui-only` (same gating principle, different surface).
+
+---
+
+### `pty-exited-model-session-pins-ptmx-fds`
+
+**Severity:** correctness-bug
+**When:** Retaining a `Pty` session past its child's exit — i.e. any `origin: "model"` PTY, which is every `exec_command`.
+**Symptom:** After hours of use, every PTY spawn on the HOST fails (`PTY spawn failed`), including in unrelated processes. `lsof -p <serve-pid> | grep -c /dev/ptmx` shows hundreds of open handles against a handful of live children; `ls /dev/ttys* | wc -l` sits at macOS's `kern.tty.ptmx_max` (511). Restarting the process clears it instantly.
+**Fix:** Release the OS handle at exit while keeping the map entry and its buffer. `kill()` is bun-pty's ONLY fd-closing path:
+
+```ts
+function releaseHandle(session: Active) {
+  if (session.released) return
+  session.released = true
+  try { session.process.kill() } catch {}
+}
+
+proc.onExit(({ exitCode }) => {
+  // ... set exited / exitCode / publish Exited / resolve exitDeferred ...
+  if (session.info.origin === "tui") { bridge.fork(remove(id)); return }
+  setTimeout(() => releaseHandle(session), TRAILING_OUTPUT_GRACE_MS).unref?.()
+})
+```
+
+Wait `TRAILING_OUTPUT_GRACE_MS` (not less) so the close can never precede the window `Pty.read` itself honors after an exit. `headTail` holds every byte in memory, so `since_cursor` re-reads are unaffected — verify by asserting both properties in the same test.
+**Why:** A child exiting on its own frees NOTHING — bun-pty holds two `/dev/ptmx` descriptors per PTY until `kill()` runs. `pty-onexit-auto-remove-tui-only` deliberately stops calling `remove()` (and therefore `teardown()` → `kill()`) for model PTYs so their output stays drainable, which silently made output retention imply *descriptor* retention. The only other reclamation is the LRU pruner, and it fires per-directory at `MAX_UNIFIED_EXEC_PROCESSES` — so a worktree fan-out is the worst case, not the best: spreading 278 `exec_command` calls across 15 checkouts keeps every instance under the 64 threshold, the pruner never fires once, and all 556 descriptors stay pinned. The cap is per-directory; the resource is per-machine. Ported constants `POST_EXIT_CLOSE_WAIT_CAP_MS` / `EARLY_EXIT_GRACE_PERIOD_MS` were the codex hooks for this step and sat unreferenced.
+**See:** `packages/opencode/src/pty/index.ts` (`releaseHandle`), `packages/opencode/src/pty/index.test.ts` § "Pty descriptor release on exit".
+**See also:** `pty-onexit-auto-remove-tui-only` (the retention decision this compensates for).
 
 ---
 

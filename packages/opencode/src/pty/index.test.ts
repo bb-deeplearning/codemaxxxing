@@ -945,3 +945,70 @@ describe("Pty instance disposal", () => {
     }
   })
 })
+
+// Regression: a model-origin PTY deliberately outlives its process so
+// `since_cursor` re-reads keep working. It must NOT also outlive its OS
+// handle. bun-pty releases its pair of /dev/ptmx descriptors only on kill();
+// a child exiting on its own frees nothing. Because the LRU pruner is the
+// only other reclamation path and it fires per-directory at 64, a worktree
+// fan-out could hold hundreds of descriptors and exhaust the host-wide
+// kern.tty.ptmx_max (511 on macOS) with a few hundred exec_command calls.
+describe("Pty descriptor release on exit", () => {
+  const ptmxCount = async () => {
+    const proc = Bun.spawn(["lsof", "-p", String(process.pid)], { stdout: "pipe", stderr: "ignore" })
+    const out = await new Response(proc.stdout).text()
+    await proc.exited
+    return out.split("\n").filter((line) => line.includes("/dev/ptmx")).length
+  }
+
+  test("an exited model PTY releases its descriptors while keeping its output readable", async () => {
+    if (process.platform !== "darwin") return
+    await withPty((pty) =>
+      Effect.gen(function* () {
+        const baseline = yield* Effect.promise(ptmxCount)
+
+        const infos = yield* Effect.forEach(Array.from({ length: 12 }, (_, i) => i), (i) =>
+          pty.create({
+            command: "/bin/sh",
+            args: ["-c", `echo marker-${i}`],
+            title: `exit-${i}`,
+            origin: "model",
+          }),
+        )
+
+        // Every child exits on its own; nothing calls remove(). Wait past the
+        // post-exit release window (TRAILING_OUTPUT_GRACE_MS) plus slack.
+        yield* Effect.promise(() => sleep(1200))
+
+        // The entries must still be present and still serve their output —
+        // releasing the handle must not cost us the buffer.
+        const list = yield* pty.list()
+        expect(list.length).toBe(12)
+        for (const [i, info] of infos.entries()) {
+          const read = yield* pty.read(info.id, 0, 0, 1024 * 1024)
+          expect(read).toBeDefined()
+          expect(read!.exited).toBe(true)
+          expect(decode(read!.output)).toContain(`marker-${i}`)
+        }
+
+        // ...and the descriptors are gone. Before the fix this sat at
+        // baseline + 24 (two per retained PTY) and never came down.
+        const after = yield* Effect.promise(ptmxCount)
+        expect(after).toBeLessThanOrEqual(baseline + 2)
+      }),
+    )
+  }, 30000)
+
+  test("a still-running model PTY keeps its descriptors", async () => {
+    if (process.platform !== "darwin") return
+    await withPty((pty) =>
+      Effect.gen(function* () {
+        const baseline = yield* Effect.promise(ptmxCount)
+        yield* pty.create({ command: "/bin/sh", args: ["-c", "sleep 30"], title: "alive", origin: "model" })
+        yield* Effect.promise(() => sleep(400))
+        const after = yield* Effect.promise(ptmxCount)
+        expect(after).toBeGreaterThan(baseline)
+      }),
+    )
+  }, 30000)
+})

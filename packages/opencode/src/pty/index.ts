@@ -73,6 +73,10 @@ type Active = {
   // — polling a long-dead session stays instant.
   exitedAt?: number
   lastUsed: number
+  // Whether the OS handle (bun-pty's pair of /dev/ptmx descriptors) has been
+  // released. Tracked separately from `exited`: an exited session keeps its
+  // map entry and its buffered output long after its descriptors are gone.
+  released: boolean
 }
 
 type State = {
@@ -243,10 +247,23 @@ export const layer = Layer.effect(
     const bus = yield* Bus.Service
     const plugin = yield* Plugin.Service
 
-    function teardown(session: Active) {
+    // Release the OS handle without touching the buffered output. `kill()` is
+    // bun-pty's ONLY fd-closing path — a child exiting on its own leaves both
+    // of its /dev/ptmx descriptors open indefinitely. Since model-origin
+    // entries deliberately outlive their process (so `since_cursor` re-reads
+    // still work), calling this at exit is what keeps a retained entry from
+    // pinning two descriptors against the host-wide `kern.tty.ptmx_max` cap.
+    // Idempotent: teardown and the post-exit timer both route through here.
+    function releaseHandle(session: Active) {
+      if (session.released) return
+      session.released = true
       try {
         session.process.kill()
       } catch {}
+    }
+
+    function teardown(session: Active) {
+      releaseHandle(session)
       for (const [sub, ws] of session.subscribers.entries()) {
         try {
           if (sock(ws) === sub) ws.close()
@@ -390,6 +407,7 @@ export const layer = Layer.effect(
         exitDeferred,
         exited: false,
         lastUsed: tickLastUsed(),
+        released: false,
       }
       s.sessions.set(id, session)
       proc.onData((chunk) => {
@@ -443,7 +461,20 @@ export const layer = Layer.effect(
         // final output and the LRU pruner can prefer exited entries.
         if (session.info.origin === "tui") {
           bridge.fork(remove(id))
+          return
         }
+        // The entry stays, the descriptors do not. Retaining output must not
+        // mean retaining an OS handle: `headTail` already holds every byte, so
+        // nothing downstream needs the fd once the trailing-output window has
+        // passed. Waiting TRAILING_OUTPUT_GRACE_MS (rather than closing
+        // immediately) matches the window `read` itself honors after an exit,
+        // so a read in flight can never observe a handle that closed early.
+        //
+        // Without this the pool leaks ~2 descriptors per exec_command: the
+        // per-directory LRU pruner only fires at MAX_UNIFIED_EXEC_PROCESSES,
+        // and a worktree fan-out spreads calls thin enough across instances
+        // that it may never fire at all.
+        setTimeout(() => releaseHandle(session), TRAILING_OUTPUT_GRACE_MS).unref?.()
       })
       yield* bus.publish(Event.Created, { info })
 
