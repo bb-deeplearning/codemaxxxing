@@ -1214,8 +1214,74 @@ it.live(
   3_000,
 )
 
-// Cancel semantics
+// The queue light's source of truth (board spec workstream D): a busy
+// session reports how many user prompts are waiting on the loop. The turn's
+// own prompt counts until its assistant message is born, which is the same
+// predicate `Session.canUnsendWhileBusy` uses.
+it.live(
+  "busy status reports the depth of prompts queued behind the running turn",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const status = yield* SessionStatus.Service
 
+        const gate = defer<void>()
+        // turn 1 stalls on the gate, turn 2 hangs so the session is still
+        // busy when the queue drains.
+        yield* llm.hold("first turn", gate.promise)
+        yield* llm.hang
+
+        // titled so no title-generation call lands in the hit count.
+        const chat = yield* sessions.create({ title: "Pinned" })
+        yield* user(chat.id, "hi")
+
+        const expectQueued = Effect.fnUntraced(function* (depth: number) {
+          // status is published on transitions, not polled, so wait for the
+          // write instead of racing it.
+          let current = yield* status.get(chat.id)
+          for (let attempt = 0; attempt < 300 && !(current.type === "busy" && current.queued === depth); attempt++) {
+            yield* Effect.sleep("10 millis")
+            current = yield* status.get(chat.id)
+          }
+          expect(current).toEqual({ type: "busy", queued: depth })
+        })
+
+        const fiber = yield* prompt.loop({ sessionID: chat.id }).pipe(Effect.forkChild)
+        yield* llm.wait(1)
+        // turn 1's assistant message exists, so nothing is waiting behind it.
+        yield* expectQueued(0)
+
+        // the prompt_async shape: prompt() forked, exactly what the route
+        // handler does. Each lands behind the in-flight turn.
+        const first = yield* prompt
+          .prompt({ sessionID: chat.id, agent: "build", parts: [{ type: "text", text: "second" }] })
+          .pipe(Effect.forkChild)
+        yield* expectQueued(1)
+        const second = yield* prompt
+          .prompt({ sessionID: chat.id, agent: "build", parts: [{ type: "text", text: "third" }] })
+          .pipe(Effect.forkChild)
+        yield* expectQueued(2)
+
+        // let turn 1 finish; the next iteration answers both queued prompts
+        // with one assistant message, which empties the queue.
+        gate.resolve()
+        yield* llm.wait(2)
+        yield* expectQueued(0)
+
+        yield* prompt.cancel(chat.id)
+        yield* Fiber.await(fiber)
+        yield* Fiber.await(first)
+        yield* Fiber.await(second)
+        expect((yield* status.get(chat.id)).type).toBe("idle")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  10_000,
+)
+
+// Cancel semantics
 it.live(
   "cancel interrupts loop and resolves with an assistant message",
   () =>

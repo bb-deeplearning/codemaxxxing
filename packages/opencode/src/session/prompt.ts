@@ -1451,6 +1451,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const message = yield* createUserMessage(input)
         yield* sessions.touch(input.sessionID)
 
+        // A prompt that lands mid-turn goes into the loop's queue, and the
+        // loop only re-reads `queued` at its next iteration — a whole model
+        // call away. Refresh here so the depth is live while busy. Idle and
+        // retry are left alone: the loop about to start owns those.
+        if ((yield* status.get(input.sessionID)).type === "busy") {
+          yield* status.set(input.sessionID, { type: "busy", queued: Session.queuedCount(input.sessionID) })
+        }
+
         const permissions: Permission.Ruleset = []
         for (const [t, enabled] of Object.entries(input.tools ?? {})) {
           permissions.push({ permission: t, action: enabled ? "allow" : "deny", pattern: "*" })
@@ -1589,7 +1597,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const session = yield* sessions.get(sessionID)
 
         while (true) {
-          yield* status.set(sessionID, { type: "busy" })
+          yield* status.set(sessionID, { type: "busy", queued: Session.queuedCount(sessionID) })
           yield* slog.info("loop", { step })
 
           // Wave 9: drain queued sibling messages BEFORE computing lastUser

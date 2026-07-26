@@ -60,7 +60,9 @@ export const layer = Layer.effect(
           data.runners.delete(sessionID)
           yield* status.set(sessionID, { type: "idle" })
         }),
-        onBusy: status.set(sessionID, { type: "busy" }),
+        // Effect.suspend: `onBusy` is stored once and re-run per transition,
+        // so the count has to be read when it fires, not when it is built.
+        onBusy: Effect.suspend(() => status.set(sessionID, { type: "busy", queued: Session.queuedCount(sessionID) })),
         onInterrupt,
         busy: () => {
           throw new Session.BusyError(sessionID)

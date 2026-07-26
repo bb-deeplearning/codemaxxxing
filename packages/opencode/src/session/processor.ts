@@ -219,7 +219,7 @@ export const layer: Layer.Layer<
       const handleEvent = Effect.fnUntraced(function* (value: StreamEvent) {
         switch (value.type) {
           case "start":
-            yield* status.set(ctx.sessionID, { type: "busy" })
+            yield* status.set(ctx.sessionID, { type: "busy", queued: Session.queuedCount(ctx.sessionID) })
             return
 
           case "reasoning-start":

@@ -382,6 +382,7 @@ export type SessionStatus =
     }
   | {
       type: "busy"
+      queued?: number
     }
 
 export type Pty = {

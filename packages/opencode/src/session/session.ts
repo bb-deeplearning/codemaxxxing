@@ -21,7 +21,7 @@ import { lt } from "drizzle-orm"
 import { or } from "drizzle-orm"
 import { SyncEvent } from "../sync"
 import type { SQL } from "drizzle-orm"
-import { PartTable, SessionTable } from "./session.sql"
+import { PartTable, SessionTable, MessageTable } from "./session.sql"
 import { ProjectTable } from "../project/project.sql"
 import { Storage } from "@/storage/storage"
 import * as Log from "@opencode-ai/core/util/log"
@@ -444,6 +444,43 @@ export function canUnsendWhileBusy(input: { sessionID: SessionID; messageID: Mes
   if (target?.role !== "user") return false
   if (!newestAssistant) return true
   return target.id > newestAssistant.id
+}
+
+/**
+ * How many user prompts are waiting on a busy session's run loop. Same
+ * predicate as `canUnsendWhileBusy`, counted instead of tested: a user message
+ * is queued until an assistant message is born after it, so the walk runs
+ * newest-first and stops at the newest assistant.
+ *
+ * The prompt driving the current turn counts as queued until that turn's
+ * assistant message exists — nothing has answered it yet, and it is the same
+ * count the brain-side inference reports.
+ *
+ * Reads message rows directly rather than walking `MessageV2.stream`: stream's
+ * pages hydrate every part of the 50 newest messages, and this runs on every
+ * busy transition (twice per run-loop step). Ordering matches stream's so the
+ * two agree on which message is "newest". The offset page only ever runs a
+ * second time for a session with 50+ prompts stacked behind one turn.
+ */
+export function queuedCount(sessionID: SessionID): number {
+  const size = 50
+  let counted = 0
+  while (true) {
+    const rows = Database.use((db) =>
+      db
+        .select({ data: MessageTable.data })
+        .from(MessageTable)
+        .where(eq(MessageTable.session_id, sessionID))
+        .orderBy(desc(MessageTable.time_created), desc(MessageTable.id))
+        .limit(size)
+        .offset(counted)
+        .all(),
+    )
+    const assistant = rows.findIndex((row) => row.data.role === "assistant")
+    if (assistant !== -1) return counted + assistant
+    if (rows.length < size) return counted + rows.length
+    counted += rows.length
+  }
 }
 
 export interface Interface {

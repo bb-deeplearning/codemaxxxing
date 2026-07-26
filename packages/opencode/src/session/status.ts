@@ -3,7 +3,7 @@ import { Bus } from "@/bus"
 import { InstanceState } from "@/effect/instance-state"
 import { SessionID } from "./schema"
 import { zod } from "@/util/effect-zod"
-import { NonNegativeInt, withStatics } from "@/util/schema"
+import { NonNegativeInt, optionalOmitUndefined, withStatics } from "@/util/schema"
 import { Effect, Layer, Context, Schema } from "effect"
 import z from "zod"
 
@@ -19,6 +19,12 @@ export const Info = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("busy"),
+    /**
+     * User prompts waiting on the run loop, by `Session.queuedCount`. Absent
+     * when the value was not server-authored (a client's optimistic busy),
+     * so `undefined` and `0` are not the same claim.
+     */
+    queued: optionalOmitUndefined(NonNegativeInt),
   }),
 ])
   .annotate({ identifier: "SessionStatus" })
