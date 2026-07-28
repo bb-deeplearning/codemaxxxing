@@ -273,7 +273,7 @@ I keep iteration logs in [`PROMPT_ITERATIONS/`](./PROMPT_ITERATIONS/) and corres
 3. **solution**. exact files changed and why.
 4. **observe**. what to watch for to know if it worked.
 
-prompts are alive here, and their direction reversed with the models. the right framing for Opus 4.6 wasn't the right framing for Opus 4.7 (4.7 stopped inferring implicit contracts, so iteration 9 spelled the delivery contract out literally). then fable 5 arrived and the official guidance flipped from "state everything" to "prompts that are too prescriptive degrade output"; iteration 10 is the corresponding net deletion. the prompts used to compensate for what models couldn't do. now they mostly route what models can do. ten iterations in, they barely resemble the upstream defaults.
+prompts are alive here, and their direction reversed with the models. the right framing for Opus 4.6 wasn't the right framing for Opus 4.7 (4.7 stopped inferring implicit contracts, so iteration 9 spelled the delivery contract out literally). then fable 5 arrived and the official guidance flipped from "state everything" to "prompts that are too prescriptive degrade output"; iteration 10 is the corresponding net deletion, and iteration 11 finished the job on the context side — rules replaced with judgment, worked examples dropped, anything stated twice per assembled context deduplicated to a single home. the prompts used to compensate for what models couldn't do. now they mostly route what models can do. eleven iterations in, they barely resemble the upstream defaults.
 
 a full index of files differing from upstream is in [`CHANGES/INDEX.md`](./CHANGES/INDEX.md).
 
@@ -289,6 +289,7 @@ a full index of files differing from upstream is in [`CHANGES/INDEX.md`](./CHANG
 | [8](./PROMPT_ITERATIONS/2026-05-13-multi-agent-and-tool-overhaul.md) | 2026-05-13 | Multi-agent architecture + tool surface overhaul: replaced `task` and `bash` from the model's view |
 | [9](./PROMPT_ITERATIONS/2026-05-20-actor-discipline.md) | 2026-05-20 | Actor discipline: delivery contract prose, ask pattern + ABORT protocol, supervision + pools + links + bounded mailboxes + behavior contracts, observability metrics |
 | [10](./PROMPT_ITERATIONS/2026-07-24-fable-5-overhaul.md) | 2026-07-24 | Fable 5 era: routing matrix + delegation gate, prompt slimming per official fable/opus guides, caveman retirement, end-turn delivery hardening, machine awareness |
+| [11](./PROMPT_ITERATIONS/2026-07-28-context-engineering-rightsizing.md) | 2026-07-28 | Context-engineering rightsizing: judgment over rules (file-creation ban out, artifacts unblocked), examples out, 2-3× duplicated prose single-homed, phantom-bash purge, agent-browser discipline moved to its skill |
 
 ### system prompts
 
@@ -306,7 +307,7 @@ the Gemini prompt is adapted for Gemini's response patterns: prescriptive framin
 
 ### capability hint fragments
 
-`SystemPrompt.capabilityHints(agent)` at `packages/opencode/src/session/system.ts:101` injects up to three fragments into the system prompt at session bootstrap, based on the agent's effective permission set:
+`SystemPrompt.capabilityHints(agent)` at `packages/opencode/src/session/system.ts:163` injects up to three fragments into the system prompt at session bootstrap, based on the agent's effective permission set:
 
 | Fragment | When injected |
 |---|---|
@@ -324,7 +325,7 @@ in upstream OpenCode, the general subagent inherits its system prompt from the p
 
 the explore agent prompt has been overhauled for speed and strictness:
 
-- hard read-only enforcement with an explicit deny list for destructive commands
+- read-only enforced by the toolset itself; the prompt states the boundary calmly instead of shouting a deny list (iteration 11)
 - parallel tool call patterns for faster search
 - structured thoroughness levels (quick / medium / very thorough)
 - machine-readable response format (absolute paths, code snippets, explicit negatives)
@@ -336,7 +337,7 @@ the main agent's delegation to explore has been tuned to prevent context bloat (
 - the main agent uses Read directly when it already knows file paths, instead of wasting an explore agent on file reading
 - explore agents are always given a thoroughness level and starting-point directories
 
-my setup uses Claude Fable 5 as the primary model with per-agent-type worker pins: explore and the `worker` line-worker on Claude Sonnet 5, `general` on Claude Opus 4.8, and a `mule` context agent on Gemini 3.6 Flash (the routing matrix and delegation gate live in `~/.config/opencode/AGENTS.md`, iteration 10). to pin explore, add the following to your `opencode.json`:
+my setup uses Claude Fable 5 as the primary model with per-agent-type worker pins: explore and the `worker` line-worker on Claude Sonnet 5, `general` on Claude Opus 5, and a `mule` context agent on Gemini 3.6 Flash (the routing matrix and delegation gate live in `~/.config/opencode/AGENTS.md`, iteration 10). to pin explore, add the following to your `opencode.json`:
 
 ```json
 {
