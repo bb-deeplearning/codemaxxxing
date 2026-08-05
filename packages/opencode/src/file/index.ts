@@ -288,6 +288,30 @@ const isBinaryByExtension = (file: string) => binary.has(ext(file))
 const isImage = (mimeType: string) => mimeType.startsWith("image/")
 const getImageMimeType = (file: string) => mime[ext(file)] || "image/" + ext(file)
 
+// files with unknown extensions (next's prerendered icon.body, extensionless
+// blobs) must never round-trip through lossy utf-8 — sniff the magic bytes
+// and give real images the base64 envelope they'd get with the right name
+const sniffImageMime = (bytes: Uint8Array): string | undefined => {
+  const at = (i: number) => bytes[i] ?? -1
+  if (at(0) === 0x89 && at(1) === 0x50 && at(2) === 0x4e && at(3) === 0x47) return "image/png"
+  if (at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff) return "image/jpeg"
+  if (at(0) === 0x47 && at(1) === 0x49 && at(2) === 0x46 && at(3) === 0x38) return "image/gif"
+  if (at(0) === 0x00 && at(1) === 0x00 && at(2) === 0x01 && at(3) === 0x00) return "image/x-icon"
+  if (at(0) === 0x42 && at(1) === 0x4d) return "image/bmp"
+  if (
+    at(0) === 0x52 &&
+    at(1) === 0x49 &&
+    at(2) === 0x46 &&
+    at(3) === 0x46 &&
+    at(8) === 0x57 &&
+    at(9) === 0x45 &&
+    at(10) === 0x42 &&
+    at(11) === 0x50
+  )
+    return "image/webp"
+  return undefined
+}
+
 function shouldEncode(mimeType: string) {
   const type = mimeType.toLowerCase()
   log.debug("shouldEncode", { type })
@@ -531,6 +555,21 @@ export const layer = Layer.effect(
 
       const exists = yield* appFs.existsSafe(full)
       if (!exists) return { type: "text" as const, content: "" }
+
+      // unknown extension: not image, not text, not binary by name — the
+      // only class where a real image would otherwise decode as lossy text
+      if (!knownText) {
+        const bytes = yield* appFs.readFile(full).pipe(Effect.catch(() => Effect.succeed(new Uint8Array())))
+        const sniffed = sniffImageMime(bytes)
+        if (sniffed) {
+          return {
+            type: "text" as const,
+            content: Buffer.from(bytes).toString("base64"),
+            mimeType: sniffed,
+            encoding: "base64" as const,
+          }
+        }
+      }
 
       const mimeType = AppFileSystem.mimeType(full)
       const encode = knownText ? false : shouldEncode(mimeType)

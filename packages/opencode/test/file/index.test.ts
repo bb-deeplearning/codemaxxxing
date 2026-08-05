@@ -130,6 +130,40 @@ describe("file/index Filesystem patterns", () => {
         },
       })
     })
+
+    test("sniffs images behind unknown extensions instead of mangling them", async () => {
+      // next.js prerenders app/icon.tsx to .next/server/app/icon.body — a
+      // real PNG with no image extension. lossy utf-8 must never touch it.
+      await using tmp = await tmpdir()
+      const binaryContent = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+      await fs.writeFile(path.join(tmp.path, "icon.body"), binaryContent)
+
+      await WithInstance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const result = await read("icon.body")
+          expect(result.type).toBe("text")
+          expect(result.encoding).toBe("base64")
+          expect(result.mimeType).toBe("image/png")
+          expect(result.content).toBe(binaryContent.toString("base64"))
+        },
+      })
+    })
+
+    test("unknown extensions that are not images still read as text", async () => {
+      await using tmp = await tmpdir()
+      await fs.writeFile(path.join(tmp.path, "notes.body"), "just words", "utf-8")
+
+      await WithInstance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const result = await read("notes.body")
+          expect(result.type).toBe("text")
+          expect(result.encoding).toBeUndefined()
+          expect(result.content).toBe("just words")
+        },
+      })
+    })
   })
 
   describe("read() - Filesystem.mimeType()", () => {
