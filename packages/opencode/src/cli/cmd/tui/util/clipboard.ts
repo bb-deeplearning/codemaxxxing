@@ -126,6 +126,16 @@ export async function read(): Promise<Content | undefined> {
   }
 }
 
+export async function pasteText(
+  input: { insertText(text: string): void },
+  readClipboard: () => Promise<Content | undefined> = read,
+) {
+  const content = await readClipboard()
+  if (!content?.mime.startsWith("text/") || content.data.length === 0) return false
+  input.insertText(content.data.replace(/\r\n/g, "\n").replace(/\r/g, "\n"))
+  return true
+}
+
 const getCopyMethod = lazy(async () => {
   const os = platform()
   const which = await getWhich()

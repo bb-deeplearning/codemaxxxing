@@ -4,6 +4,8 @@ import { DialogHeader, useDialog, type DialogContext } from "./dialog"
 import { Show, createEffect, createMemo, onMount, type JSX } from "solid-js"
 import { useKeyboard } from "@opentui/solid"
 import { Spans, type GlowSpan } from "@tui/ui/glow"
+import { useKeybind } from "@tui/context/keybind"
+import * as Clipboard from "@tui/util/clipboard"
 
 export type DialogPromptProps = {
   title: string
@@ -22,13 +24,20 @@ export type DialogPromptProps = {
 export function DialogPrompt(props: DialogPromptProps) {
   const dialog = useDialog()
   const { theme } = useTheme()
+  const keybind = useKeybind()
   let textarea: TextareaRenderable
 
-  useKeyboard((evt) => {
+  useKeyboard(async (evt) => {
     if (props.busy) {
       if (evt.name === "escape") return
       evt.preventDefault()
       evt.stopPropagation()
+      return
+    }
+    if (keybind.match("input_paste", evt)) {
+      evt.preventDefault()
+      evt.stopPropagation()
+      await Clipboard.pasteText(textarea)
       return
     }
     if (evt.name === "return") {
