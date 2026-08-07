@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { describe, expect, test } from "bun:test"
-import { testRender } from "@opentui/solid"
+import { testRender, useKeyboard } from "@opentui/solid"
 import type { KeyEvent, TextareaRenderable } from "@opentui/core"
 import { Keybind } from "../../../../src/util/keybind"
 
@@ -9,32 +9,55 @@ import { Keybind } from "../../../../src/util/keybind"
 // Terminals that forward Ctrl+V to the app (Windows Terminal 1.25+ with the
 // kitty keyboard protocol active) never emit a bracketed paste, so the text
 // must be inserted from the keydown handler directly.
-async function mount(clipboardText: string | undefined) {
+//
+// `commands` feeds a global keypress listener that mirrors the CommandProvider
+// loop in dialog-command.tsx: a registered command whose keybind matches the
+// keypress calls evt.preventDefault(), which makes opentui's emitWithPriority
+// skip the focused renderable's onKeyDown. The prompt.paste command used to
+// register `keybind: "input_paste"` (→ ctrl+v), which is exactly how a
+// forwarded Ctrl+V got swallowed before the textarea branch could run.
+async function mount(clipboardText: string | undefined, commands: { keybind?: string }[] = []) {
   let input: TextareaRenderable | undefined
   let pasteCount = 0
+  let listenerMatched = 0
 
   const handle = await testRender(
-    () => (
-      <textarea
-        ref={(r: TextareaRenderable) => {
-          input = r
-        }}
-        onKeyDown={async (e: KeyEvent) => {
-          const binds = Keybind.parse("ctrl+v")
-          const info = Keybind.fromParsedKey(e)
-          if (binds.some((b) => Keybind.match(b, info))) {
-            const content = clipboardText === undefined ? undefined : { data: clipboardText, mime: "text/plain" }
-            if (content?.mime.startsWith("text/") && content.data.length > 0) {
-              e.preventDefault()
-              const normalizedText = content.data.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
-              input?.insertText(normalizedText)
-              pasteCount++
-              return
-            }
+    () => {
+      useKeyboard((evt: KeyEvent) => {
+        if (evt.defaultPrevented) return
+        for (const option of commands) {
+          if (
+            option.keybind &&
+            Keybind.parse(option.keybind).some((b) => Keybind.match(b, Keybind.fromParsedKey(evt)))
+          ) {
+            listenerMatched++
+            evt.preventDefault()
+            return
           }
-        }}
-      />
-    ),
+        }
+      })
+      return (
+        <textarea
+          ref={(r: TextareaRenderable) => {
+            input = r
+          }}
+          onKeyDown={async (e: KeyEvent) => {
+            const binds = Keybind.parse("ctrl+v")
+            const info = Keybind.fromParsedKey(e)
+            if (binds.some((b) => Keybind.match(b, info))) {
+              const content = clipboardText === undefined ? undefined : { data: clipboardText, mime: "text/plain" }
+              if (content?.mime.startsWith("text/") && content.data.length > 0) {
+                e.preventDefault()
+                const normalizedText = content.data.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+                input?.insertText(normalizedText)
+                pasteCount++
+                return
+              }
+            }
+          }}
+        />
+      )
+    },
     { kittyKeyboard: true, width: 60, height: 10 },
   )
 
@@ -46,6 +69,9 @@ async function mount(clipboardText: string | undefined) {
     },
     get pasteCount() {
       return pasteCount
+    },
+    get listenerMatched() {
+      return listenerMatched
     },
   }
 }
@@ -124,6 +150,45 @@ describe("prompt Ctrl+V keydown paste", () => {
 
       expect(ctx.pasteCount).toBe(0)
       expect(ctx.textarea!.plainText).toBe("v")
+    } finally {
+      ctx.handle.renderer.destroy()
+    }
+  })
+
+  test("a command that claims Ctrl+V shadows the textarea paste", async () => {
+    // Pre-fix production state: prompt.paste registered `keybind: "input_paste"`
+    // (→ ctrl+v), so the CommandProvider listener matched a forwarded Ctrl+V,
+    // called preventDefault(), and opentui skipped the focused textarea's
+    // onKeyDown — the paste branch never ran.
+    const ctx = await mount("shadowed", [{ keybind: "ctrl+v" }])
+
+    try {
+      ctx.handle.mockInput.pressKey("v", { ctrl: true })
+      await ctx.handle.renderOnce()
+      await Bun.sleep(30)
+
+      expect(ctx.listenerMatched).toBe(1)
+      expect(ctx.pasteCount).toBe(0)
+      expect(ctx.textarea!.plainText).toBe("")
+    } finally {
+      ctx.handle.renderer.destroy()
+    }
+  })
+
+  test("forwarded Ctrl+V reaches the textarea when no command claims the paste keybind", async () => {
+    // Fixed state: prompt.paste stays triggerable via command.trigger() but
+    // registers no keybind, so the (still-armed) CommandProvider listener never
+    // matches Ctrl+V and the keydown paste branch runs.
+    const ctx = await mount("pasted-text", [])
+
+    try {
+      ctx.handle.mockInput.pressKey("v", { ctrl: true })
+      await ctx.handle.renderOnce()
+      await wait(() => ctx.textarea!.plainText === "pasted-text")
+
+      expect(ctx.listenerMatched).toBe(0)
+      expect(ctx.pasteCount).toBe(1)
+      expect(ctx.textarea!.plainText).toBe("pasted-text")
     } finally {
       ctx.handle.renderer.destroy()
     }

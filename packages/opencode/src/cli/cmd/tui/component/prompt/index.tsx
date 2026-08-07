@@ -422,7 +422,12 @@ export function Prompt(props: PromptProps) {
       {
         title: "Paste",
         value: "prompt.paste",
-        keybind: "input_paste",
+        // Deliberately no `keybind`: the command dialog's global keypress
+        // listener would intercept input_paste (ctrl+v) first and
+        // preventDefault, which skips the textarea's onKeyDown — where the
+        // actual text/image paste runs. Keep ctrl+v flowing to the textarea;
+        // this command stays reachable only via command.trigger() (e.g. the
+        // empty-bracketed-paste image fallback in onPaste).
         category: "Prompt",
         hidden: true,
         onSelect: async () => {
