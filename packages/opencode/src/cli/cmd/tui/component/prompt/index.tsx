@@ -1395,7 +1395,18 @@ export function Prompt(props: PromptProps) {
                     })
                     return
                   }
-                  // If no image, let the default paste behavior continue
+                  // Terminals that forward Ctrl+V to the app instead of pasting
+                  // themselves (e.g. Windows Terminal 1.25+ with the kitty
+                  // keyboard protocol active) never emit a bracketed paste, so a
+                  // text clipboard would otherwise be dropped entirely. Insert it
+                  // directly. Terminals that paste natively never deliver the
+                  // Ctrl+V keydown, so this cannot double-insert.
+                  if (content?.mime.startsWith("text/") && content.data.length > 0) {
+                    e.preventDefault()
+                    const normalizedText = content.data.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+                    input.insertText(normalizedText)
+                    return
+                  }
                 }
                 if (keybind.match("input_clear", e) && store.prompt.input !== "") {
                   input.clear()
