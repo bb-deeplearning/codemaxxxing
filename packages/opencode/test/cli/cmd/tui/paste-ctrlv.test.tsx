@@ -1,0 +1,131 @@
+/** @jsxImportSource @opentui/solid */
+import { describe, expect, test } from "bun:test"
+import { testRender } from "@opentui/solid"
+import type { KeyEvent, TextareaRenderable } from "@opentui/core"
+import { Keybind } from "../../../../src/util/keybind"
+
+// Replicates the Ctrl+V keydown paste branch of the prompt component
+// (src/cli/cmd/tui/component/prompt/index.tsx) with Clipboard.read stubbed.
+// Terminals that forward Ctrl+V to the app (Windows Terminal 1.25+ with the
+// kitty keyboard protocol active) never emit a bracketed paste, so the text
+// must be inserted from the keydown handler directly.
+async function mount(clipboardText: string | undefined) {
+  let input: TextareaRenderable | undefined
+  let pasteCount = 0
+
+  const handle = await testRender(
+    () => (
+      <textarea
+        ref={(r: TextareaRenderable) => {
+          input = r
+        }}
+        onKeyDown={async (e: KeyEvent) => {
+          const binds = Keybind.parse("ctrl+v")
+          const info = Keybind.fromParsedKey(e)
+          if (binds.some((b) => Keybind.match(b, info))) {
+            const content = clipboardText === undefined ? undefined : { data: clipboardText, mime: "text/plain" }
+            if (content?.mime.startsWith("text/") && content.data.length > 0) {
+              e.preventDefault()
+              const normalizedText = content.data.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+              input?.insertText(normalizedText)
+              pasteCount++
+              return
+            }
+          }
+        }}
+      />
+    ),
+    { kittyKeyboard: true, width: 60, height: 10 },
+  )
+
+  input?.focus()
+  return {
+    handle,
+    get textarea() {
+      return input
+    },
+    get pasteCount() {
+      return pasteCount
+    },
+  }
+}
+
+async function wait(fn: () => boolean, timeout = 2000) {
+  const start = Date.now()
+  while (!fn()) {
+    if (Date.now() - start > timeout) throw new Error("timed out waiting for condition")
+    await Bun.sleep(10)
+  }
+}
+
+describe("prompt Ctrl+V keydown paste", () => {
+  test("inserts clipboard text from a forwarded Ctrl+V without double-insert", async () => {
+    const ctx = await mount("line1\nline2\nline3")
+
+    try {
+      ctx.handle.mockInput.pressKey("v", { ctrl: true })
+      await ctx.handle.renderOnce()
+      await wait(() => ctx.textarea!.plainText === "line1\nline2\nline3")
+
+      expect(ctx.pasteCount).toBe(1)
+      expect(ctx.textarea!.plainText).toBe("line1\nline2\nline3")
+
+      // A following plain keypress must insert a single character, proving the
+      // pasted text was not echoed twice by the textarea's default handling.
+      ctx.handle.mockInput.pressKey("x")
+      await ctx.handle.renderOnce()
+      await wait(() => ctx.textarea!.plainText === "line1\nline2\nline3x")
+      expect(ctx.textarea!.plainText).toBe("line1\nline2\nline3x")
+    } finally {
+      ctx.handle.renderer.destroy()
+    }
+  })
+
+  test("renders the pasted text without an extra layout flush", async () => {
+    const { handle, textarea } = await mount("alpha\nbeta\ngamma")
+
+    try {
+      handle.mockInput.pressKey("v", { ctrl: true })
+      await handle.renderOnce()
+      await wait(() => textarea!.plainText === "alpha\nbeta\ngamma")
+
+      await handle.renderOnce()
+      const frame = handle.captureCharFrame()
+      expect(frame).toContain("alpha")
+      expect(frame).toContain("beta")
+      expect(frame).toContain("gamma")
+    } finally {
+      handle.renderer.destroy()
+    }
+  })
+
+  test("does nothing for an empty clipboard", async () => {
+    const ctx = await mount(undefined)
+
+    try {
+      ctx.handle.mockInput.pressKey("v", { ctrl: true })
+      await ctx.handle.renderOnce()
+      await Bun.sleep(30)
+
+      expect(ctx.pasteCount).toBe(0)
+      expect(ctx.textarea!.plainText).toBe("")
+    } finally {
+      ctx.handle.renderer.destroy()
+    }
+  })
+
+  test("does not treat a plain keypress as a paste", async () => {
+    const ctx = await mount("text")
+
+    try {
+      ctx.handle.mockInput.pressKey("v")
+      await ctx.handle.renderOnce()
+      await Bun.sleep(30)
+
+      expect(ctx.pasteCount).toBe(0)
+      expect(ctx.textarea!.plainText).toBe("v")
+    } finally {
+      ctx.handle.renderer.destroy()
+    }
+  })
+})
