@@ -88,6 +88,22 @@ export async function read(): Promise<Content | undefined> {
         return { data: imageBuffer.toString("base64"), mime: "image/png" }
       }
     }
+
+    // Text read via PowerShell. The compiled single-file exe bundles clipboardy's
+    // Windows implementation, which spawns a helper binary (clipboard_x86_64.exe)
+    // from a virtual in-bundle path that cannot be executed, so every clipboard
+    // read fails at runtime there. PowerShell (the same mechanism as the image
+    // probe above and the write path below) works identically in dev and in the
+    // compiled exe. `[Console]::Write` avoids PowerShell's output formatting, so
+    // the returned text is byte-exact (no appended newline).
+    const textScript =
+      "Add-Type -AssemblyName System.Windows.Forms; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::Write([System.Windows.Forms.Clipboard]::GetText())"
+    const textResult = await Process.text(["powershell.exe", "-NonInteractive", "-NoProfile", "-command", textScript], {
+      nothrow: true,
+    })
+    if (textResult.text) {
+      return { data: textResult.text, mime: "text/plain" }
+    }
   }
 
   if (os === "linux") {
