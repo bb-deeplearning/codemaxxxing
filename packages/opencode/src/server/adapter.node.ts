@@ -70,4 +70,14 @@ export const adapter: Adapter = {
       listen: (opts) => listen(app, opts),
     }
   },
+  createFetchWithWebSocket(app, wsApp) {
+    // The upgrade listener binds to the SIDE-APP's router (that is where
+    // the ws routes live); plain requests keep flowing through the
+    // composite fetch app.
+    const ws = createNodeWebSocket({ app: wsApp })
+    return {
+      upgradeWebSocket: ws.upgradeWebSocket,
+      listen: (opts) => listen(app, opts, ws.injectWebSocket),
+    }
+  },
 }

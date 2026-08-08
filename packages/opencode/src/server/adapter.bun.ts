@@ -41,4 +41,14 @@ export const adapter: Adapter = {
       listen: (opts) => Promise.resolve(listen(app, opts)),
     }
   },
+  createFetchWithWebSocket(app, _wsApp) {
+    // The side-app's routes call upgradeWebSocket, which reads the Bun
+    // server out of c.env — the composite fetch must forward Bun.serve's
+    // second argument for that to hold (see server.ts createHttpApi).
+    const ws = createBunWebSocket()
+    return {
+      upgradeWebSocket: ws.upgradeWebSocket,
+      listen: (opts) => Promise.resolve(listen(app, opts, ws.websocket)),
+    }
+  },
 }

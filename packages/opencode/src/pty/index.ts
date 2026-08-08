@@ -218,9 +218,16 @@ function drainSince(session: Active, sinceCursor: number, maxBytes: number): Rea
 // (codex-rs/core/src/unified_exec/process_manager.rs:1215-1241):
 // protect the PROCESS_STORE_PROTECTED_RECENT most-recently-used; among the
 // rest, prefer an exited PTY (LRU first); otherwise pick the LRU non-protected
-// alive one. Returns the PtyID to prune or undefined if every entry is
-// protected (only possible with strictly fewer than PROTECTED_RECENT total,
-// which never happens at the cap).
+// alive one. One deliberate divergence from the codex mirror (which has no
+// attach concept): a session with a live WebSocket subscriber is an OPEN
+// TERMINAL — pruning a shell someone is looking at to make room for a
+// background exec is always the wrong trade, so attached sessions are never
+// targets. Liveness is checked here (readyState OPEN) rather than trusting
+// map membership: onData's stale-subscriber sweep only runs when output
+// flows, so a quiet session can hold dead sockets indefinitely. Returns the
+// PtyID to prune, or undefined when every entry is protected or attached —
+// in that state the cap goes soft and create() proceeds past it, which beats
+// cutting a watched wire.
 function pickPruneTarget(s: State): PtyID | undefined {
   if (s.sessions.size < MAX_UNIFIED_EXEC_PROCESSES) return undefined
 
@@ -228,15 +235,16 @@ function pickPruneTarget(s: State): PtyID | undefined {
     id,
     lastUsed: active.lastUsed,
     exited: active.exited,
+    attached: Array.from(active.subscribers.values()).some((ws) => ws.readyState === 1),
   }))
 
   const byRecency = [...meta].sort((a, b) => b.lastUsed - a.lastUsed)
   const protectedIds = new Set(byRecency.slice(0, PROCESS_STORE_PROTECTED_RECENT).map((m) => m.id))
 
   const byLru = [...meta].sort((a, b) => a.lastUsed - b.lastUsed)
-  const exitedTarget = byLru.find((m) => !protectedIds.has(m.id) && m.exited)
+  const exitedTarget = byLru.find((m) => !protectedIds.has(m.id) && !m.attached && m.exited)
   if (exitedTarget) return exitedTarget.id
-  const lruTarget = byLru.find((m) => !protectedIds.has(m.id))
+  const lruTarget = byLru.find((m) => !protectedIds.has(m.id) && !m.attached)
   return lruTarget?.id
 }
 
@@ -327,7 +335,10 @@ export const layer = Layer.effect(
       const s = yield* InstanceState.get(state)
 
       // Codex prunes BEFORE inserting (process_manager.rs:830-840). This keeps
-      // the cap a hard ceiling rather than a soft target.
+      // the cap a hard ceiling rather than a soft target — except when every
+      // non-protected entry has an attached terminal (pickPruneTarget yields
+      // nothing); a fully-watched pool deliberately overflows instead of
+      // cutting a live wire.
       yield* prune(s)
 
       const bridge = yield* EffectBridge.make()
@@ -591,6 +602,11 @@ export const layer = Layer.effect(
       const sub = sock(ws)
       session.subscribers.delete(sub)
       session.subscribers.set(sub, ws)
+      // Attach = use. Without this tick an attached-but-quiet terminal never
+      // advances lastUsed (onData ticks on output, write() on input; connect
+      // was invisible) and ages toward the LRU knife while agent traffic
+      // churns the pool.
+      session.lastUsed = tickLastUsed()
 
       const cleanup = () => {
         session.subscribers.delete(sub)
@@ -631,6 +647,9 @@ export const layer = Layer.effect(
 
       return {
         onMessage: (message: string | ArrayBuffer) => {
+          // Socket input is use, same rule as write() above — it bypasses
+          // that path so it ticks here.
+          session.lastUsed = tickLastUsed()
           session.process.write(typeof message === "string" ? message : new TextDecoder().decode(message))
         },
         onClose: () => {
