@@ -380,6 +380,95 @@ describe("Pty pool LRU pruning", () => {
   }, 30000)
 })
 
+// The boxbox terminal patch (2026-08-07): an attached WebSocket subscriber
+// marks a session as someone's OPEN TERMINAL. connect() now ticks lastUsed
+// and pickPruneTarget skips sessions with a live subscriber — an attached,
+// quiet shell must not be LRU fodder during an agent fan-out.
+describe("Pty pool LRU pruning with attached terminals", () => {
+  const liveWs = () => ({
+    readyState: 1,
+    send: () => {},
+    close: () => {},
+  })
+
+  test("an attached session survives pruning even as the strict LRU", async () => {
+    if (process.platform === "win32") return
+    await withPty((pty) =>
+      Effect.gen(function* () {
+        const ids: PtyID[] = []
+        for (let i = 0; i < 64; i++) {
+          const info = yield* pty.create({ command: "/bin/sh", args: ["-c", "sleep 30"], title: `p${i}` })
+          ids.push(info.id)
+        }
+        // Attach a live terminal to ids[0], then touch every OTHER session so
+        // ids[0] is the strict LRU — the pruner's first pick without the
+        // attached check.
+        const handler = yield* pty.connect(ids[0], liveWs() as any, -1)
+        expect(handler).toBeDefined()
+        for (let i = 1; i < 64; i++) {
+          yield* pty.read(ids[i], 0, 0, 1024)
+        }
+        yield* pty.create({ command: "/bin/sh", args: ["-c", "sleep 30"], title: "p65" })
+        const list = yield* pty.list()
+        expect(list.length).toBe(64)
+        // The attached LRU survives; the oldest unattached one goes instead.
+        expect(list.find((p) => p.id === ids[0])).toBeDefined()
+        expect(list.find((p) => p.id === ids[1])).toBeUndefined()
+      }),
+    )
+  }, 30000)
+
+  test("a dead subscriber (readyState CLOSED) does not protect", async () => {
+    if (process.platform === "win32") return
+    await withPty((pty) =>
+      Effect.gen(function* () {
+        const ids: PtyID[] = []
+        for (let i = 0; i < 64; i++) {
+          const info = yield* pty.create({ command: "/bin/sh", args: ["-c", "sleep 30"], title: `p${i}` })
+          ids.push(info.id)
+        }
+        const ws = liveWs()
+        const handler = yield* pty.connect(ids[0], ws as any, -1)
+        expect(handler).toBeDefined()
+        for (let i = 1; i < 64; i++) {
+          yield* pty.read(ids[i], 0, 0, 1024)
+        }
+        // The socket drops without onData ever sweeping it (quiet session).
+        ws.readyState = 3
+        yield* pty.create({ command: "/bin/sh", args: ["-c", "sleep 30"], title: "p65" })
+        const list = yield* pty.list()
+        expect(list.length).toBe(64)
+        // No live subscriber, no protection: the stale-attached LRU is pruned.
+        expect(list.find((p) => p.id === ids[0])).toBeUndefined()
+      }),
+    )
+  }, 30000)
+
+  test("connect ticks lastUsed: a recently-attached-then-closed session earns recency protection", async () => {
+    if (process.platform === "win32") return
+    await withPty((pty) =>
+      Effect.gen(function* () {
+        const ids: PtyID[] = []
+        for (let i = 0; i < 64; i++) {
+          const info = yield* pty.create({ command: "/bin/sh", args: ["-c", "sleep 30"], title: `p${i}` })
+          ids.push(info.id)
+        }
+        // Attach and immediately detach the strict LRU. No subscriber remains;
+        // only the connect-time tick can save it (it is now the MRU).
+        const handler = yield* pty.connect(ids[0], liveWs() as any, -1)
+        expect(handler).toBeDefined()
+        handler!.onClose()
+        yield* pty.create({ command: "/bin/sh", args: ["-c", "sleep 30"], title: "p65" })
+        const list = yield* pty.list()
+        expect(list.length).toBe(64)
+        expect(list.find((p) => p.id === ids[0])).toBeDefined()
+        // The next-oldest unprotected session went instead.
+        expect(list.find((p) => p.id === ids[1])).toBeUndefined()
+      }),
+    )
+  }, 30000)
+})
+
 describe("Pty.terminateAll", () => {
   test("kills all live PTYs and clears the registry", async () => {
     if (process.platform === "win32") return

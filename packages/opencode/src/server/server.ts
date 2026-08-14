@@ -13,6 +13,7 @@ import { AuthMiddleware, CompressionMiddleware, CorsMiddleware, ErrorMiddleware,
 import { FenceMiddleware } from "./fence"
 import { initProjectors } from "./projectors"
 import { InstanceRoutes } from "./routes/instance"
+import { PtyRoutes } from "./routes/instance/pty"
 import { ControlPlaneRoutes } from "./routes/control"
 import { UIRoutes } from "./routes/ui"
 import { GlobalRoutes } from "./routes/global"
@@ -86,17 +87,39 @@ function withBackend<T extends { app: ServerApp; runtime: unknown }>(selection: 
   return built
 }
 
+/* The effect-httpapi router is a plain fetch handler: it can never complete
+   a websocket upgrade (no websocket handlers reach Bun.serve, so
+   request.upgrade answers 400 — found live 2026-08-07 driving
+   /pty/:ptyID/connect; the desktop pane was the only caller and nobody
+   noticed). Until the effect platform owns sockets here, upgrade requests
+   for the pty connect route ride a minimal hono side-app wired with the
+   SAME runtime websocket machinery and middleware the legacy backend uses:
+   auth gate + instance scoping + the hono PtyRoutes handler itself, so the
+   wire behavior of connect is identical across backends by construction. */
+function isPtyConnectUpgrade(request: Request): boolean {
+  if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return false
+  return /^\/pty\/[^/]+\/connect$/.test(new URL(request.url).pathname)
+}
+
 function createHttpApi(corsOptions?: CorsOptions) {
   const handler = ExperimentalHttpApiServer.webHandler(corsOptions).handler
+  const wsApp = new Hono().onError(ErrorMiddleware).use(AuthMiddleware).use(InstanceMiddleware())
   const app: ServerApp = {
-    fetch: (request: Request) => handler(request, ExperimentalHttpApiServer.context),
+    // env must forward: on bun it is the Server instance upgradeWebSocket
+    // upgrades against; on node the upgrade listener is injected at listen.
+    fetch: (request: Request, env?: unknown) =>
+      isPtyConnectUpgrade(request)
+        ? wsApp.fetch(request, env)
+        : handler(request, ExperimentalHttpApiServer.context),
     request(input, init) {
       return app.fetch(input instanceof Request ? input : new Request(new URL(input, "http://localhost"), init))
     },
   }
+  const runtime = adapter.createFetchWithWebSocket(app, wsApp)
+  wsApp.route("/pty", PtyRoutes(runtime.upgradeWebSocket))
   return {
     app,
-    runtime: adapter.createFetch(app),
+    runtime,
   }
 }
 
