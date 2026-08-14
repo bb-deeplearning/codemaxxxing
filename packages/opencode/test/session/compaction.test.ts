@@ -541,6 +541,24 @@ describe("session.compaction.isOverflow", () => {
   )
 
   it.live(
+    "BUG: no overflow when output limit equals context (grok-4.5 shape)",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const compact = yield* SessionCompaction.Service
+        // grok-4.5: context 500K, output 500K, no limit.input
+        const model = createModel({ context: 500_000, output: 500_000 })
+
+        // 31K total — a normal early-conversation size. usable must be
+        // context - reservedOutput (capped at OUTPUT_TOKEN_MAX = 32K), i.e. 468K.
+        // Regression: OUTPUT_TOKEN_MAX defaulted to Infinity, making
+        // usable = 500K - 500K = 0 and overflowing on every single message.
+        const tokens = { input: 30_000, output: 1_000, reasoning: 0, cache: { read: 0, write: 0 } }
+        expect(yield* compact.isOverflow({ tokens, model })).toBe(false)
+      }),
+    ),
+  )
+
+  it.live(
     "returns false when model context limit is 0",
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
