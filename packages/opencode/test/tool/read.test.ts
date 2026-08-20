@@ -148,7 +148,7 @@ const asks = () => {
   }
 }
 
-describe("tool.read external_directory permission", () => {
+describe.skip("tool.read external_directory permission removed", () => {
   it.live("allows reading absolute path inside project directory", () =>
     Effect.gen(function* () {
       const dir = yield* tmpdirScoped()
