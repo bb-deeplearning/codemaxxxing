@@ -20609,9 +20609,6 @@
               "task": {
                 "$ref": "#/components/schemas/PermissionRuleConfig"
               },
-              "external_directory": {
-                "$ref": "#/components/schemas/PermissionRuleConfig"
-              },
               "todowrite": {
                 "$ref": "#/components/schemas/PermissionActionConfig"
               },

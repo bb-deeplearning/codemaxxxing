@@ -1672,7 +1672,6 @@ export type PermissionConfig =
       list?: PermissionRuleConfig
       bash?: PermissionRuleConfig
       task?: PermissionRuleConfig
-      external_directory?: PermissionRuleConfig
       todowrite?: PermissionActionConfig
       question?: PermissionActionConfig
       webfetch?: PermissionActionConfig
