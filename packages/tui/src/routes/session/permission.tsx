@@ -1,5 +1,4 @@
 import { createStore } from "solid-js/store"
-import { dirname } from "node:path"
 import { createMemo, For, Match, Show, Switch } from "solid-js"
 import { Portal, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
@@ -323,34 +322,6 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
                   <Show when={query}>
                     <box paddingLeft={1}>
                       <text fg={theme.textMuted}>{"Query: " + query}</text>
-                    </box>
-                  </Show>
-                ),
-              }
-            }
-
-            if (permission === "external_directory") {
-              const meta = props.request.metadata ?? {}
-              const parent = typeof meta["parentDir"] === "string" ? meta["parentDir"] : undefined
-              const filepath = typeof meta["filepath"] === "string" ? meta["filepath"] : undefined
-              const pattern = props.request.patterns?.[0]
-              const derived =
-                typeof pattern === "string" ? (pattern.includes("*") ? dirname(pattern) : pattern) : undefined
-
-              const raw = parent ?? filepath ?? derived
-              const dir = pathFormatter.format(raw)
-              const patterns = (props.request.patterns ?? []).filter((p): p is string => typeof p === "string")
-
-              return {
-                icon: "←",
-                title: `Access external directory ${dir}`,
-                body: (
-                  <Show when={patterns.length > 0}>
-                    <box paddingLeft={1} gap={1}>
-                      <text fg={theme.textMuted}>Patterns</text>
-                      <box>
-                        <For each={patterns}>{(p) => <text fg={theme.text}>{"- " + p}</text>}</For>
-                      </box>
                     </box>
                   </Show>
                 ),

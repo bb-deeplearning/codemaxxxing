@@ -3,7 +3,6 @@ import { Effect, Schema } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
-import { assertExternalDirectoryEffect } from "./external-directory"
 import DESCRIPTION from "./glob.txt"
 import * as Tool from "./tool"
 
@@ -41,11 +40,6 @@ export const GlobTool = Tool.define(
           if (info?.type === "File") {
             throw new Error(`glob path must be a directory: ${search}`)
           }
-          yield* assertExternalDirectoryEffect(ctx, search, {
-            bypass: false,
-            kind: "directory",
-          })
-
           const limit = 100
           const files = yield* ripgrep.glob({ cwd: search, pattern: params.pattern, limit })
           const truncated = files.length === limit

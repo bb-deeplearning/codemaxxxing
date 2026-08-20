@@ -58,6 +58,13 @@ export async function read() {
       Buffer.alloc(0),
     )
     if (image.length) return { data: image.toString().trim(), mime: "image/png" }
+
+    const textScript =
+      "Add-Type -AssemblyName System.Windows.Forms; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::Write([System.Windows.Forms.Clipboard]::GetText())"
+    const text = await command("powershell.exe", ["-NonInteractive", "-NoProfile", "-command", textScript]).catch(() =>
+      Buffer.alloc(0),
+    )
+    if (text.length) return { data: text.toString(), mime: "text/plain" }
   }
 
   if (platform() === "linux") {

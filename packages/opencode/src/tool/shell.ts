@@ -3,7 +3,6 @@ import os from "os"
 import { createWriteStream } from "node:fs"
 import * as Tool from "./tool"
 import path from "path"
-import { containsPath, type InstanceContext } from "../project/instance-context"
 import { InstanceState } from "@/effect/instance-state"
 import { lazy } from "@/util/lazy"
 import { Language, type Node } from "web-tree-sitter"
@@ -71,7 +70,6 @@ type Part = {
 }
 
 type Scan = {
-  dirs: Set<string>
   patterns: Set<string>
   always: Set<string>
 }
@@ -261,24 +259,6 @@ const parse = Effect.fn("ShellTool.parse")(function* (command: string, ps: boole
 })
 
 const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan, input: { command: string }) {
-  if (scan.dirs.size > 0) {
-    const directories = Array.from(scan.dirs)
-    const globs = directories.map((dir) => {
-      if (process.platform === "win32") return FSUtil.normalizePathPattern(path.join(dir, "*"))
-      return path.join(dir, "*")
-    })
-    yield* ctx.ask({
-      permission: "external_directory",
-      patterns: globs,
-      always: globs,
-      metadata: {
-        command: input.command,
-        directories,
-        patterns: globs,
-      },
-    })
-  }
-
   if (scan.patterns.size === 0) return
   yield* ctx.ask({
     permission: ShellID.ToolID,
@@ -340,7 +320,6 @@ export const ShellTool = Tool.define(
   Effect.gen(function* () {
     const config = yield* Config.Service
     const spawner = yield* ChildProcessSpawner
-    const fs = yield* FSUtil.Service
     const trunc = yield* Truncate.Service
     const plugin = yield* Plugin.Service
     const flags = yield* RuntimeFlags.Service
@@ -366,24 +345,12 @@ export const ShellTool = Tool.define(
       return path.resolve(root, text)
     })
 
-    const argPath = Effect.fn("ShellTool.argPath")(function* (arg: string, cwd: string, ps: boolean, shell: string) {
-      const text = ps ? expand(arg, cwd, shell) : home(unquote(arg))
-      const file = text && prefix(text)
-      if (!file || dynamic(file, ps)) return
-      const next = ps ? provider(file) : file
-      if (!next) return
-      return yield* resolvePath(next, cwd, shell)
-    })
-
     const collect = Effect.fn("ShellTool.collect")(function* (
       root: Node,
-      cwd: string,
       ps: boolean,
       shell: string,
-      instance: InstanceContext,
     ) {
       const scan: Scan = {
-        dirs: new Set<string>(),
         patterns: new Set<string>(),
         always: new Set<string>(),
       }
@@ -393,16 +360,6 @@ export const ShellTool = Tool.define(
         const command = parts(node)
         const tokens = command.map((item) => item.text)
         const cmd = ps || shellKind === "cmd" ? tokens[0]?.toLowerCase() : tokens[0]
-
-        if (cmd && (FILES.has(cmd) || (shellKind === "cmd" && CMD_FILES.has(cmd)))) {
-          for (const arg of pathArgs(command, ps, shellKind === "cmd")) {
-            const resolved = yield* argPath(arg, cwd, ps, shell)
-            yield* Effect.logInfo("resolved path", { arg, resolved })
-            if (!resolved || containsPath(resolved, instance)) continue
-            const dir = (yield* fs.isDir(resolved)) ? resolved : path.dirname(resolved)
-            scan.dirs.add(dir)
-          }
-        }
 
         if (tokens.length && (!cmd || !CWD.has(cmd))) {
           scan.patterns.add(source(node))
@@ -622,8 +579,7 @@ export const ShellTool = Tool.define(
                   const tree = yield* Effect.acquireRelease(parse(params.command, ps), (tree) =>
                     Effect.sync(() => tree.delete()),
                   )
-                  const scan = yield* collect(tree.rootNode, cwd, ps, shell, instanceCtx)
-                  if (!containsPath(cwd, instanceCtx)) scan.dirs.add(cwd)
+                  const scan = yield* collect(tree.rootNode, ps, shell)
                   yield* ask(ctx, scan, params)
                 }),
               )

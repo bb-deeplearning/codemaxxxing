@@ -5,7 +5,6 @@ import { LSP } from "@/lsp/lsp"
 import DESCRIPTION from "./lsp.txt"
 import { InstanceState } from "@/effect/instance-state"
 import { pathToFileURL } from "url"
-import { assertExternalDirectoryEffect } from "./external-directory"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 
 const operations = [
@@ -46,7 +45,6 @@ export const LspTool = Tool.define(
         Effect.gen(function* () {
           const instance = yield* InstanceState.context
           const file = path.isAbsolute(args.filePath) ? args.filePath : path.join(instance.directory, args.filePath)
-          yield* assertExternalDirectoryEffect(ctx, file)
           const meta =
             args.operation === "workspaceSymbol"
               ? { operation: args.operation }

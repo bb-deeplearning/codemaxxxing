@@ -1,0 +1,4 @@
+$ tsgo --noEmit
+src/agent/agent.ts(403,3): error TS2322: Type '[Node<Service, never, undefined>, Node<Service, never, undefined>, Node<Service, never, undefined>, any, Node<Service, never, undefined>, Node<...>]' is not assignable to type 'readonly [Node<Service, never, undefined>, Node<Service, never, undefined>, Node<Service, never, undefined>, any, Node<Service, never, undefined>, Node<...>] & { ...; }'.
+  Property '"Missing dependencies"' is missing in type '[Node<Service, never, undefined>, Node<Service, never, undefined>, Node<Service, never, undefined>, any, Node<Service, never, undefined>, Node<...>]' but required in type '{ readonly "Missing dependencies": any; }'.
+src/agent/agent.ts(403,47): error TS2304: Cannot find name 'Skill'.
