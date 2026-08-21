@@ -397,14 +397,26 @@ import type {
   VcsStatusResponses,
   WaveActiveErrors,
   WaveActiveResponses,
+  WaveArmErrors,
+  WaveArmResponses,
+  WaveInterruptErrors,
+  WaveInterruptResponses,
   WaveListErrors,
   WaveListResponses,
+  WaveNextErrors,
+  WaveNextResponses,
   WaveNotesErrors,
   WaveNotesResponses,
+  WavePauseErrors,
+  WavePauseResponses,
   WaveReadErrors,
   WaveReadResponses,
+  WaveResumeErrors,
+  WaveResumeResponses,
   WaveSetActiveErrors,
   WaveSetActiveResponses,
+  WaveStopErrors,
+  WaveStopResponses,
   WorktreeCreateErrors,
   WorktreeCreateInput,
   WorktreeCreateResponses,
@@ -5116,6 +5128,48 @@ export class Wave extends HeyApiClient {
       url: "/wave/{campaignID}/notes/{wave}",
       ...options,
       ...params,
+    })
+  }
+
+  public arm<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).post<WaveArmResponses, WaveArmErrors, ThrowOnError>({
+      url: "/wave/arm",
+      ...options,
+    })
+  }
+
+  public next<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).post<WaveNextResponses, WaveNextErrors, ThrowOnError>({
+      url: "/wave/next",
+      ...options,
+    })
+  }
+
+  public pause<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).post<WavePauseResponses, WavePauseErrors, ThrowOnError>({
+      url: "/wave/pause",
+      ...options,
+    })
+  }
+
+  public resume<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).post<WaveResumeResponses, WaveResumeErrors, ThrowOnError>({
+      url: "/wave/resume",
+      ...options,
+    })
+  }
+
+  public interrupt<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).post<WaveInterruptResponses, WaveInterruptErrors, ThrowOnError>({
+      url: "/wave/interrupt",
+      ...options,
+    })
+  }
+
+  public stop<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).post<WaveStopResponses, WaveStopErrors, ThrowOnError>({
+      url: "/wave/stop",
+      ...options,
     })
   }
 }

@@ -1,10 +1,25 @@
 import { For, Show } from "solid-js"
+import { useKeyboard } from "@opentui/solid"
 import { useTheme } from "../context/theme"
 import { useWave } from "../context/wave"
+import { useRoute } from "../context/route"
 
 export function Wave() {
   const wave = useWave()
+  const route = useRoute()
   const { theme } = useTheme()
+
+  useKeyboard((event) => {
+    if (event.name === "escape") {
+      route.navigate({ type: "home" })
+      return
+    }
+    if (event.name === "r") void wave.arm()
+    if (event.name === "n") void wave.next()
+    if (event.name === "space") void wave.pause()
+    if (event.name === "i") void wave.interrupt()
+    if (event.name === "s") void wave.stop()
+  })
 
   return (
     <box flexDirection="column" padding={2} gap={1}>

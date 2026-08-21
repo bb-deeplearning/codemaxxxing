@@ -11390,6 +11390,144 @@ export type WaveNotesResponses = {
 
 export type WaveNotesResponse = WaveNotesResponses[keyof WaveNotesResponses]
 
+export type WaveArmData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/wave/arm"
+}
+
+export type WaveArmErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+}
+
+export type WaveArmError = WaveArmErrors[keyof WaveArmErrors]
+
+export type WaveArmResponses = {
+  /**
+   * <No Content>
+   */
+  200: unknown
+}
+
+export type WaveNextData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/wave/next"
+}
+
+export type WaveNextErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+}
+
+export type WaveNextError = WaveNextErrors[keyof WaveNextErrors]
+
+export type WaveNextResponses = {
+  /**
+   * <No Content>
+   */
+  200: unknown
+}
+
+export type WavePauseData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/wave/pause"
+}
+
+export type WavePauseErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+}
+
+export type WavePauseError = WavePauseErrors[keyof WavePauseErrors]
+
+export type WavePauseResponses = {
+  /**
+   * <No Content>
+   */
+  200: unknown
+}
+
+export type WaveResumeData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/wave/resume"
+}
+
+export type WaveResumeErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+}
+
+export type WaveResumeError = WaveResumeErrors[keyof WaveResumeErrors]
+
+export type WaveResumeResponses = {
+  /**
+   * <No Content>
+   */
+  200: unknown
+}
+
+export type WaveInterruptData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/wave/interrupt"
+}
+
+export type WaveInterruptErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+}
+
+export type WaveInterruptError = WaveInterruptErrors[keyof WaveInterruptErrors]
+
+export type WaveInterruptResponses = {
+  /**
+   * <No Content>
+   */
+  200: unknown
+}
+
+export type WaveStopData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/wave/stop"
+}
+
+export type WaveStopErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+}
+
+export type WaveStopError = WaveStopErrors[keyof WaveStopErrors]
+
+export type WaveStopResponses = {
+  /**
+   * <No Content>
+   */
+  200: unknown
+}
+
 export type V2HealthGetData = {
   body?: never
   path?: never

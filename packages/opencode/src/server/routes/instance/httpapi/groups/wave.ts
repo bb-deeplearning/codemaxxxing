@@ -10,6 +10,12 @@ export const WavePaths = {
   active: `${root}/active`,
   read: `${root}/:campaignID`,
   notes: `${root}/:campaignID/notes/:wave`,
+  arm: `${root}/arm`,
+  next: `${root}/next`,
+  pause: `${root}/pause`,
+  resume: `${root}/resume`,
+  interrupt: `${root}/interrupt`,
+  stop: `${root}/stop`,
 } as const
 
 export const ActivePayload = Schema.Struct({ id: Schema.optional(Schema.String) })
@@ -35,5 +41,11 @@ export const WaveApi = HttpApi.make("wave").add(
       params: { campaignID: Schema.String, wave: Schema.NumberFromString },
       success: described(Schema.OptionFromNullOr(Schema.String), "Wave notes"),
     }).annotateMerge(OpenApi.annotations({ summary: "Read wave notes" })),
+    HttpApiEndpoint.post("arm", WavePaths.arm, { success: Schema.Void, error: HttpApiError.BadRequest }),
+    HttpApiEndpoint.post("next", WavePaths.next, { success: Schema.Void, error: HttpApiError.BadRequest }),
+    HttpApiEndpoint.post("pause", WavePaths.pause, { success: Schema.Void, error: HttpApiError.BadRequest }),
+    HttpApiEndpoint.post("resume", WavePaths.resume, { success: Schema.Void, error: HttpApiError.BadRequest }),
+    HttpApiEndpoint.post("interrupt", WavePaths.interrupt, { success: Schema.Void, error: HttpApiError.BadRequest }),
+    HttpApiEndpoint.post("stop", WavePaths.stop, { success: Schema.Void, error: HttpApiError.BadRequest }),
   ),
 )

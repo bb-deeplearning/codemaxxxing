@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { Context, Effect, Layer, Option, Schema } from "effect"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { InstanceState } from "@/effect/instance-state"
 import { ParseError, State, parse, serialize } from "./state"
 
@@ -113,5 +114,7 @@ const layer = Layer.effect(
 )
 
 export const defaultLayer = layer
+
+export const node = LayerNode.make({ service: Service, layer, deps: [] })
 
 export * as Wave from "./wave"
