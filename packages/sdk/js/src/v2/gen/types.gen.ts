@@ -2676,6 +2676,36 @@ export type WorkspaceWarpError = {
   }
 }
 
+export type OpencodeWaveRow = {
+  n: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  status: "pending" | "running" | "complete" | "failed" | "undoable" | "paused" | "cancelled"
+  session_id: string
+  commit_sha: string
+  notes: string
+}
+
+export type OpencodeWaveState = {
+  campaign_id: string
+  plan_source: string
+  executor_agent: string
+  executor_model: string
+  executor_variant: string
+  current_wave: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  wave_status: "pending" | "running" | "complete" | "failed" | "plan_undoable" | "awaiting_user" | "all_complete"
+  failure_kind: "" | "transient" | "undoable" | "crash" | "cancelled"
+  retry_count: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  verify_count: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  user_question: string
+  loop_state: "idle" | "armed" | "paused"
+  active_session_id: string
+  active_session_kind: "" | "executor" | "verifier"
+  total_waves: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  session_count: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  created: string
+  last_updated: string
+  waves: Array<OpencodeWaveRow>
+}
+
 export type UnauthorizedError = {
   _tag: "UnauthorizedError"
   message: string
@@ -11225,6 +11255,140 @@ export type ExperimentalWorkspaceWarpResponses = {
 
 export type ExperimentalWorkspaceWarpResponse =
   ExperimentalWorkspaceWarpResponses[keyof ExperimentalWorkspaceWarpResponses]
+
+export type WaveListData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/wave"
+}
+
+export type WaveListErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type WaveListError = WaveListErrors[keyof WaveListErrors]
+
+export type WaveListResponses = {
+  /**
+   * Wave campaigns
+   */
+  200: Array<string>
+}
+
+export type WaveListResponse = WaveListResponses[keyof WaveListResponses]
+
+export type WaveActiveData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/wave/active"
+}
+
+export type WaveActiveErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type WaveActiveError = WaveActiveErrors[keyof WaveActiveErrors]
+
+export type WaveActiveResponses = {
+  /**
+   * Active wave campaign
+   */
+  200: OpencodeWaveState
+}
+
+export type WaveActiveResponse = WaveActiveResponses[keyof WaveActiveResponses]
+
+export type WaveSetActiveData = {
+  body?: {
+    id?: string
+  }
+  path?: never
+  query?: never
+  url: "/wave/active"
+}
+
+export type WaveSetActiveErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type WaveSetActiveError = WaveSetActiveErrors[keyof WaveSetActiveErrors]
+
+export type WaveSetActiveResponses = {
+  /**
+   * <No Content>
+   */
+  200: unknown
+}
+
+export type WaveReadData = {
+  body?: never
+  path: {
+    campaignID: string
+  }
+  query?: never
+  url: "/wave/{campaignID}"
+}
+
+export type WaveReadErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type WaveReadError = WaveReadErrors[keyof WaveReadErrors]
+
+export type WaveReadResponses = {
+  /**
+   * Wave campaign state
+   */
+  200: OpencodeWaveState
+}
+
+export type WaveReadResponse = WaveReadResponses[keyof WaveReadResponses]
+
+export type WaveNotesData = {
+  body?: never
+  path: {
+    campaignID: string
+    wave: string
+  }
+  query?: never
+  url: "/wave/{campaignID}/notes/{wave}"
+}
+
+export type WaveNotesErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type WaveNotesError = WaveNotesErrors[keyof WaveNotesErrors]
+
+export type WaveNotesResponses = {
+  /**
+   * Wave notes
+   */
+  200: string
+}
+
+export type WaveNotesResponse = WaveNotesResponses[keyof WaveNotesResponses]
 
 export type V2HealthGetData = {
   body?: never

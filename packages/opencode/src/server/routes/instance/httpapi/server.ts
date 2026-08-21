@@ -106,6 +106,8 @@ import { sessionLocationLayer } from "@opencode-ai/server/middleware/session-loc
 import { PtyEnvironment } from "@opencode-ai/server/pty-environment"
 import { schemaErrorLayer as v2SchemaErrorLayer } from "@opencode-ai/server/middleware/schema-error"
 import { workspaceHandlers } from "./handlers/workspace"
+import { waveHandlers } from "./handlers/wave"
+import { Wave } from "@/wave/wave"
 import { instanceContextLayer } from "./middleware/instance-context"
 import { workspaceRoutingLayer } from "./middleware/workspace-routing"
 import { disposeMiddleware } from "./lifecycle"
@@ -168,11 +170,12 @@ const instanceApiRoutes = HttpApiBuilder.layer(InstanceHttpApi).pipe(
     syncHandlers,
     tuiHandlers,
     workspaceHandlers,
+    waveHandlers,
   ]),
 )
 
 const instanceRoutes = instanceApiRoutes.pipe(
-  Layer.provide([httpApiAuthLayer, workspaceRoutingLive, instanceContextLayer, schemaErrorLayer]),
+  Layer.provide([httpApiAuthLayer, workspaceRoutingLive, instanceContextLayer, schemaErrorLayer, Wave.defaultLayer]),
 )
 const serverRoutes = HttpApiBuilder.layer(Api).pipe(
   Layer.provide(handlers),

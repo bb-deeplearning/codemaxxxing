@@ -1,5 +1,5 @@
 import { Prompt, type PromptRef } from "../component/prompt"
-import { createEffect, createMemo, createSignal, onMount } from "solid-js"
+import { createEffect, createMemo, createSignal, onMount, Show } from "solid-js"
 import { Logo } from "../component/logo"
 import { useSync } from "../context/sync"
 import { Toast } from "../ui/toast"
@@ -12,6 +12,8 @@ import { useEditorContext } from "../context/editor"
 import { useTerminalDimensions } from "@opentui/solid"
 import { useTuiConfig } from "../config"
 import { HomeSessionDestinationProvider } from "./home/session-destination"
+import { useWave } from "../context/wave"
+import { useTheme } from "../context/theme"
 
 let once = false
 const placeholder = {
@@ -30,6 +32,8 @@ export function Home() {
   const editor = useEditorContext()
   const dimensions = useTerminalDimensions()
   const tuiConfig = useTuiConfig()
+  const wave = useWave()
+  const { theme } = useTheme()
   const promptMaxWidth = createMemo(() => {
     const configured = tuiConfig.prompt?.max_width
     if (configured === "auto") return Math.max(75, Math.floor(dimensions().width * 0.7))
@@ -88,6 +92,13 @@ export function Home() {
         <Toast />
       </box>
       <box width="100%" flexShrink={0}>
+        <Show when={wave.data.state}>
+          {(state) => (
+            <text fg={theme.textMuted}>
+              wave · {state().campaign_id} · {state().wave_status}
+            </text>
+          )}
+        </Show>
         <pluginRuntime.Slot name="home_footer" mode="single_winner" />
       </box>
     </HomeSessionDestinationProvider>

@@ -53,6 +53,7 @@ import { DialogConsoleOrg } from "./component/dialog-console-org"
 import { ThemeProvider, useTheme } from "./context/theme"
 import { Home } from "./routes/home"
 import { Session } from "./routes/session"
+import { Wave } from "./routes/wave"
 import { PromptHistoryProvider } from "./component/prompt/history"
 import { FrecencyProvider } from "./component/prompt/frecency"
 import { PromptStashProvider } from "./component/prompt/stash"
@@ -65,6 +66,7 @@ import * as Model from "./util/model"
 import { ArgsProvider, useArgs, type Args } from "./context/args"
 import open from "open"
 import { PromptRefProvider, usePromptRef } from "./context/prompt"
+import { WaveProvider } from "./context/wave"
 import { TuiConfigProvider, useTuiConfig, type TuiConfig } from "./config"
 import { createTuiApiAdapters } from "./plugin/adapters"
 import { createTuiApi } from "./plugin/api"
@@ -303,6 +305,7 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
                                           events={input.events}
                                         >
                                           <PermissionProvider>
+                                            <WaveProvider>
                                             <ProjectProvider>
                                               <SyncProvider>
                                                 <DataProvider>
@@ -331,6 +334,7 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
                                                 </DataProvider>
                                               </SyncProvider>
                                             </ProjectProvider>
+                                            </WaveProvider>
                                           </PermissionProvider>
                                         </SDKProvider>
                                       </PluginRuntimeProvider>
@@ -576,6 +580,16 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
         slashAliases: ["resume", "continue"],
         run: () => {
           dialog.replace(() => <DialogSessionList />)
+        },
+      },
+      {
+        name: "wave.open",
+        title: "Open wave dashboard",
+        category: "System",
+        slashName: "wave",
+        run: () => {
+          route.navigate({ type: "wave" })
+          dialog.clear()
         },
       },
       {
@@ -1117,6 +1131,9 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
               <Show when={route.data.type === "session" ? route.data.sessionID : undefined} keyed>
                 {(_) => <Session />}
               </Show>
+            </Match>
+            <Match when={route.data.type === "wave"}>
+              <Wave />
             </Match>
           </Switch>
           {plugin()}

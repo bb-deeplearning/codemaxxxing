@@ -395,6 +395,16 @@ import type {
   VcsGetResponses,
   VcsStatusErrors,
   VcsStatusResponses,
+  WaveActiveErrors,
+  WaveActiveResponses,
+  WaveListErrors,
+  WaveListResponses,
+  WaveNotesErrors,
+  WaveNotesResponses,
+  WaveReadErrors,
+  WaveReadResponses,
+  WaveSetActiveErrors,
+  WaveSetActiveResponses,
   WorktreeCreateErrors,
   WorktreeCreateInput,
   WorktreeCreateResponses,
@@ -5021,6 +5031,95 @@ export class Tui extends HeyApiClient {
   }
 }
 
+export class Wave extends HeyApiClient {
+  /**
+   * List wave campaigns
+   */
+  public list<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<WaveListResponses, WaveListErrors, ThrowOnError>({
+      url: "/wave",
+      ...options,
+    })
+  }
+
+  /**
+   * Read active wave campaign
+   */
+  public active<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<WaveActiveResponses, WaveActiveErrors, ThrowOnError>({
+      url: "/wave/active",
+      ...options,
+    })
+  }
+
+  /**
+   * Select active wave campaign
+   */
+  public setActive<ThrowOnError extends boolean = false>(
+    parameters?: {
+      id?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "id" }] }])
+    return (options?.client ?? this.client).post<WaveSetActiveResponses, WaveSetActiveErrors, ThrowOnError>({
+      url: "/wave/active",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Read wave campaign state
+   */
+  public read<ThrowOnError extends boolean = false>(
+    parameters: {
+      campaignID: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "campaignID" }] }])
+    return (options?.client ?? this.client).get<WaveReadResponses, WaveReadErrors, ThrowOnError>({
+      url: "/wave/{campaignID}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Read wave notes
+   */
+  public notes<ThrowOnError extends boolean = false>(
+    parameters: {
+      campaignID: string
+      wave: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "campaignID" },
+            { in: "path", key: "wave" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<WaveNotesResponses, WaveNotesErrors, ThrowOnError>({
+      url: "/wave/{campaignID}/notes/{wave}",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Health extends HeyApiClient {
   /**
    * Check server health
@@ -7210,6 +7309,11 @@ export class OpencodeClient extends HeyApiClient {
   private _tui?: Tui
   get tui(): Tui {
     return (this._tui ??= new Tui({ client: this.client }))
+  }
+
+  private _wave?: Wave
+  get wave(): Wave {
+    return (this._wave ??= new Wave({ client: this.client }))
   }
 
   private _v2?: V2
