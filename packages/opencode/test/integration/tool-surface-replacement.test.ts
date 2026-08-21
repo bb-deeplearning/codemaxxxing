@@ -1145,6 +1145,10 @@ describe("INTEGRATION_INVARIANTS — tool surface replacement", () => {
         // something an agent SAYS — the tool emits worktree.review.requested
         // for the session's own checkout.
         "request_review",
+        // recall (2026-08-20): pull-based escape hatch for compacted
+        // history — searches this session's stored messages and parts,
+        // including tool output that compaction cleared from the context.
+        "recall",
       ])
 
       for (const agentName of agentNames) {

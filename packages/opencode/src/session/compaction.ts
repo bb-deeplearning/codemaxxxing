@@ -13,10 +13,12 @@ import { Plugin } from "@/plugin"
 import { Config } from "@/config/config"
 import { NotFoundError } from "@/storage/storage"
 import { ModelID, ProviderID } from "@/provider/schema"
-import { Effect, Layer, Context, Schema } from "effect"
+import { Effect, Layer, Context, Schema, Cause } from "effect"
+import * as Stream from "effect/Stream"
 import * as DateTime from "effect/DateTime"
 import { InstanceState } from "@/effect/instance-state"
 import { isOverflow as overflow, usable } from "./overflow"
+import { LLM } from "./llm"
 import { makeRuntime } from "@/effect/run-service"
 import { fn } from "@/util/fn"
 import { EventV2 } from "@/v2/event"
@@ -29,6 +31,13 @@ export const Event = {
     "session.compacted",
     Schema.Struct({
       sessionID: SessionID,
+      // Enrichment fields are absent on serves older than 2026-08; clients treat them as optional.
+      trigger: Schema.optional(Schema.Union([Schema.Literal("auto"), Schema.Literal("manual")])),
+      overflow: Schema.optional(Schema.Boolean),
+      tokensBefore: Schema.optional(Schema.Number),
+      durationMs: Schema.optional(Schema.Number),
+      summaryChars: Schema.optional(Schema.Number),
+      tailStartID: Schema.optional(MessageID),
     }),
   ),
 }
@@ -40,6 +49,11 @@ const PRUNE_PROTECTED_TOOLS = ["skill"]
 const DEFAULT_TAIL_TURNS = 2
 const MIN_PRESERVE_RECENT_TOKENS = 2_000
 const MAX_PRESERVE_RECENT_TOKENS = 8_000
+const DEGENERATE_MIN_SUMMARY_CHARS = 500
+const DEGENERATE_MIN_HEAD_MESSAGES = 6
+// Prefire starts once usage crosses this fraction of the usable window (and compaction
+// has not fired yet), giving background pass-1 runway to finish before the hard line.
+const PREFIRE_LEAD = 0.9
 const SUMMARY_TEMPLATE = `Output exactly the Markdown structure shown inside <template> and keep the section order unchanged. Do not include the <template> tags in your response.
 <template>
 ## Goal
@@ -128,6 +142,82 @@ function completedCompactions(messages: MessageV2.WithParts[]) {
   })
 }
 
+// A summary too small or off-template to plausibly carry the state of the history it
+// replaces. Summaries here are anchors — every later compaction "updates" the previous
+// one, so a degenerate summary would poison the session permanently. An empty summary is
+// always degenerate; the template and size floors only apply to conversations big enough
+// that a tiny summary cannot be honest, and the template check only when the built-in
+// prompt (which mandates the template) was used.
+function isDegenerateSummary(input: { text: string | undefined; headCount: number; customPrompt: boolean }) {
+  if (!input.text) return true
+  if (input.headCount < DEGENERATE_MIN_HEAD_MESSAGES) return false
+  if (!input.customPrompt && !input.text.includes("## Goal")) return true
+  return input.text.length < DEGENERATE_MIN_SUMMARY_CHARS
+}
+
+// Sticky per-session guard after a deterministic compaction failure (history too large
+// to fit even stripped, or a degenerate summary twice in a row). Retrying the same input
+// on the same model cannot succeed, so without this every subsequent turn re-attempts and
+// re-fails the same compaction. Cleared by a model switch, a manual compact, or a later
+// success; process-lifetime only. Module-scoped (not layer-scoped) deliberately: the
+// service layer is constructed once per runtime and the server routes, run loop, and
+// module exports run in different runtimes — session IDs are host-globally unique, so one
+// process-wide map keyed by session is the correct scope.
+const suppressed = new Map<string, { modelID: string; reason: "too_large" | "degenerate" }>()
+function suppression(sessionID: SessionID, modelID: string) {
+  const entry = suppressed.get(sessionID)
+  if (!entry) return undefined
+  if (entry.modelID !== modelID) {
+    suppressed.delete(sessionID)
+    return undefined
+  }
+  return entry
+}
+
+// Prefire two-pass state. Pass-1 speculatively summarizes the head in the background
+// once usage crosses PREFIRE_LEAD of the usable window; at compaction time pass-2 anchors
+// the cached note (<previous-summary>) and summarizes only the delta, so the blocking
+// call prefills a few turns instead of the whole history. Module-scoped for the same
+// multi-runtime reason as `suppressed`. An entry stays valid while it remains a PREFIX of
+// the current head (the head only grows between prefires); prune mutations and reverts
+// change the stamp and invalidate it.
+type PrefireEntry = {
+  note1: string
+  headEndID: MessageID
+  stamp: string
+  modelID: string
+}
+const prefireCache = new Map<string, PrefireEntry>()
+const prefireInflight = new Set<string>()
+
+// Identity + mutation stamp for a head slice: message ids, part counts, and the newest
+// prune stamp. Completed turns are immutable except for pruning, so this is cheap and
+// sufficient to detect anything that would make a cached pass-1 note lie.
+function prefireStamp(messages: MessageV2.WithParts[]) {
+  return messages
+    .map((m) => {
+      const compacted = m.parts.reduce(
+        (max, p) =>
+          p.type === "tool" && p.state.status === "completed" && p.state.time.compacted
+            ? Math.max(max, p.state.time.compacted)
+            : max,
+        0,
+      )
+      return `${m.info.id}:${m.parts.length}:${compacted}`
+    })
+    .join("|")
+}
+
+// Index in `head` up to which `entry` covers it, or undefined when the entry is stale
+// (model switch, revert, prune, or any divergence from the cached prefix).
+function prefireCut(entry: PrefireEntry, head: MessageV2.WithParts[], modelID: string) {
+  if (entry.modelID !== modelID) return undefined
+  const cut = head.findIndex((m) => m.info.id === entry.headEndID)
+  if (cut === -1) return undefined
+  if (prefireStamp(head.slice(0, cut + 1)) !== entry.stamp) return undefined
+  return cut
+}
+
 function buildPrompt(input: { previousSummary?: string; context: string[] }) {
   const anchor = input.previousSummary
     ? [
@@ -195,14 +285,21 @@ export interface Interface {
   readonly isOverflow: (input: {
     tokens: MessageV2.Assistant["tokens"]
     model: Provider.Model
+    sessionID?: SessionID
   }) => Effect.Effect<boolean>
   readonly prune: (input: { sessionID: SessionID }) => Effect.Effect<void>
+  readonly prefire: (input: {
+    sessionID: SessionID
+    tokens: MessageV2.Assistant["tokens"]
+    model: { providerID: ProviderID; modelID: ModelID }
+  }) => Effect.Effect<void>
   readonly process: (input: {
     parentID: MessageID
     messages: MessageV2.WithParts[]
     sessionID: SessionID
     auto: boolean
     overflow?: boolean
+    liveState?: string[]
   }) => Effect.Effect<"continue" | "stop">
   readonly create: (input: {
     sessionID: SessionID
@@ -225,6 +322,7 @@ export const layer: Layer.Layer<
   | Plugin.Service
   | SessionProcessor.Service
   | Provider.Service
+  | LLM.Service
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -235,11 +333,14 @@ export const layer: Layer.Layer<
     const plugin = yield* Plugin.Service
     const processors = yield* SessionProcessor.Service
     const provider = yield* Provider.Service
+    const llm = yield* LLM.Service
 
     const isOverflow = Effect.fn("SessionCompaction.isOverflow")(function* (input: {
       tokens: MessageV2.Assistant["tokens"]
       model: Provider.Model
+      sessionID?: SessionID
     }) {
+      if (input.sessionID && suppression(input.sessionID, input.model.id)) return false
       return overflow({ cfg: yield* config.get(), tokens: input.tokens, model: input.model })
     })
 
@@ -350,12 +451,123 @@ export const layer: Layer.Layer<
       }
     })
 
+    // Background pass-1: summarize the current head into a cached note before the
+    // auto-compact line is reached. Fire-and-forget from the run loop (Effect.ignore +
+    // forkIn(scope)); every failure path just skips the cache and compaction falls back
+    // to the ordinary single-pass. Produces no session messages and no events.
+    const prefire = Effect.fn("SessionCompaction.prefire")(function* (input: {
+      sessionID: SessionID
+      tokens: MessageV2.Assistant["tokens"]
+      model: { providerID: ProviderID; modelID: ModelID }
+    }) {
+      const cfg = yield* config.get()
+      if (cfg.compaction?.prefire === false) return
+      if (cfg.compaction?.auto === false) return
+      if (suppression(input.sessionID, input.model.modelID)) return
+      if (prefireInflight.has(input.sessionID)) return
+      const agent = yield* agents.get("compaction")
+      const model = agent.model
+        ? yield* provider.getModel(agent.model.providerID, agent.model.modelID)
+        : yield* provider.getModel(input.model.providerID, input.model.modelID)
+      const count =
+        input.tokens.total ||
+        input.tokens.input + input.tokens.output + input.tokens.cache.read + input.tokens.cache.write
+      const limit = usable({ cfg, model })
+      if (limit === 0) return
+      if (count < limit * PREFIRE_LEAD || count >= limit) return
+
+      const messages = yield* MessageV2.filterCompactedEffect(input.sessionID)
+      const prior = completedCompactions(messages)
+      const hidden = new Set(prior.flatMap((item) => [item.userIndex, item.assistantIndex]))
+      const previousSummary = prior.at(-1)?.summary
+      const selected = yield* select({
+        messages: messages.filter((_, index) => !hidden.has(index)),
+        cfg,
+        model,
+      })
+      if (!selected.head.length) return
+      const existing = prefireCache.get(input.sessionID)
+      if (existing && prefireCut(existing, selected.head, model.id) !== undefined) return
+      if (existing) prefireCache.delete(input.sessionID)
+      const user = messages.findLast((m) => m.info.role === "user")
+      if (!user || user.info.role !== "user") return
+      const userInfo = user.info
+
+      prefireInflight.add(input.sessionID)
+      yield* Effect.gen(function* () {
+        const compacting = yield* plugin.trigger(
+          "experimental.session.compacting",
+          { sessionID: input.sessionID },
+          { context: [], prompt: undefined },
+        )
+        const prompt = compacting.prompt ?? buildPrompt({ previousSummary, context: compacting.context })
+        const msgs = structuredClone(selected.head)
+        yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
+        const modelMessages = yield* MessageV2.toModelMessagesEffect(msgs, model, {
+          stripMedia: true,
+          toolOutputMaxChars: TOOL_OUTPUT_MAX_CHARS,
+        })
+        const started = Date.now()
+        const note1 = yield* llm
+          .stream({
+            agent,
+            user: userInfo,
+            system: [],
+            tools: {},
+            model,
+            sessionID: input.sessionID,
+            retries: 1,
+            messages: [
+              ...modelMessages,
+              {
+                role: "user",
+                content: [{ type: "text", text: prompt }],
+              },
+            ],
+          })
+          .pipe(
+            Stream.filter((e): e is Extract<LLM.Event, { type: "text-delta" }> => e.type === "text-delta"),
+            Stream.map((e) => e.text),
+            Stream.mkString,
+          )
+        if (
+          isDegenerateSummary({
+            text: note1.trim() || undefined,
+            headCount: selected.head.length,
+            customPrompt: compacting.prompt !== undefined,
+          })
+        ) {
+          log.warn("prefire produced a degenerate note, not caching", { sessionID: input.sessionID })
+          return
+        }
+        prefireCache.set(input.sessionID, {
+          note1,
+          headEndID: selected.head.at(-1)!.info.id,
+          stamp: prefireStamp(selected.head),
+          modelID: model.id,
+        })
+        log.info("prefire cached", {
+          sessionID: input.sessionID,
+          headCount: selected.head.length,
+          ms: Date.now() - started,
+        })
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.sync(() =>
+            log.warn("prefire failed", { sessionID: input.sessionID, error: Cause.squash(cause) }),
+          ),
+        ),
+        Effect.ensuring(Effect.sync(() => prefireInflight.delete(input.sessionID))),
+      )
+    })
+
     const processCompaction = Effect.fn("SessionCompaction.process")(function* (input: {
       parentID: MessageID
       messages: MessageV2.WithParts[]
       sessionID: SessionID
       auto: boolean
       overflow?: boolean
+      liveState?: string[]
     }) {
       const parent = input.messages.findLast((m) => m.info.id === input.parentID)
       if (!parent || parent.info.role !== "user") {
@@ -403,67 +615,152 @@ export const layer: Layer.Layer<
         cfg,
         model,
       })
+      // Prefire pass-2: when a background pass-1 note covers a prefix of the head, anchor
+      // it and summarize only the uncovered delta. Stale entries (model switch, revert,
+      // prune) fall back to the full single-pass without ceremony.
+      const prefired = (() => {
+        const entry = prefireCache.get(input.sessionID)
+        if (!entry) return undefined
+        const cut = prefireCut(entry, selected.head, model.id)
+        if (cut === undefined) {
+          prefireCache.delete(input.sessionID)
+          log.info("prefire stale, falling back to single-pass", { sessionID: input.sessionID })
+          return undefined
+        }
+        return { entry, cut }
+      })()
+      if (prefired) {
+        log.info("prefire hit", {
+          sessionID: input.sessionID,
+          covered: prefired.cut + 1,
+          headCount: selected.head.length,
+        })
+      }
       // Allow plugins to inject context or replace compaction prompt.
       const compacting = yield* plugin.trigger(
         "experimental.session.compacting",
         { sessionID: input.sessionID },
         { context: [], prompt: undefined },
       )
-      const nextPrompt = compacting.prompt ?? buildPrompt({ previousSummary, context: compacting.context })
-      const msgs = structuredClone(selected.head)
-      yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
-      const modelMessages = yield* MessageV2.toModelMessagesEffect(msgs, model, {
-        stripMedia: true,
-        toolOutputMaxChars: TOOL_OUTPUT_MAX_CHARS,
+      const buildInputs = Effect.fn("SessionCompaction.buildInputs")(function* (useCache: boolean) {
+        const cache = useCache ? prefired : undefined
+        const anchor = cache ? cache.entry.note1 : previousSummary
+        const head = cache ? selected.head.slice(cache.cut + 1) : selected.head
+        const nextPrompt = compacting.prompt ?? buildPrompt({ previousSummary: anchor, context: compacting.context })
+        const msgs = structuredClone(head)
+        yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
+        const modelMessages = yield* MessageV2.toModelMessagesEffect(msgs, model, {
+          stripMedia: true,
+          toolOutputMaxChars: TOOL_OUTPUT_MAX_CHARS,
+        })
+        return { nextPrompt, modelMessages }
       })
+      let inputs = yield* buildInputs(prefired !== undefined)
       const ctx = yield* InstanceState.context
-      const msg: MessageV2.Assistant = {
-        id: MessageID.ascending(),
-        role: "assistant",
-        parentID: input.parentID,
-        sessionID: input.sessionID,
-        mode: "compaction",
-        agent: "compaction",
-        variant: userMessage.model.variant,
-        summary: true,
-        path: {
-          cwd: ctx.directory,
-          root: ctx.worktree,
-        },
-        cost: 0,
-        tokens: {
-          output: 0,
-          input: 0,
-          reasoning: 0,
-          cache: { read: 0, write: 0 },
-        },
-        modelID: model.id,
-        providerID: model.providerID,
-        time: {
-          created: Date.now(),
-        },
-      }
-      yield* session.updateMessage(msg)
-      const processor = yield* processors.create({
-        assistantMessage: msg,
-        sessionID: input.sessionID,
-        model,
-      })
-      const result = yield* processor.process({
-        user: userMessage,
-        agent,
-        sessionID: input.sessionID,
-        tools: {},
-        system: [],
-        messages: [
-          ...modelMessages,
-          {
-            role: "user",
-            content: [{ type: "text", text: nextPrompt }],
+      const startedAt = Date.now()
+      const tokensBefore = (() => {
+        for (let i = input.messages.length - 1; i >= 0; i--) {
+          const info = input.messages[i].info
+          if (info.role !== "assistant" || info.summary) continue
+          const total =
+            info.tokens.input + info.tokens.output + info.tokens.reasoning + info.tokens.cache.read + info.tokens.cache.write
+          if (total > 0) return total
+        }
+        return undefined
+      })()
+
+      const attempt = Effect.fn("SessionCompaction.attempt")(function* (attemptInputs: {
+        nextPrompt: string
+        modelMessages: Effect.Success<ReturnType<typeof MessageV2.toModelMessagesEffect>>
+      }) {
+        const msg: MessageV2.Assistant = {
+          id: MessageID.ascending(),
+          role: "assistant",
+          parentID: input.parentID,
+          sessionID: input.sessionID,
+          mode: "compaction",
+          agent: "compaction",
+          variant: userMessage.model.variant,
+          summary: true,
+          path: {
+            cwd: ctx.directory,
+            root: ctx.worktree,
           },
-        ],
-        model,
+          cost: 0,
+          tokens: {
+            output: 0,
+            input: 0,
+            reasoning: 0,
+            cache: { read: 0, write: 0 },
+          },
+          modelID: model.id,
+          providerID: model.providerID,
+          time: {
+            created: Date.now(),
+          },
+        }
+        yield* session.updateMessage(msg)
+        const processor = yield* processors.create({
+          assistantMessage: msg,
+          sessionID: input.sessionID,
+          model,
+        })
+        const result = yield* processor.process({
+          user: userMessage,
+          agent,
+          sessionID: input.sessionID,
+          tools: {},
+          system: [],
+          messages: [
+            ...attemptInputs.modelMessages,
+            {
+              role: "user",
+              content: [{ type: "text", text: attemptInputs.nextPrompt }],
+            },
+          ],
+          model,
+        })
+        return { processor, result }
       })
+
+      const readSummary = Effect.fn("SessionCompaction.readSummary")(function* (id: MessageID) {
+        const found = (yield* session.messages({ sessionID: input.sessionID })).find((item) => item.info.id === id)
+        return found ? summaryText(found) : undefined
+      })
+
+      const degenerate = (text: string | undefined) =>
+        isDegenerateSummary({ text, headCount: selected.head.length, customPrompt: compacting.prompt !== undefined })
+
+      const failAttempt = Effect.fn("SessionCompaction.failAttempt")(function* (
+        handle: { message: MessageV2.Assistant },
+        message: string,
+      ) {
+        handle.message.error = { name: "UnknownError", data: { message } }
+        handle.message.finish = "error"
+        yield* session.updateMessage(handle.message)
+      })
+
+      let run = yield* attempt(inputs)
+      if (run.result === "continue" && degenerate(yield* readSummary(run.processor.message.id))) {
+        log.warn("degenerate summary, retrying", { sessionID: input.sessionID })
+        yield* failAttempt(run.processor, "Compaction produced a degenerate summary; retried with a fresh attempt")
+        if (prefired) {
+          // The cached pass-1 note may be the poison; retry from the full head instead.
+          prefireCache.delete(input.sessionID)
+          inputs = yield* buildInputs(false)
+        }
+        run = yield* attempt(inputs)
+        if (run.result === "continue" && degenerate(yield* readSummary(run.processor.message.id))) {
+          yield* failAttempt(
+            run.processor,
+            "Compaction produced a degenerate summary twice; automatic compaction is paused for this session until the model changes or a manual compact succeeds",
+          )
+          suppressed.set(input.sessionID, { modelID: model.id, reason: "degenerate" })
+          return "stop"
+        }
+      }
+      const processor = run.processor
+      const result = run.result
 
       if (result === "compact") {
         processor.message.error = new MessageV2.ContextOverflowError({
@@ -473,6 +770,7 @@ export const layer: Layer.Layer<
         }).toObject()
         processor.message.finish = "error"
         yield* session.updateMessage(processor.message)
+        suppressed.set(input.sessionID, { modelID: model.id, reason: "too_large" })
         return "stop"
       }
 
@@ -540,7 +838,20 @@ export const layer: Layer.Layer<
               agent: userMessage.agent,
               model: userMessage.model,
             })
+            // Structural re-anchor: the state below is read from the runtime (todo table,
+            // live agent tree), not from the summary, so a sloppy summary cannot strand a
+            // running subagent or an open todo list. The recall pointer is always true —
+            // the full pre-compaction transcript stays in storage.
+            const stateLines = input.liveState ?? []
+            const block = [
+              "<post-compaction-state>",
+              ...(stateLines.length ? ["Live state snapshotted at compaction time:", ...stateLines, ""] : []),
+              "The recall tool searches this session's full pre-compaction history, including cleared tool outputs, when the summary above lacks a detail you need.",
+              "</post-compaction-state>",
+              "",
+            ].join("\n")
             const text =
+              block +
               (input.overflow
                 ? "The previous request exceeded the provider's size limit due to large media attachments. The conversation was compacted and media files were removed from context. If the user was asking about attached images or files, explain that the attachments were too large to process and suggest they try again with smaller or fewer files.\n\n"
                 : "") +
@@ -567,19 +878,24 @@ export const layer: Layer.Layer<
 
       if (processor.message.error) return "stop"
       if (result === "continue") {
-        const summary = summaryText(
-          (yield* session.messages({ sessionID: input.sessionID })).find((item) => item.info.id === msg.id) ?? {
-            info: msg,
-            parts: [],
-          },
-        )
+        suppressed.delete(input.sessionID)
+        prefireCache.delete(input.sessionID)
+        const summary = yield* readSummary(processor.message.id)
         EventV2.run(SessionEvent.Compaction.Ended.Sync, {
           sessionID: input.sessionID,
           timestamp: DateTime.makeUnsafe(Date.now()),
           text: summary ?? "",
           include: selected.tail_start_id,
         })
-        yield* bus.publish(Event.Compacted, { sessionID: input.sessionID })
+        yield* bus.publish(Event.Compacted, {
+          sessionID: input.sessionID,
+          trigger: input.auto ? ("auto" as const) : ("manual" as const),
+          overflow: input.overflow === true,
+          tokensBefore,
+          durationMs: Date.now() - startedAt,
+          summaryChars: (summary ?? "").length,
+          tailStartID: selected.tail_start_id,
+        })
       }
       return result
     })
@@ -591,6 +907,14 @@ export const layer: Layer.Layer<
       auto: boolean
       overflow?: boolean
     }) {
+      if (!input.auto) suppressed.delete(input.sessionID)
+      if (input.auto) {
+        const entry = suppression(input.sessionID, input.model.modelID)
+        if (entry) {
+          log.warn("auto compaction suppressed", { sessionID: input.sessionID, reason: entry.reason })
+          return
+        }
+      }
       const msg = yield* session.updateMessage({
         id: MessageID.ascending(),
         role: "user",
@@ -617,6 +941,7 @@ export const layer: Layer.Layer<
     return Service.of({
       isOverflow,
       prune,
+      prefire,
       process: processCompaction,
       create,
     })
@@ -630,6 +955,7 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(SessionProcessor.defaultLayer),
     Layer.provide(Agent.defaultLayer),
     Layer.provide(Plugin.defaultLayer),
+    Layer.provide(LLM.defaultLayer),
     Layer.provide(Bus.layer),
     Layer.provide(Config.defaultLayer),
   ),

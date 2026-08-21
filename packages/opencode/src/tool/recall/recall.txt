@@ -1,0 +1,7 @@
+- Searches THIS session's full stored history — every message, tool call, and tool result — including content that is no longer in your context.
+- Long sessions get compacted: old turns collapse into a summary and old tool results render as "[Old tool result content cleared]". The original text is still stored. This tool is the only way to read it back.
+- Use it when the summary lacks a detail you need, when you see "[Old tool result content cleared]" where the answer used to be, or when you need the exact earlier error text, file contents, or command output instead of your memory of it.
+- Matching is case-insensitive and ANDed across whitespace-separated terms: "auth token expired" only returns excerpts containing all three. Start narrow with something distinctive (an error code, a file path, a flag) and broaden if nothing comes back.
+- Returns up to `limit` excerpts (default 5, max 20), ranked by how densely the terms hit. Each excerpt is ~700 characters centered on the first hit and labelled with message id, role, part type, and timestamp.
+- Excerpts recovered from cleared tool output are marked "[recovered from pruned tool output]" — that content is invisible to you anywhere else.
+- Scope is this session only. It does not search other sessions, and it does not search the filesystem — use grep for files.

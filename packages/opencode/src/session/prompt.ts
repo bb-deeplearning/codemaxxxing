@@ -34,6 +34,7 @@ import { pathToFileURL, fileURLToPath } from "url"
 import { Config } from "@/config/config"
 import { ConfigMarkdown } from "@/config/markdown"
 import { SessionSummary } from "./summary"
+import { Todo } from "./todo"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { SessionProcessor } from "./processor"
 import { Tool } from "@/tool/tool"
@@ -137,6 +138,7 @@ export const layer = Layer.effect(
     // and (b) the runLoop body can drain mailboxes + dispatch v2 spawns
     // without re-resolving the service per call.
     const agentControl = yield* AgentControl.Service
+    const todo = yield* Todo.Service
     const runner = Effect.fn("SessionPrompt.runner")(function* () {
       return yield* EffectBridge.make()
     })
@@ -1581,6 +1583,34 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       return userMsg
     })
 
+    // Snapshot of state that lives outside the message substrate — live subagents
+    // (AgentControl's in-memory tree) and the todo list — taken at compaction time so the
+    // post-compaction continue turn re-anchors the model structurally instead of trusting
+    // the summary's prose to have remembered every handle. Best-effort: any failure just
+    // means a smaller snapshot.
+    const compactionLiveState = Effect.fn("SessionPrompt.compactionLiveState")(function* (sessionID: SessionID) {
+      const lines: string[] = []
+      const agents = yield* AgentToolContext.currentAgentPath(agentControl, sessionID).pipe(
+        Effect.flatMap((currentPath) => agentControl.listAgents(currentPath, sessionID)),
+        Effect.catchCause(() => Effect.succeed([])),
+      )
+      for (const a of agents) {
+        if (a.agent_status !== "running" && a.agent_status !== "pending_init") continue
+        const task = a.last_task_message ? ` — ${a.last_task_message.slice(0, 120)}` : ""
+        lines.push(`- live subagent ${a.agent_name} (${a.agent_status})${task}`)
+      }
+      const todos = yield* todo.get(sessionID).pipe(Effect.catchCause(() => Effect.succeed([])))
+      const open = todos.filter((t) => t.status === "pending" || t.status === "in_progress")
+      if (open.length) {
+        const shown = open
+          .slice(0, 6)
+          .map((t) => `${t.content} (${t.status})`)
+          .join("; ")
+        lines.push(`- open todos ${open.length}/${todos.length}: ${shown}`)
+      }
+      return lines
+    })
+
     const runLoop: (sessionID: SessionID) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.run")(
       function* (sessionID: SessionID) {
         const ctx = yield* InstanceState.context
@@ -1842,12 +1872,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           }
 
           if (task?.type === "compaction") {
+            const liveState = yield* compactionLiveState(sessionID)
             const result = yield* compaction.process({
               messages: msgs,
               parentID: lastUser.id,
               sessionID,
               auto: task.auto,
               overflow: task.overflow,
+              liveState,
             })
             if (result === "stop") break
             continue
@@ -1856,10 +1888,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           if (
             lastFinished &&
             lastFinished.summary !== true &&
-            (yield* compaction.isOverflow({ tokens: lastFinished.tokens, model }))
+            (yield* compaction.isOverflow({ tokens: lastFinished.tokens, model, sessionID }))
           ) {
             yield* compaction.create({ sessionID, agent: lastUser.agent, model: lastUser.model, auto: true })
             continue
+          }
+          if (lastFinished && lastFinished.summary !== true) {
+            yield* compaction
+              .prefire({ sessionID, tokens: lastFinished.tokens, model: lastUser.model })
+              .pipe(Effect.ignore, Effect.forkIn(scope))
           }
 
           const agent = yield* agents.get(lastUser.agent)
@@ -2201,6 +2238,7 @@ export const defaultLayer = Layer.suspend(() =>
         Agent.defaultLayer,
         SystemPrompt.defaultLayer,
         LLM.defaultLayer,
+        Todo.defaultLayer,
         Bus.layer,
         CrossSpawnSpawner.defaultLayer,
       ),

@@ -242,6 +242,10 @@ export const Info = Schema.Struct({
       reserved: Schema.optional(NonNegativeInt).annotate({
         description: "Token buffer for compaction. Leaves enough window to avoid overflow during compaction.",
       }),
+      prefire: Schema.optional(Schema.Boolean).annotate({
+        description:
+          "Speculatively summarize old history in the background shortly before auto-compaction triggers, so the blocking compaction call only has to cover recent turns (default: true)",
+      }),
     }),
   ),
   experimental: Schema.optional(

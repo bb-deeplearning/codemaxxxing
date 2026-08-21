@@ -185,6 +185,34 @@ async function lastCompactionPart(sessionID: SessionID) {
     ?.parts.find((item): item is MessageV2.CompactionPart => item.type === "compaction")
 }
 
+// Big enough and template-shaped so the degenerate-summary validator accepts it; the
+// fake processor writes this so fake-runtime tests exercise the accept path.
+const HEALTHY_SUMMARY = [
+  "## Goal",
+  "- keep the compaction tests honest about summary content",
+  "## Constraints & Preferences",
+  "- (none)",
+  "## Progress",
+  "### Done",
+  "- exercised the compaction pipeline end to end with a realistic summary body",
+  "### In Progress",
+  "- (none)",
+  "### Blocked",
+  "- (none)",
+  "## Key Decisions",
+  "- fake processors write a real summary so degenerate detection sees healthy output",
+  "## Ruled Out",
+  "- empty fake summaries; they read as degenerate to the validator",
+  "## Live State",
+  "- (none)",
+  "## Next Steps",
+  "- (none)",
+  "## Critical Context",
+  "- this body intentionally exceeds the five hundred character floor used by the degenerate summary validator so fake-processor tests take the accept path instead of the retry path",
+  "## Relevant Files",
+  "- packages/opencode/src/session/compaction.ts: the code under test",
+].join("\n")
+
 function fake(
   input: Parameters<SessionProcessorModule.SessionProcessor.Interface["create"]>[0],
   result: "continue" | "compact",
@@ -196,7 +224,20 @@ function fake(
     },
     updateToolCall: Effect.fn("TestSessionProcessor.updateToolCall")(() => Effect.succeed(undefined)),
     completeToolCall: Effect.fn("TestSessionProcessor.completeToolCall")(() => Effect.void),
-    process: Effect.fn("TestSessionProcessor.process")(() => Effect.succeed(result)),
+    process: Effect.fn("TestSessionProcessor.process")(
+      (): Effect.Effect<"continue" | "compact"> =>
+        result === "continue"
+          ? Effect.promise(() =>
+              svc.updatePart({
+                id: PartID.ascending(),
+                messageID: msg.id,
+                sessionID: msg.sessionID,
+                type: "text",
+                text: HEALTHY_SUMMARY,
+              }),
+            ).pipe(Effect.as("continue" as const))
+          : Effect.succeed("compact" as const),
+    ),
   } satisfies SessionProcessorModule.SessionProcessor.Handle
 }
 
@@ -228,6 +269,7 @@ function runtime(
       Layer.provide(provider.layer),
       Layer.provide(SessionNs.defaultLayer),
       Layer.provide(layer(result)),
+      Layer.provide(llm().layer),
       Layer.provide(Agent.defaultLayer),
       Layer.provide(plugin),
       Layer.provide(bus),
@@ -239,6 +281,7 @@ function runtime(
 const deps = Layer.mergeAll(
   ProviderTest.fake().layer,
   layer("continue"),
+  llm().layer,
   Agent.defaultLayer,
   Plugin.defaultLayer,
   Bus.layer,
@@ -841,6 +884,9 @@ describe("session.compaction.process", () => {
         const msgs = await svc.messages({ sessionID: session.id })
         const done = defer()
         let seen = false
+        let captured:
+          | { trigger?: "auto" | "manual"; overflow?: boolean; durationMs?: number; summaryChars?: number }
+          | undefined
         const rt = runtime("continue", Plugin.defaultLayer, wide())
         let unsub: (() => void) | undefined
         try {
@@ -849,6 +895,7 @@ describe("session.compaction.process", () => {
               svc.subscribeCallback(SessionCompaction.Event.Compacted, (evt) => {
                 if (evt.properties.sessionID !== session.id) return
                 seen = true
+                captured = evt.properties
                 done.resolve()
               }),
             ),
@@ -873,6 +920,10 @@ describe("session.compaction.process", () => {
           ])
           expect(result).toBe("continue")
           expect(seen).toBe(true)
+          expect(captured?.trigger).toBe("manual")
+          expect(captured?.overflow).toBe(false)
+          expect(captured?.summaryChars).toBe(HEALTHY_SUMMARY.length)
+          expect(typeof captured?.durationMs).toBe("number")
         } finally {
           unsub?.()
           await rt.dispose()
@@ -2189,5 +2240,422 @@ describe("SessionNs.getUsage", () => {
     expect(result.tokens.input).toBe(500)
     expect(result.tokens.cache.read).toBe(200)
     expect(result.tokens.cache.write).toBe(300)
+  })
+})
+
+describe("session.compaction.degenerate", () => {
+  const big = {
+    total: 0,
+    input: 999_999,
+    output: 0,
+    reasoning: 0,
+    cache: { read: 0, write: 0 },
+  }
+
+  async function seed(sessionID: SessionID, root: string, pairs = 8) {
+    for (let i = 0; i < pairs; i++) {
+      const u = await user(sessionID, `turn ${i} with enough words that the head is clearly substantial`)
+      await assistant(sessionID, u.id, root)
+    }
+  }
+
+  test("rejects a degenerate summary and retries once", async () => {
+    const stub = llm()
+    stub.push(reply("bad"))
+    stub.push(reply(HEALTHY_SUMMARY))
+    await using tmp = await tmpdir()
+    await WithInstance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await svc.create({})
+        await seed(session.id, tmp.path)
+        await SessionCompaction.create({ sessionID: session.id, agent: "build", model: ref, auto: false })
+        const rt = liveRuntime(stub.layer, wide())
+        try {
+          const msgs = await svc.messages({ sessionID: session.id })
+          const parent = msgs.at(-1)?.info.id
+          expect(parent).toBeTruthy()
+          const result = await rt.runPromise(
+            SessionCompaction.Service.use((svc) =>
+              svc.process({ parentID: parent!, messages: msgs, sessionID: session.id, auto: false }),
+            ),
+          )
+          expect(result).toBe("continue")
+          const summaries = (await svc.messages({ sessionID: session.id })).filter(
+            (m) => m.info.role === "assistant" && m.info.summary,
+          )
+          expect(summaries.length).toBe(2)
+          const first = summaries[0]!.info
+          const second = summaries[1]!.info
+          if (first.role !== "assistant" || second.role !== "assistant") throw new Error("unreachable")
+          expect(first.finish).toBe("error")
+          expect(JSON.stringify(first.error)).toContain("degenerate")
+          expect(second.error).toBeUndefined()
+          const filtered = MessageV2.filterCompacted(MessageV2.stream(session.id))
+          expect(filtered.some((m) => m.info.id === second.id)).toBe(true)
+        } finally {
+          await rt.dispose()
+        }
+      },
+    })
+  })
+
+  test("suppresses auto compaction after two degenerate summaries until the model changes", async () => {
+    const stub = llm()
+    stub.push(reply("bad"))
+    stub.push(reply("also bad"))
+    const provider = wide()
+    await using tmp = await tmpdir()
+    await WithInstance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await svc.create({})
+        await seed(session.id, tmp.path)
+        await SessionCompaction.create({ sessionID: session.id, agent: "build", model: ref, auto: true })
+        const rt = liveRuntime(stub.layer, provider)
+        try {
+          const msgs = await svc.messages({ sessionID: session.id })
+          const parent = msgs.at(-1)?.info.id
+          const result = await rt.runPromise(
+            SessionCompaction.Service.use((svc) =>
+              svc.process({ parentID: parent!, messages: msgs, sessionID: session.id, auto: true }),
+            ),
+          )
+          expect(result).toBe("stop")
+          const summaries = (await svc.messages({ sessionID: session.id })).filter(
+            (m) => m.info.role === "assistant" && m.info.summary,
+          )
+          expect(summaries.length).toBe(2)
+          expect(summaries.every((m) => m.info.role === "assistant" && m.info.finish === "error")).toBe(true)
+
+          const gated = await rt.runPromise(
+            SessionCompaction.Service.use((svc) =>
+              svc.isOverflow({ tokens: big, model: provider.model, sessionID: session.id }),
+            ),
+          )
+          expect(gated).toBe(false)
+
+          const switched = await rt.runPromise(
+            SessionCompaction.Service.use((svc) =>
+              svc.isOverflow({ tokens: big, model: { ...provider.model, id: ModelID.make("other-model") }, sessionID: session.id }),
+            ),
+          )
+          expect(switched).toBe(true)
+
+          const cleared = await rt.runPromise(
+            SessionCompaction.Service.use((svc) =>
+              svc.isOverflow({ tokens: big, model: provider.model, sessionID: session.id }),
+            ),
+          )
+          expect(cleared).toBe(true)
+        } finally {
+          await rt.dispose()
+        }
+      },
+    })
+  })
+
+  test("manual compact clears suppression and auto create becomes a no-op while suppressed", async () => {
+    const stub = llm()
+    stub.push(reply("bad"))
+    stub.push(reply("also bad"))
+    const provider = wide()
+    await using tmp = await tmpdir()
+    await WithInstance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await svc.create({})
+        await seed(session.id, tmp.path)
+        await SessionCompaction.create({ sessionID: session.id, agent: "build", model: ref, auto: true })
+        const rt = liveRuntime(stub.layer, provider)
+        try {
+          const msgs = await svc.messages({ sessionID: session.id })
+          const parent = msgs.at(-1)?.info.id
+          const result = await rt.runPromise(
+            SessionCompaction.Service.use((svc) =>
+              svc.process({ parentID: parent!, messages: msgs, sessionID: session.id, auto: true }),
+            ),
+          )
+          expect(result).toBe("stop")
+
+          const compactionParts = async () =>
+            (await svc.messages({ sessionID: session.id })).filter((m) =>
+              m.parts.some((p) => p.type === "compaction"),
+            ).length
+
+          const before = await compactionParts()
+          await SessionCompaction.create({ sessionID: session.id, agent: "build", model: ref, auto: true })
+          expect(await compactionParts()).toBe(before)
+
+          await SessionCompaction.create({ sessionID: session.id, agent: "build", model: ref, auto: false })
+          expect(await compactionParts()).toBe(before + 1)
+
+          const unsuppressed = await rt.runPromise(
+            SessionCompaction.Service.use((svc) =>
+              svc.isOverflow({ tokens: big, model: provider.model, sessionID: session.id }),
+            ),
+          )
+          expect(unsuppressed).toBe(true)
+        } finally {
+          await rt.dispose()
+        }
+      },
+    })
+  })
+})
+
+describe("session.compaction.livestate", () => {
+  test("auto continue carries the post-compaction state block and the recall pointer", async () => {
+    await using tmp = await tmpdir()
+    await WithInstance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await svc.create({})
+        const msg = await user(session.id, "hello")
+        const rt = runtime("continue", Plugin.defaultLayer, wide())
+        try {
+          const msgs = await svc.messages({ sessionID: session.id })
+          const result = await rt.runPromise(
+            SessionCompaction.Service.use((svc) =>
+              svc.process({
+                parentID: msg.id,
+                messages: msgs,
+                sessionID: session.id,
+                auto: true,
+                liveState: [
+                  "- live subagent worker_a (running) — parsing the wire captures",
+                  "- open todos 2/5: fix the seam (in_progress); verify against a real serve (pending)",
+                ],
+              }),
+            ),
+          )
+          expect(result).toBe("continue")
+          const last = (await svc.messages({ sessionID: session.id })).at(-1)
+          const text = last?.parts.find((p): p is MessageV2.TextPart => p.type === "text")?.text ?? ""
+          expect(text).toContain("<post-compaction-state>")
+          expect(text).toContain("live subagent worker_a (running)")
+          expect(text).toContain("open todos 2/5")
+          expect(text).toContain("recall tool")
+          expect(text).toContain("Continue if you have next steps")
+        } finally {
+          await rt.dispose()
+        }
+      },
+    })
+  })
+
+  test("the recall pointer rides the continue turn even without live state", async () => {
+    await using tmp = await tmpdir()
+    await WithInstance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await svc.create({})
+        const msg = await user(session.id, "hello")
+        const rt = runtime("continue", Plugin.defaultLayer, wide())
+        try {
+          const msgs = await svc.messages({ sessionID: session.id })
+          await rt.runPromise(
+            SessionCompaction.Service.use((svc) =>
+              svc.process({ parentID: msg.id, messages: msgs, sessionID: session.id, auto: true }),
+            ),
+          )
+          const last = (await svc.messages({ sessionID: session.id })).at(-1)
+          const text = last?.parts.find((p): p is MessageV2.TextPart => p.type === "text")?.text ?? ""
+          expect(text).toContain("recall tool")
+          expect(text).not.toContain("Live state snapshotted")
+        } finally {
+          await rt.dispose()
+        }
+      },
+    })
+  })
+})
+
+describe("session.compaction.prefire", () => {
+  // Inside the prefire band for wide(): no limit.input, so usable = context - maxOutput
+  // = 100k - 32k = 68k; lead 0.9 → the band is [61.2k, 68k).
+  const leading = {
+    total: 0,
+    input: 65_000,
+    output: 0,
+    reasoning: 0,
+    cache: { read: 0, write: 0 },
+  }
+  const NOTE1 = HEALTHY_SUMMARY + "\n- NOTE-ONE-MARKER"
+
+  async function seed(sessionID: SessionID, root: string, pairs = 8) {
+    const replies: MessageV2.Assistant[] = []
+    for (let i = 0; i < pairs; i++) {
+      const u = await user(sessionID, `turn ${i} with enough words that the head is clearly substantial`)
+      replies.push(await assistant(sessionID, u.id, root))
+    }
+    return replies
+  }
+
+  test("caches a background note and pass-2 anchors only the delta", async () => {
+    const stub = llm()
+    let captured = ""
+    stub.push(reply(NOTE1))
+    stub.push(
+      reply(HEALTHY_SUMMARY, (input) => {
+        captured = JSON.stringify(input.messages)
+      }),
+    )
+    const provider = wide()
+    await using tmp = await tmpdir()
+    await WithInstance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await svc.create({})
+        await seed(session.id, tmp.path)
+        const rt = liveRuntime(stub.layer, provider)
+        try {
+          await rt.runPromise(
+            SessionCompaction.Service.use((svc) =>
+              svc.prefire({ sessionID: session.id, tokens: leading, model: ref }),
+            ),
+          )
+
+          await user(session.id, "the newest turn after prefire")
+          await SessionCompaction.create({ sessionID: session.id, agent: "build", model: ref, auto: false })
+          const msgs = await svc.messages({ sessionID: session.id })
+          const parent = msgs.at(-1)?.info.id
+          const result = await rt.runPromise(
+            SessionCompaction.Service.use((svc) =>
+              svc.process({ parentID: parent!, messages: msgs, sessionID: session.id, auto: false }),
+            ),
+          )
+          expect(result).toBe("continue")
+          expect(captured).toContain("<previous-summary>")
+          expect(captured).toContain("NOTE-ONE-MARKER")
+          expect(captured).not.toContain("turn 0 with")
+          const summaries = (await svc.messages({ sessionID: session.id })).filter(
+            (m) => m.info.role === "assistant" && m.info.summary,
+          )
+          expect(summaries.length).toBe(1)
+          expect(summaries[0]!.info.role === "assistant" && summaries[0]!.info.error).toBeUndefined()
+        } finally {
+          await rt.dispose()
+        }
+      },
+    })
+  })
+
+  test("skips outside the lead band and refuses a degenerate note", async () => {
+    const stub = llm()
+    stub.push(reply("tiny note"))
+    const provider = wide()
+    await using tmp = await tmpdir()
+    await WithInstance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await svc.create({})
+        await seed(session.id, tmp.path)
+        const rt = liveRuntime(stub.layer, provider)
+        try {
+          // Below the band: no LLM call is made (queue would be consumed otherwise).
+          await rt.runPromise(
+            SessionCompaction.Service.use((svc) =>
+              svc.prefire({
+                sessionID: session.id,
+                tokens: { ...leading, input: 10_000 },
+                model: ref,
+              }),
+            ),
+          )
+          // Inside the band: consumes the queued degenerate note but refuses to cache it,
+          // so a later compaction summarizes the full history.
+          await rt.runPromise(
+            SessionCompaction.Service.use((svc) =>
+              svc.prefire({ sessionID: session.id, tokens: leading, model: ref }),
+            ),
+          )
+          let captured = ""
+          stub.push(
+            reply(HEALTHY_SUMMARY, (input) => {
+              captured = JSON.stringify(input.messages)
+            }),
+          )
+          await SessionCompaction.create({ sessionID: session.id, agent: "build", model: ref, auto: false })
+          const msgs = await svc.messages({ sessionID: session.id })
+          const parent = msgs.at(-1)?.info.id
+          const result = await rt.runPromise(
+            SessionCompaction.Service.use((svc) =>
+              svc.process({ parentID: parent!, messages: msgs, sessionID: session.id, auto: false }),
+            ),
+          )
+          expect(result).toBe("continue")
+          expect(captured).toContain("turn 0 with")
+          expect(captured).not.toContain("NOTE-ONE-MARKER")
+          expect(captured).not.toContain("<previous-summary>")
+        } finally {
+          await rt.dispose()
+        }
+      },
+    })
+  })
+
+  test("a pruned head part invalidates the cached note and pass-2 falls back to the full history", async () => {
+    const stub = llm()
+    stub.push(reply(NOTE1))
+    let captured = ""
+    stub.push(
+      reply(HEALTHY_SUMMARY, (input) => {
+        captured = JSON.stringify(input.messages)
+      }),
+    )
+    const provider = wide()
+    await using tmp = await tmpdir()
+    await WithInstance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await svc.create({})
+        const replies = await seed(session.id, tmp.path)
+        const early = replies[0]!
+        const partID = PartID.ascending()
+        const partTime = { start: Date.now(), end: Date.now() }
+        const toolPart = (time: { start: number; end: number; compacted?: number }) =>
+          ({
+            id: partID,
+            messageID: early.id,
+            sessionID: session.id,
+            type: "tool",
+            callID: "call_" + early.id,
+            tool: "exec_command",
+            state: {
+              status: "completed",
+              input: {},
+              output: "some old tool output",
+              title: "exec_command",
+              metadata: {},
+              time,
+            },
+          }) satisfies MessageV2.Part
+        await svc.updatePart(toolPart(partTime))
+        const rt = liveRuntime(stub.layer, provider)
+        try {
+          await rt.runPromise(
+            SessionCompaction.Service.use((svc) =>
+              svc.prefire({ sessionID: session.id, tokens: leading, model: ref }),
+            ),
+          )
+          // Simulate the pruner touching a head part after pass-1 ran.
+          await svc.updatePart(toolPart({ ...partTime, compacted: Date.now() }))
+          await SessionCompaction.create({ sessionID: session.id, agent: "build", model: ref, auto: false })
+          const msgs = await svc.messages({ sessionID: session.id })
+          const parent = msgs.at(-1)?.info.id
+          const result = await rt.runPromise(
+            SessionCompaction.Service.use((svc) =>
+              svc.process({ parentID: parent!, messages: msgs, sessionID: session.id, auto: false }),
+            ),
+          )
+          expect(result).toBe("continue")
+          expect(captured).toContain("turn 0 with")
+          expect(captured).not.toContain("NOTE-ONE-MARKER")
+        } finally {
+          await rt.dispose()
+        }
+      },
+    })
   })
 })

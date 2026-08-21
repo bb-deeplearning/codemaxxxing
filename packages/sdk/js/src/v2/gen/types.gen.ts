@@ -5,12 +5,19 @@ export type ClientOptions = {
 }
 
 export type Event =
-  | EventServerInstanceDisposed
-  | EventFileWatcherUpdated
   | EventTuiPromptAppend
   | EventTuiCommandExecute
   | EventTuiToastShow1
   | EventTuiSessionSelect
+  | EventAgentMetricDeliverableArrived
+  | EventAgentMetricSafetyNetFired
+  | EventAgentMetricSiblingDeadlock
+  | EventAgentMetricSubagentToolError
+  | EventAgentMetricReasoningOnlyTurn
+  | EventServerConnected
+  | EventGlobalDisposed
+  | EventServerInstanceDisposed
+  | EventFileWatcherUpdated
   | EventMcpToolsChanged
   | EventMcpBrowserOpenFailed
   | EventPermissionAsked
@@ -32,18 +39,13 @@ export type Event =
   | EventTodoUpdated
   | EventSessionStatus
   | EventSessionIdle
-  | EventAgentMetricDeliverableArrived
-  | EventAgentMetricSafetyNetFired
-  | EventAgentMetricSiblingDeadlock
-  | EventAgentMetricSubagentToolError
-  | EventAgentMetricReasoningOnlyTurn
   | EventAgentSpawnStarted
   | EventAgentSpawnEnded
   | EventAgentClosed
   | EventAgentWaitStarted
   | EventAgentWaitEnded
   | EventAgentMessageSent
-  | EventSessionCompacted
+  | EventSessionCompacted1
   | EventPtyCreated
   | EventPtyUpdated
   | EventPtyExited
@@ -97,8 +99,6 @@ export type Event =
   | EventSessionNextAgentWaitStarted
   | EventSessionNextAgentWaitEnded
   | EventSessionNextAgentMessageSent
-  | EventServerConnected
-  | EventGlobalDisposed
 
 export type OAuth = {
   type: "oauth"
@@ -808,12 +808,19 @@ export type GlobalEvent = {
   project?: string
   workspace?: string
   payload:
-    | EventServerInstanceDisposed
-    | EventFileWatcherUpdated
     | EventTuiPromptAppend
     | EventTuiCommandExecute
     | EventTuiToastShow
     | EventTuiSessionSelect
+    | EventAgentMetricDeliverableArrived
+    | EventAgentMetricSafetyNetFired
+    | EventAgentMetricSiblingDeadlock
+    | EventAgentMetricSubagentToolError
+    | EventAgentMetricReasoningOnlyTurn
+    | EventServerConnected
+    | EventGlobalDisposed
+    | EventServerInstanceDisposed
+    | EventFileWatcherUpdated
     | EventMcpToolsChanged
     | EventMcpBrowserOpenFailed
     | EventPermissionAsked
@@ -835,11 +842,6 @@ export type GlobalEvent = {
     | EventTodoUpdated
     | EventSessionStatus
     | EventSessionIdle
-    | EventAgentMetricDeliverableArrived
-    | EventAgentMetricSafetyNetFired
-    | EventAgentMetricSiblingDeadlock
-    | EventAgentMetricSubagentToolError
-    | EventAgentMetricReasoningOnlyTurn
     | EventAgentSpawnStarted
     | EventAgentSpawnEnded
     | EventAgentClosed
@@ -900,8 +902,6 @@ export type GlobalEvent = {
     | EventSessionNextAgentWaitStarted
     | EventSessionNextAgentWaitEnded
     | EventSessionNextAgentMessageSent
-    | EventServerConnected
-    | EventGlobalDisposed
     | SyncEventMessageUpdated
     | SyncEventMessageRemoved
     | SyncEventMessagePartUpdated
@@ -1294,6 +1294,7 @@ export type Config = {
     tail_turns?: number
     preserve_recent_tokens?: number
     reserved?: number
+    prefire?: boolean
   }
   experimental?: {
     disable_paste_summary?: boolean
@@ -2549,6 +2550,79 @@ export type SyncEventSessionNextAgentMessageSent = {
   }
 }
 
+export type EventAgentMetricDeliverableArrived = {
+  id: string
+  type: "agent.metric.deliverable_arrived"
+  properties: {
+    sessionID: string
+    timestamp: number
+    child_path: string
+    child_session_id: string
+    source: "explicit_send" | "extracted" | "safety_net"
+    body_length: number
+  }
+}
+
+export type EventAgentMetricSafetyNetFired = {
+  id: string
+  type: "agent.metric.safety_net_fired"
+  properties: {
+    sessionID: string
+    timestamp: number
+    child_path: string
+    child_session_id: string
+  }
+}
+
+export type EventAgentMetricSiblingDeadlock = {
+  id: string
+  type: "agent.metric.sibling_deadlock"
+  properties: {
+    sessionID: string
+    timestamp: number
+    timeout_ms: number
+    tool_id: string
+  }
+}
+
+export type EventAgentMetricSubagentToolError = {
+  id: string
+  type: "agent.metric.subagent_tool_error"
+  properties: {
+    sessionID: string
+    timestamp: number
+    tool_id: string
+    error_kind: string
+  }
+}
+
+export type EventAgentMetricReasoningOnlyTurn = {
+  id: string
+  type: "agent.metric.reasoning_only_turn"
+  properties: {
+    sessionID: string
+    timestamp: number
+    recovered: boolean
+    attempt: number
+  }
+}
+
+export type EventServerConnected = {
+  id: string
+  type: "server.connected"
+  properties: {
+    [key: string]: unknown
+  }
+}
+
+export type EventGlobalDisposed = {
+  id: string
+  type: "global.disposed"
+  properties: {
+    [key: string]: unknown
+  }
+}
+
 export type EventServerInstanceDisposed = {
   id: string
   type: "server.instance.disposed"
@@ -2747,63 +2821,6 @@ export type EventSessionIdle = {
   }
 }
 
-export type EventAgentMetricDeliverableArrived = {
-  id: string
-  type: "agent.metric.deliverable_arrived"
-  properties: {
-    sessionID: string
-    timestamp: number
-    child_path: string
-    child_session_id: string
-    source: "explicit_send" | "extracted" | "safety_net"
-    body_length: number
-  }
-}
-
-export type EventAgentMetricSafetyNetFired = {
-  id: string
-  type: "agent.metric.safety_net_fired"
-  properties: {
-    sessionID: string
-    timestamp: number
-    child_path: string
-    child_session_id: string
-  }
-}
-
-export type EventAgentMetricSiblingDeadlock = {
-  id: string
-  type: "agent.metric.sibling_deadlock"
-  properties: {
-    sessionID: string
-    timestamp: number
-    timeout_ms: number
-    tool_id: string
-  }
-}
-
-export type EventAgentMetricSubagentToolError = {
-  id: string
-  type: "agent.metric.subagent_tool_error"
-  properties: {
-    sessionID: string
-    timestamp: number
-    tool_id: string
-    error_kind: string
-  }
-}
-
-export type EventAgentMetricReasoningOnlyTurn = {
-  id: string
-  type: "agent.metric.reasoning_only_turn"
-  properties: {
-    sessionID: string
-    timestamp: number
-    recovered: boolean
-    attempt: number
-  }
-}
-
 export type EventAgentSpawnStarted = {
   id: string
   type: "agent.spawn.started"
@@ -2909,6 +2926,12 @@ export type EventSessionCompacted = {
   type: "session.compacted"
   properties: {
     sessionID: string
+    trigger?: "auto" | "manual"
+    overflow?: boolean
+    tokensBefore?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    durationMs?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    summaryChars?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    tailStartID?: string
   }
 }
 
@@ -3562,22 +3585,6 @@ export type EventSessionNextAgentMessageSent = {
   }
 }
 
-export type EventServerConnected = {
-  id: string
-  type: "server.connected"
-  properties: {
-    [key: string]: unknown
-  }
-}
-
-export type EventGlobalDisposed = {
-  id: string
-  type: "global.disposed"
-  properties: {
-    [key: string]: unknown
-  }
-}
-
 export type SessionInfo = {
   id: string
   parentID?: string
@@ -3813,6 +3820,20 @@ export type EventTuiToastShow1 = {
     message: string
     variant: "info" | "success" | "warning" | "error"
     duration?: number
+  }
+}
+
+export type EventSessionCompacted1 = {
+  id: string
+  type: "session.compacted"
+  properties: {
+    sessionID: string
+    trigger?: "auto" | "manual"
+    overflow?: boolean
+    tokensBefore?: number | "NaN" | "Infinity" | "-Infinity"
+    durationMs?: number | "NaN" | "Infinity" | "-Infinity"
+    summaryChars?: number | "NaN" | "Infinity" | "-Infinity"
+    tailStartID?: string
   }
 }
 

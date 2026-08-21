@@ -76,6 +76,8 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | Passing impure expressions (`new Date()`, `Date.now()`) as ARGUMENTS to effects that repeat/retry | `effect-arguments-evaluate-at-construction-froze-the-heartbeat` |
 | Forking fibers from AgentControl on a tree's behalf (wake, revival, auto-starts) | `agentcontrol-started-fibers-provide-tree-owner-context` |
 | Returning a typed error from an AUTH-WRAPPED httpapi endpoint (any Effect.fail in an API group with Authorization) | `httpapi-security-middleware-eats-typed-errors-respond-raw` |
+| Adding a `Layer.provide(...)` to an already-long `.pipe(...)` chain (defaultLayer assemblies) | `layer-pipe-20-arg-cap-collapses-types-to-unknown` |
+| Verifying SSE `/event` against a `bun run dev` serve | `dev-serve-event-sse-closes-after-first-frame` |
 
 ## By category — slugs with one-line summaries and line offsets
 
@@ -99,6 +101,7 @@ Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offs
 - L845 `subscriptionref-changes-is-top-level` — `SubscriptionRef.changes(ref)`, not `ref.changes`.
 - L231 `bench-managed-runtime-needs-effect-scoped` — `provideTmpdirInstance` needs explicit `Effect.scoped` under `ManagedRuntime`.
 - L192 `bench-effect-runpromise-loses-instance-in-async-callback` — `Effect.runPromise` inside `Effect.promise` loses the Instance ALS binding.
+- `layer-pipe-20-arg-cap-collapses-types-to-unknown` — the 21st `.pipe` argument types the whole layer as `unknown`; downstream errors point everywhere but the cause.
 
 ### Bus / Instance state
 - L398 `bus-subscribe-helper-vs-service-method-cross-runtime-mismatch` — top-level vs in-effect subscribe target different PubSubs in `testEffect`.
@@ -174,6 +177,7 @@ Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offs
 
 ### Server routes / auth
 - `httpapi-root-api-family-needs-auth-router-middleware` — effect-backend auth is per-route-layer; a new top-level family (e.g. `/global/*`) ships password-free unless it mounts `authorizationRouterMiddleware`. Hono's `Server.Legacy()` hides the hole in-process.
+- `dev-serve-event-sse-closes-after-first-frame` — `bun run dev serve` delivers `server.connected` then EOF on `/event`; channel builds stream fine. Verify bus events at the unit tier, wire frames on the fleet.
 
 ### Worktrees
 - L1526 `worktree-service-git-must-anchor-primary-cwd` — primary-side git anchors at `ctx.project.worktree`, never `ctx.worktree`: a worktree-scoped remove/merge otherwise runs `git branch -D` from the directory it just deleted.
@@ -588,6 +592,16 @@ void ConfigReload.init()
 
 ---
 
+### `dev-serve-event-sse-closes-after-first-frame`
+
+**Severity:** DX-trap
+
+- **When:** driving SSE (`GET /event`) against a serve started from the checkout with `bun run dev serve ...` (dev channel), e.g. to live-verify a new bus event.
+- **Symptom:** the stream delivers exactly one `server.connected` frame and then the server closes the connection — no heartbeats, no session events, `curl -N` exits 0 immediately. Passing `?directory=` explicitly changes nothing. Looks exactly like your event change broke the stream.
+- **Fix:** don't bisect your diff — a clean tree behaves identically (verified 2026-08-20 on `6330f4abe3`). Verify new bus events at the unit tier (`Bus.Service.subscribeCallback` against a real publish — the same PubSub the SSE route forwards), and verify literal wire frames against a channel-build serve, where `/event` streams fine (boxbox runs on it daily).
+- **Why:** root cause not chased to ground; the dev serve's stderr shows a partial `AsyncLocalStorage` trace when the stream opens, suggesting instance-context resolution dies in the dev-run backend path. Specific to `bun run dev` — installed channel builds are unaffected.
+- **See:** `packages/opencode/test/session/compaction.test.ts` ("publishes compacted event on continue") for the unit-tier wire assertion pattern.
+
 ### `e2e-perf-sibling-fanout-needs-median-of-n`
 
 **Severity:** DX-trap
@@ -706,6 +720,16 @@ yield* bus.subscribe(Inbound.StepStarted).pipe(Stream.runForEach(...))
 **See:** `packages/opencode/src/agent/control.ts` `Event` and `Inbound` consts.
 
 ---
+
+### `layer-pipe-20-arg-cap-collapses-types-to-unknown`
+
+**Severity:** DX-trap
+
+- **When:** adding one more `Layer.provide(...)` to an already-long `.pipe(...)` chain — the big `defaultLayer` assemblies (`SessionPrompt.defaultLayer` is at the cap today).
+- **Symptom:** one `TS2554: Expected 0-20 arguments, but got 21` at the pipe — buried under a CASCADE of misleading errors in far-away files: `Layer<Service, unknown, unknown> is not assignable ...` in the server assembly, app-runtime, tests, and scripts, all reading like missing service dependencies.
+- **Fix:** fold the new layer into an existing `Layer.mergeAll(...)` argument inside the chain instead of adding a 21st pipe argument. When you see an `unknown`-typed Layer/Effect cascade, grep the typecheck output for `TS2554` first and fix that root; the rest evaporates.
+- **Why:** `pipe`'s overloads are typed up to 20 arguments. Past that, TS resolves no overload, the whole pipe expression degrades to `unknown`, and every downstream consumer of the layer inherits `unknown` error/requirement channels — the diagnostics point at the consumers, not the pipe.
+- **See:** `packages/opencode/src/session/prompt.ts` (`defaultLayer` — `Todo.defaultLayer` folded into the trailing `Layer.mergeAll` rather than piped).
 
 ### `managed-runtime-script-needs-process-exit`
 
