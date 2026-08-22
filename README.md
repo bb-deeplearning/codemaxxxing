@@ -190,6 +190,8 @@ plugin migration: `tool.definition` hooks keyed on `bash` or `task` continue to 
 
 engineering reference: [specs/replace-bash-task.md](./specs/replace-bash-task.md).
 
+`recall` (2026-08-21): session-scoped search over the model's own full stored history — including messages folded away by compaction and tool outputs cleared by pruning (the text never leaves sqlite; only the rendering clears). compaction summaries are lossy by construction, and this is the pull-based escape hatch: when the summary lacks a detail, the model greps its own past instead of re-deriving it or asking me again. ships with the wider compaction hardening drop (degenerate-summary rejection, sticky failure suppression, background prefire so compaction stops stalling long runs for minutes) — [CHANGES/2026-08-21-compaction-hardening.md](./CHANGES/2026-08-21-compaction-hardening.md).
+
 ## wave runner
 
 the previous generation's answer, kept for the work that still outruns the current one.
