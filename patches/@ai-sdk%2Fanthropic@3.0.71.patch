@@ -1,0 +1,528 @@
+diff --git a/dist/index.d.mts b/dist/index.d.mts
+index bf506bdefd363fb5118dcc419b1b5db51d37dcf5..a0989769deb623daf527655821563cb3390289b0 100644
+--- a/dist/index.d.mts
++++ b/dist/index.d.mts
+@@ -142,9 +142,21 @@ declare const anthropicLanguageModelOptions: z.ZodObject<{
+             omitted: "omitted";
+             summarized: "summarized";
+         }>>;
++        blockBinding: z.ZodOptional<z.ZodObject<{
++            prefixMismatchBehavior: z.ZodEnum<{
++                error: "error";
++                drop_block: "drop_block";
++            }>;
++        }, z.core.$strip>>;
+     }, z.core.$strip>, z.ZodObject<{
+         type: z.ZodLiteral<"enabled">;
+         budgetTokens: z.ZodOptional<z.ZodNumber>;
++        blockBinding: z.ZodOptional<z.ZodObject<{
++            prefixMismatchBehavior: z.ZodEnum<{
++                error: "error";
++                drop_block: "drop_block";
++            }>;
++        }, z.core.$strip>>;
+     }, z.core.$strip>, z.ZodObject<{
+         type: z.ZodLiteral<"disabled">;
+     }, z.core.$strip>]>>;
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index bf506bdefd363fb5118dcc419b1b5db51d37dcf5..a0989769deb623daf527655821563cb3390289b0 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -142,9 +142,21 @@ declare const anthropicLanguageModelOptions: z.ZodObject<{
+             omitted: "omitted";
+             summarized: "summarized";
+         }>>;
++        blockBinding: z.ZodOptional<z.ZodObject<{
++            prefixMismatchBehavior: z.ZodEnum<{
++                error: "error";
++                drop_block: "drop_block";
++            }>;
++        }, z.core.$strip>>;
+     }, z.core.$strip>, z.ZodObject<{
+         type: z.ZodLiteral<"enabled">;
+         budgetTokens: z.ZodOptional<z.ZodNumber>;
++        blockBinding: z.ZodOptional<z.ZodObject<{
++            prefixMismatchBehavior: z.ZodEnum<{
++                error: "error";
++                drop_block: "drop_block";
++            }>;
++        }, z.core.$strip>>;
+     }, z.core.$strip>, z.ZodObject<{
+         type: z.ZodLiteral<"disabled">;
+     }, z.core.$strip>]>>;
+diff --git a/dist/index.js b/dist/index.js
+index 55e5a955c8ffcb87e61deff5d64f893449e04064..b5384234c07951f86088fa678c4a32063f2c55e0 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -66,6 +66,13 @@ var anthropicMessagesResponseSchema = (0, import_provider_utils2.lazySchema)(
+       type: import_v42.z.literal("message"),
+       id: import_v42.z.string().nullish(),
+       model: import_v42.z.string().nullish(),
++      input_transformations: import_v42.z.array(
++        import_v42.z.looseObject({
++          type: import_v42.z.string(),
++          path: import_v42.z.string().nullish(),
++          reason: import_v42.z.string().nullish()
++        })
++      ).nullish(),
+       content: import_v42.z.array(
+         import_v42.z.discriminatedUnion("type", [
+           import_v42.z.object({
+@@ -386,6 +393,13 @@ var anthropicMessagesChunkSchema = (0, import_provider_utils2.lazySchema)(
+           id: import_v42.z.string().nullish(),
+           model: import_v42.z.string().nullish(),
+           role: import_v42.z.string().nullish(),
++          input_transformations: import_v42.z.array(
++            import_v42.z.looseObject({
++              type: import_v42.z.string(),
++              path: import_v42.z.string().nullish(),
++              reason: import_v42.z.string().nullish()
++            })
++          ).nullish(),
+           usage: import_v42.z.looseObject({
+             input_tokens: import_v42.z.number(),
+             cache_creation_input_tokens: import_v42.z.number().nullish(),
+@@ -851,12 +865,18 @@ var anthropicLanguageModelOptions = import_v43.z.object({
+        * - `"omitted"`: Thinking blocks are present but text is empty (default for Opus 4.7+).
+        * - `"summarized"`: Thinking content is returned. Required to see reasoning output.
+        */
+-      display: import_v43.z.enum(["omitted", "summarized"]).optional()
++      display: import_v43.z.enum(["omitted", "summarized"]).optional(),
++      blockBinding: import_v43.z.object({
++        prefixMismatchBehavior: import_v43.z.enum(["error", "drop_block"])
++      }).optional()
+     }),
+     import_v43.z.object({
+       /** for models before Opus 4.6, except Sonnet 4.6 still supports it */
+       type: import_v43.z.literal("enabled"),
+-      budgetTokens: import_v43.z.number().optional()
++      budgetTokens: import_v43.z.number().optional(),
++      blockBinding: import_v43.z.object({
++        prefixMismatchBehavior: import_v43.z.enum(["error", "drop_block"])
++      }).optional()
+     }),
+     import_v43.z.object({
+       type: import_v43.z.literal("disabled")
+@@ -3052,6 +3072,7 @@ var AnthropicMessagesLanguageModel = class {
+     const isThinking = thinkingType === "enabled" || thinkingType === "adaptive";
+     let thinkingBudget = thinkingType === "enabled" ? (_f = anthropicOptions == null ? void 0 : anthropicOptions.thinking) == null ? void 0 : _f.budgetTokens : void 0;
+     const thinkingDisplay = thinkingType === "adaptive" ? (_g = anthropicOptions == null ? void 0 : anthropicOptions.thinking) == null ? void 0 : _g.display : void 0;
++    const thinkingBlockBinding = isThinking ? (anthropicOptions == null ? void 0 : anthropicOptions.thinking) == null ? void 0 : anthropicOptions.thinking.blockBinding : void 0;
+     const maxTokens = maxOutputTokens != null ? maxOutputTokens : maxOutputTokensForModel;
+     const baseArgs = {
+       // model id:
+@@ -3067,7 +3088,12 @@ var AnthropicMessagesLanguageModel = class {
+         thinking: {
+           type: thinkingType,
+           ...thinkingBudget != null && { budget_tokens: thinkingBudget },
+-          ...thinkingDisplay != null && { display: thinkingDisplay }
++          ...thinkingDisplay != null && { display: thinkingDisplay },
++          ...thinkingBlockBinding != null && {
++            block_binding: {
++              prefix_mismatch_behavior: thinkingBlockBinding.prefixMismatchBehavior
++            }
++          }
+         }
+       },
+       ...((anthropicOptions == null ? void 0 : anthropicOptions.effort) || (anthropicOptions == null ? void 0 : anthropicOptions.taskBudget) || useStructuredOutput && (responseFormat == null ? void 0 : responseFormat.type) === "json" && responseFormat.schema != null) && {
+@@ -3277,6 +3303,9 @@ var AnthropicMessagesLanguageModel = class {
+     if ((anthropicOptions == null ? void 0 : anthropicOptions.speed) === "fast") {
+       betas.add("fast-mode-2026-02-01");
+     }
++    if (thinkingBlockBinding != null) {
++      betas.add("thinking-binding-controls-2026-08-01");
++    }
+     const defaultEagerInputStreaming = stream && ((_i = anthropicOptions == null ? void 0 : anthropicOptions.toolStreaming) != null ? _i : true);
+     const {
+       tools: anthropicTools2,
+@@ -3772,6 +3801,7 @@ var AnthropicMessagesLanguageModel = class {
+           usage: response.usage,
+           cacheCreationInputTokens: (_a2 = response.usage.cache_creation_input_tokens) != null ? _a2 : null,
+           stopSequence: (_b2 = response.stop_sequence) != null ? _b2 : null,
++          ...response.input_transformations != null ? { inputTransformations: response.input_transformations } : {},
+           iterations: response.usage.iterations ? response.usage.iterations.map((iter) => ({
+             type: iter.type,
+             inputTokens: iter.input_tokens,
+@@ -3851,6 +3881,7 @@ var AnthropicMessagesLanguageModel = class {
+     let rawUsage = void 0;
+     let cacheCreationInputTokens = null;
+     let stopSequence = null;
++    let inputTransformations = void 0;
+     let container = null;
+     let isJsonResponseFromTool = false;
+     let blockType = void 0;
+@@ -4391,6 +4422,9 @@ var AnthropicMessagesLanguageModel = class {
+             }
+             case "message_start": {
+               usage.input_tokens = value.message.usage.input_tokens;
++              if (value.message.input_transformations != null) {
++                inputTransformations = value.message.input_transformations;
++              }
+               usage.cache_read_input_tokens = (_e = value.message.usage.cache_read_input_tokens) != null ? _e : 0;
+               usage.cache_creation_input_tokens = (_f = value.message.usage.cache_creation_input_tokens) != null ? _f : 0;
+               rawUsage = {
+@@ -4508,6 +4542,7 @@ var AnthropicMessagesLanguageModel = class {
+                 usage: rawUsage != null ? rawUsage : null,
+                 cacheCreationInputTokens,
+                 stopSequence,
++                ...inputTransformations != null ? { inputTransformations } : {},
+                 iterations: usage.iterations ? usage.iterations.map((iter) => ({
+                   type: iter.type,
+                   inputTokens: iter.input_tokens,
+diff --git a/dist/index.mjs b/dist/index.mjs
+index f3f7cd24c23afdd7e56d54e3256ebe897cf76318..06ef91139c99c902b03ebead2b78ae43da7dcba9 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -61,6 +61,13 @@ var anthropicMessagesResponseSchema = lazySchema2(
+       type: z2.literal("message"),
+       id: z2.string().nullish(),
+       model: z2.string().nullish(),
++      input_transformations: z2.array(
++        z2.looseObject({
++          type: z2.string(),
++          path: z2.string().nullish(),
++          reason: z2.string().nullish()
++        })
++      ).nullish(),
+       content: z2.array(
+         z2.discriminatedUnion("type", [
+           z2.object({
+@@ -381,6 +388,13 @@ var anthropicMessagesChunkSchema = lazySchema2(
+           id: z2.string().nullish(),
+           model: z2.string().nullish(),
+           role: z2.string().nullish(),
++          input_transformations: z2.array(
++            z2.looseObject({
++              type: z2.string(),
++              path: z2.string().nullish(),
++              reason: z2.string().nullish()
++            })
++          ).nullish(),
+           usage: z2.looseObject({
+             input_tokens: z2.number(),
+             cache_creation_input_tokens: z2.number().nullish(),
+@@ -846,12 +860,18 @@ var anthropicLanguageModelOptions = z3.object({
+        * - `"omitted"`: Thinking blocks are present but text is empty (default for Opus 4.7+).
+        * - `"summarized"`: Thinking content is returned. Required to see reasoning output.
+        */
+-      display: z3.enum(["omitted", "summarized"]).optional()
++      display: z3.enum(["omitted", "summarized"]).optional(),
++      blockBinding: z3.object({
++        prefixMismatchBehavior: z3.enum(["error", "drop_block"])
++      }).optional()
+     }),
+     z3.object({
+       /** for models before Opus 4.6, except Sonnet 4.6 still supports it */
+       type: z3.literal("enabled"),
+-      budgetTokens: z3.number().optional()
++      budgetTokens: z3.number().optional(),
++      blockBinding: z3.object({
++        prefixMismatchBehavior: z3.enum(["error", "drop_block"])
++      }).optional()
+     }),
+     z3.object({
+       type: z3.literal("disabled")
+@@ -3089,6 +3109,7 @@ var AnthropicMessagesLanguageModel = class {
+     const isThinking = thinkingType === "enabled" || thinkingType === "adaptive";
+     let thinkingBudget = thinkingType === "enabled" ? (_f = anthropicOptions == null ? void 0 : anthropicOptions.thinking) == null ? void 0 : _f.budgetTokens : void 0;
+     const thinkingDisplay = thinkingType === "adaptive" ? (_g = anthropicOptions == null ? void 0 : anthropicOptions.thinking) == null ? void 0 : _g.display : void 0;
++    const thinkingBlockBinding = isThinking ? (anthropicOptions == null ? void 0 : anthropicOptions.thinking) == null ? void 0 : anthropicOptions.thinking.blockBinding : void 0;
+     const maxTokens = maxOutputTokens != null ? maxOutputTokens : maxOutputTokensForModel;
+     const baseArgs = {
+       // model id:
+@@ -3104,7 +3125,12 @@ var AnthropicMessagesLanguageModel = class {
+         thinking: {
+           type: thinkingType,
+           ...thinkingBudget != null && { budget_tokens: thinkingBudget },
+-          ...thinkingDisplay != null && { display: thinkingDisplay }
++          ...thinkingDisplay != null && { display: thinkingDisplay },
++          ...thinkingBlockBinding != null && {
++            block_binding: {
++              prefix_mismatch_behavior: thinkingBlockBinding.prefixMismatchBehavior
++            }
++          }
+         }
+       },
+       ...((anthropicOptions == null ? void 0 : anthropicOptions.effort) || (anthropicOptions == null ? void 0 : anthropicOptions.taskBudget) || useStructuredOutput && (responseFormat == null ? void 0 : responseFormat.type) === "json" && responseFormat.schema != null) && {
+@@ -3314,6 +3340,9 @@ var AnthropicMessagesLanguageModel = class {
+     if ((anthropicOptions == null ? void 0 : anthropicOptions.speed) === "fast") {
+       betas.add("fast-mode-2026-02-01");
+     }
++    if (thinkingBlockBinding != null) {
++      betas.add("thinking-binding-controls-2026-08-01");
++    }
+     const defaultEagerInputStreaming = stream && ((_i = anthropicOptions == null ? void 0 : anthropicOptions.toolStreaming) != null ? _i : true);
+     const {
+       tools: anthropicTools2,
+@@ -3809,6 +3838,7 @@ var AnthropicMessagesLanguageModel = class {
+           usage: response.usage,
+           cacheCreationInputTokens: (_a2 = response.usage.cache_creation_input_tokens) != null ? _a2 : null,
+           stopSequence: (_b2 = response.stop_sequence) != null ? _b2 : null,
++          ...response.input_transformations != null ? { inputTransformations: response.input_transformations } : {},
+           iterations: response.usage.iterations ? response.usage.iterations.map((iter) => ({
+             type: iter.type,
+             inputTokens: iter.input_tokens,
+@@ -3888,6 +3918,7 @@ var AnthropicMessagesLanguageModel = class {
+     let rawUsage = void 0;
+     let cacheCreationInputTokens = null;
+     let stopSequence = null;
++    let inputTransformations = void 0;
+     let container = null;
+     let isJsonResponseFromTool = false;
+     let blockType = void 0;
+@@ -4428,6 +4459,9 @@ var AnthropicMessagesLanguageModel = class {
+             }
+             case "message_start": {
+               usage.input_tokens = value.message.usage.input_tokens;
++              if (value.message.input_transformations != null) {
++                inputTransformations = value.message.input_transformations;
++              }
+               usage.cache_read_input_tokens = (_e = value.message.usage.cache_read_input_tokens) != null ? _e : 0;
+               usage.cache_creation_input_tokens = (_f = value.message.usage.cache_creation_input_tokens) != null ? _f : 0;
+               rawUsage = {
+@@ -4545,6 +4579,7 @@ var AnthropicMessagesLanguageModel = class {
+                 usage: rawUsage != null ? rawUsage : null,
+                 cacheCreationInputTokens,
+                 stopSequence,
++                ...inputTransformations != null ? { inputTransformations } : {},
+                 iterations: usage.iterations ? usage.iterations.map((iter) => ({
+                   type: iter.type,
+                   inputTokens: iter.input_tokens,
+diff --git a/dist/internal/index.js b/dist/internal/index.js
+index 468e7518923b5bfaffa3a5a601e233b5271889ae..75f37cd7f78b8bba98ef6301af35096b81a9e4a2 100644
+--- a/dist/internal/index.js
++++ b/dist/internal/index.js
+@@ -58,6 +58,13 @@ var anthropicMessagesResponseSchema = (0, import_provider_utils2.lazySchema)(
+       type: import_v42.z.literal("message"),
+       id: import_v42.z.string().nullish(),
+       model: import_v42.z.string().nullish(),
++      input_transformations: import_v42.z.array(
++        import_v42.z.looseObject({
++          type: import_v42.z.string(),
++          path: import_v42.z.string().nullish(),
++          reason: import_v42.z.string().nullish()
++        })
++      ).nullish(),
+       content: import_v42.z.array(
+         import_v42.z.discriminatedUnion("type", [
+           import_v42.z.object({
+@@ -378,6 +385,13 @@ var anthropicMessagesChunkSchema = (0, import_provider_utils2.lazySchema)(
+           id: import_v42.z.string().nullish(),
+           model: import_v42.z.string().nullish(),
+           role: import_v42.z.string().nullish(),
++          input_transformations: import_v42.z.array(
++            import_v42.z.looseObject({
++              type: import_v42.z.string(),
++              path: import_v42.z.string().nullish(),
++              reason: import_v42.z.string().nullish()
++            })
++          ).nullish(),
+           usage: import_v42.z.looseObject({
+             input_tokens: import_v42.z.number(),
+             cache_creation_input_tokens: import_v42.z.number().nullish(),
+@@ -843,12 +857,18 @@ var anthropicLanguageModelOptions = import_v43.z.object({
+        * - `"omitted"`: Thinking blocks are present but text is empty (default for Opus 4.7+).
+        * - `"summarized"`: Thinking content is returned. Required to see reasoning output.
+        */
+-      display: import_v43.z.enum(["omitted", "summarized"]).optional()
++      display: import_v43.z.enum(["omitted", "summarized"]).optional(),
++      blockBinding: import_v43.z.object({
++        prefixMismatchBehavior: import_v43.z.enum(["error", "drop_block"])
++      }).optional()
+     }),
+     import_v43.z.object({
+       /** for models before Opus 4.6, except Sonnet 4.6 still supports it */
+       type: import_v43.z.literal("enabled"),
+-      budgetTokens: import_v43.z.number().optional()
++      budgetTokens: import_v43.z.number().optional(),
++      blockBinding: import_v43.z.object({
++        prefixMismatchBehavior: import_v43.z.enum(["error", "drop_block"])
++      }).optional()
+     }),
+     import_v43.z.object({
+       type: import_v43.z.literal("disabled")
+@@ -3044,6 +3064,7 @@ var AnthropicMessagesLanguageModel = class {
+     const isThinking = thinkingType === "enabled" || thinkingType === "adaptive";
+     let thinkingBudget = thinkingType === "enabled" ? (_f = anthropicOptions == null ? void 0 : anthropicOptions.thinking) == null ? void 0 : _f.budgetTokens : void 0;
+     const thinkingDisplay = thinkingType === "adaptive" ? (_g = anthropicOptions == null ? void 0 : anthropicOptions.thinking) == null ? void 0 : _g.display : void 0;
++    const thinkingBlockBinding = isThinking ? (anthropicOptions == null ? void 0 : anthropicOptions.thinking) == null ? void 0 : anthropicOptions.thinking.blockBinding : void 0;
+     const maxTokens = maxOutputTokens != null ? maxOutputTokens : maxOutputTokensForModel;
+     const baseArgs = {
+       // model id:
+@@ -3059,7 +3080,12 @@ var AnthropicMessagesLanguageModel = class {
+         thinking: {
+           type: thinkingType,
+           ...thinkingBudget != null && { budget_tokens: thinkingBudget },
+-          ...thinkingDisplay != null && { display: thinkingDisplay }
++          ...thinkingDisplay != null && { display: thinkingDisplay },
++          ...thinkingBlockBinding != null && {
++            block_binding: {
++              prefix_mismatch_behavior: thinkingBlockBinding.prefixMismatchBehavior
++            }
++          }
+         }
+       },
+       ...((anthropicOptions == null ? void 0 : anthropicOptions.effort) || (anthropicOptions == null ? void 0 : anthropicOptions.taskBudget) || useStructuredOutput && (responseFormat == null ? void 0 : responseFormat.type) === "json" && responseFormat.schema != null) && {
+@@ -3269,6 +3295,9 @@ var AnthropicMessagesLanguageModel = class {
+     if ((anthropicOptions == null ? void 0 : anthropicOptions.speed) === "fast") {
+       betas.add("fast-mode-2026-02-01");
+     }
++    if (thinkingBlockBinding != null) {
++      betas.add("thinking-binding-controls-2026-08-01");
++    }
+     const defaultEagerInputStreaming = stream && ((_i = anthropicOptions == null ? void 0 : anthropicOptions.toolStreaming) != null ? _i : true);
+     const {
+       tools: anthropicTools2,
+@@ -3764,6 +3793,7 @@ var AnthropicMessagesLanguageModel = class {
+           usage: response.usage,
+           cacheCreationInputTokens: (_a2 = response.usage.cache_creation_input_tokens) != null ? _a2 : null,
+           stopSequence: (_b2 = response.stop_sequence) != null ? _b2 : null,
++          ...response.input_transformations != null ? { inputTransformations: response.input_transformations } : {},
+           iterations: response.usage.iterations ? response.usage.iterations.map((iter) => ({
+             type: iter.type,
+             inputTokens: iter.input_tokens,
+@@ -3843,6 +3873,7 @@ var AnthropicMessagesLanguageModel = class {
+     let rawUsage = void 0;
+     let cacheCreationInputTokens = null;
+     let stopSequence = null;
++    let inputTransformations = void 0;
+     let container = null;
+     let isJsonResponseFromTool = false;
+     let blockType = void 0;
+@@ -4383,6 +4414,9 @@ var AnthropicMessagesLanguageModel = class {
+             }
+             case "message_start": {
+               usage.input_tokens = value.message.usage.input_tokens;
++              if (value.message.input_transformations != null) {
++                inputTransformations = value.message.input_transformations;
++              }
+               usage.cache_read_input_tokens = (_e = value.message.usage.cache_read_input_tokens) != null ? _e : 0;
+               usage.cache_creation_input_tokens = (_f = value.message.usage.cache_creation_input_tokens) != null ? _f : 0;
+               rawUsage = {
+@@ -4500,6 +4534,7 @@ var AnthropicMessagesLanguageModel = class {
+                 usage: rawUsage != null ? rawUsage : null,
+                 cacheCreationInputTokens,
+                 stopSequence,
++                ...inputTransformations != null ? { inputTransformations } : {},
+                 iterations: usage.iterations ? usage.iterations.map((iter) => ({
+                   type: iter.type,
+                   inputTokens: iter.input_tokens,
+diff --git a/dist/internal/index.mjs b/dist/internal/index.mjs
+index 6e9ff51dd8ccc4785ecd423ec34a84eba8a7d42d..fc2eb38221ef6cec087a4cc136758540aba6b76f 100644
+--- a/dist/internal/index.mjs
++++ b/dist/internal/index.mjs
+@@ -45,6 +45,13 @@ var anthropicMessagesResponseSchema = lazySchema2(
+       type: z2.literal("message"),
+       id: z2.string().nullish(),
+       model: z2.string().nullish(),
++      input_transformations: z2.array(
++        z2.looseObject({
++          type: z2.string(),
++          path: z2.string().nullish(),
++          reason: z2.string().nullish()
++        })
++      ).nullish(),
+       content: z2.array(
+         z2.discriminatedUnion("type", [
+           z2.object({
+@@ -365,6 +372,13 @@ var anthropicMessagesChunkSchema = lazySchema2(
+           id: z2.string().nullish(),
+           model: z2.string().nullish(),
+           role: z2.string().nullish(),
++          input_transformations: z2.array(
++            z2.looseObject({
++              type: z2.string(),
++              path: z2.string().nullish(),
++              reason: z2.string().nullish()
++            })
++          ).nullish(),
+           usage: z2.looseObject({
+             input_tokens: z2.number(),
+             cache_creation_input_tokens: z2.number().nullish(),
+@@ -830,12 +844,18 @@ var anthropicLanguageModelOptions = z3.object({
+        * - `"omitted"`: Thinking blocks are present but text is empty (default for Opus 4.7+).
+        * - `"summarized"`: Thinking content is returned. Required to see reasoning output.
+        */
+-      display: z3.enum(["omitted", "summarized"]).optional()
++      display: z3.enum(["omitted", "summarized"]).optional(),
++      blockBinding: z3.object({
++        prefixMismatchBehavior: z3.enum(["error", "drop_block"])
++      }).optional()
+     }),
+     z3.object({
+       /** for models before Opus 4.6, except Sonnet 4.6 still supports it */
+       type: z3.literal("enabled"),
+-      budgetTokens: z3.number().optional()
++      budgetTokens: z3.number().optional(),
++      blockBinding: z3.object({
++        prefixMismatchBehavior: z3.enum(["error", "drop_block"])
++      }).optional()
+     }),
+     z3.object({
+       type: z3.literal("disabled")
+@@ -3073,6 +3093,7 @@ var AnthropicMessagesLanguageModel = class {
+     const isThinking = thinkingType === "enabled" || thinkingType === "adaptive";
+     let thinkingBudget = thinkingType === "enabled" ? (_f = anthropicOptions == null ? void 0 : anthropicOptions.thinking) == null ? void 0 : _f.budgetTokens : void 0;
+     const thinkingDisplay = thinkingType === "adaptive" ? (_g = anthropicOptions == null ? void 0 : anthropicOptions.thinking) == null ? void 0 : _g.display : void 0;
++    const thinkingBlockBinding = isThinking ? (anthropicOptions == null ? void 0 : anthropicOptions.thinking) == null ? void 0 : anthropicOptions.thinking.blockBinding : void 0;
+     const maxTokens = maxOutputTokens != null ? maxOutputTokens : maxOutputTokensForModel;
+     const baseArgs = {
+       // model id:
+@@ -3088,7 +3109,12 @@ var AnthropicMessagesLanguageModel = class {
+         thinking: {
+           type: thinkingType,
+           ...thinkingBudget != null && { budget_tokens: thinkingBudget },
+-          ...thinkingDisplay != null && { display: thinkingDisplay }
++          ...thinkingDisplay != null && { display: thinkingDisplay },
++          ...thinkingBlockBinding != null && {
++            block_binding: {
++              prefix_mismatch_behavior: thinkingBlockBinding.prefixMismatchBehavior
++            }
++          }
+         }
+       },
+       ...((anthropicOptions == null ? void 0 : anthropicOptions.effort) || (anthropicOptions == null ? void 0 : anthropicOptions.taskBudget) || useStructuredOutput && (responseFormat == null ? void 0 : responseFormat.type) === "json" && responseFormat.schema != null) && {
+@@ -3298,6 +3324,9 @@ var AnthropicMessagesLanguageModel = class {
+     if ((anthropicOptions == null ? void 0 : anthropicOptions.speed) === "fast") {
+       betas.add("fast-mode-2026-02-01");
+     }
++    if (thinkingBlockBinding != null) {
++      betas.add("thinking-binding-controls-2026-08-01");
++    }
+     const defaultEagerInputStreaming = stream && ((_i = anthropicOptions == null ? void 0 : anthropicOptions.toolStreaming) != null ? _i : true);
+     const {
+       tools: anthropicTools2,
+@@ -3793,6 +3822,7 @@ var AnthropicMessagesLanguageModel = class {
+           usage: response.usage,
+           cacheCreationInputTokens: (_a2 = response.usage.cache_creation_input_tokens) != null ? _a2 : null,
+           stopSequence: (_b2 = response.stop_sequence) != null ? _b2 : null,
++          ...response.input_transformations != null ? { inputTransformations: response.input_transformations } : {},
+           iterations: response.usage.iterations ? response.usage.iterations.map((iter) => ({
+             type: iter.type,
+             inputTokens: iter.input_tokens,
+@@ -3872,6 +3902,7 @@ var AnthropicMessagesLanguageModel = class {
+     let rawUsage = void 0;
+     let cacheCreationInputTokens = null;
+     let stopSequence = null;
++    let inputTransformations = void 0;
+     let container = null;
+     let isJsonResponseFromTool = false;
+     let blockType = void 0;
+@@ -4412,6 +4443,9 @@ var AnthropicMessagesLanguageModel = class {
+             }
+             case "message_start": {
+               usage.input_tokens = value.message.usage.input_tokens;
++              if (value.message.input_transformations != null) {
++                inputTransformations = value.message.input_transformations;
++              }
+               usage.cache_read_input_tokens = (_e = value.message.usage.cache_read_input_tokens) != null ? _e : 0;
+               usage.cache_creation_input_tokens = (_f = value.message.usage.cache_creation_input_tokens) != null ? _f : 0;
+               rawUsage = {
+@@ -4529,6 +4563,7 @@ var AnthropicMessagesLanguageModel = class {
+                 usage: rawUsage != null ? rawUsage : null,
+                 cacheCreationInputTokens,
+                 stopSequence,
++                ...inputTransformations != null ? { inputTransformations } : {},
+                 iterations: usage.iterations ? usage.iterations.map((iter) => ({
+                   type: iter.type,
+                   inputTokens: iter.input_tokens,

@@ -466,6 +466,33 @@ export function anthropicOmitsThinking(apiId: string) {
   return anthropicOpus47OrLater(apiId) || anthropicSonnet5OrLater(apiId) || apiId.includes("fable-5")
 }
 
+// Claude 5+ thinks without being asked, so these models reason even when no
+// thinking option is set. Matches "claude-fable-5-1", "claude-opus-5",
+// "claude-5-sonnet" and the vendor-prefixed spellings; the optional minor keeps
+// "claude-sonnet-4-5" on the pre-5 side.
+function anthropicThinksByDefault(apiId: string) {
+  const version = /claude-(?:[a-z]+-)?(\d+)(?:[.-](\d{1,2}))?(?:[.@-]|$)/i.exec(apiId)
+  if (!version) return false
+  return Number(version[1]) >= 5
+}
+
+// Fable 5.1 binds every thinking signature to the prompt prefix above it (system
+// prompt, tool list, preceding messages) and rejects the request when that prefix
+// moves — which compaction and a re-rendered system prompt both do. Asking the
+// API to drop stale blocks instead of erroring keeps the turn alive. Models that
+// don't enforce binding accept the field and ignore it, so this is safe to send
+// to every Claude.
+function anthropicBlockBinding(model: Provider.Model, options: { [x: string]: any }) {
+  if (model.api.npm !== "@ai-sdk/anthropic" && model.api.npm !== "@ai-sdk/google-vertex/anthropic") return options
+  if (!model.api.id.includes("claude")) return options
+  const thinking = options["thinking"] ?? (anthropicThinksByDefault(model.api.id) ? { type: "adaptive" } : undefined)
+  if (thinking?.type !== "adaptive" && thinking?.type !== "enabled") return options
+  return {
+    ...options,
+    thinking: { ...thinking, blockBinding: { prefixMismatchBehavior: "drop_block" } },
+  }
+}
+
 export function variants(model: Provider.Model): Record<string, Record<string, any>> {
   if (!model.capabilities.reasoning) return {}
 
@@ -1062,7 +1089,8 @@ const SLUG_OVERRIDES: Record<string, string> = {
   amazon: "bedrock",
 }
 
-export function providerOptions(model: Provider.Model, options: { [x: string]: any }) {
+export function providerOptions(model: Provider.Model, input: { [x: string]: any }) {
+  const options = anthropicBlockBinding(model, input)
   if (model.api.npm === "@ai-sdk/gateway") {
     // Gateway providerOptions are split across two namespaces:
     // - `gateway`: gateway-native routing/caching controls (order, only, byok, etc.)

@@ -508,6 +508,112 @@ describe("ProviderTransform.providerOptions", () => {
   })
 })
 
+describe("ProviderTransform.providerOptions - anthropic thinking block binding", () => {
+  const createModel = (apiId: string, npm: string) =>
+    ({
+      id: `anthropic/${apiId}`,
+      providerID: "anthropic",
+      api: { id: apiId, url: "https://api.anthropic.com", npm },
+      name: apiId,
+      capabilities: {
+        temperature: true,
+        reasoning: true,
+        attachment: true,
+        toolcall: true,
+        input: { text: true, audio: false, image: true, video: false, pdf: true },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: false,
+      },
+      cost: { input: 0.003, output: 0.015, cache: { read: 0.0003, write: 0.00375 } },
+      limit: { context: 200_000, output: 64_000 },
+      status: "active",
+      options: {},
+      headers: {},
+    }) as any
+
+  const binding = { prefixMismatchBehavior: "drop_block" }
+
+  test("fable 5.1 with adaptive thinking gets block binding", () => {
+    const model = createModel("claude-fable-5-1", "@ai-sdk/anthropic")
+
+    expect(
+      ProviderTransform.providerOptions(model, {
+        thinking: { type: "adaptive", display: "summarized" },
+        effort: "high",
+      }),
+    ).toEqual({
+      anthropic: {
+        thinking: { type: "adaptive", display: "summarized", blockBinding: binding },
+        effort: "high",
+      },
+    })
+  })
+
+  test("claude opus 5 with adaptive thinking gets block binding", () => {
+    const model = createModel("claude-opus-5", "@ai-sdk/anthropic")
+
+    expect(ProviderTransform.providerOptions(model, { thinking: { type: "adaptive", display: "summarized" } })).toEqual(
+      {
+        anthropic: { thinking: { type: "adaptive", display: "summarized", blockBinding: binding } },
+      },
+    )
+  })
+
+  test("pre-5 claude with enabled thinking gets block binding", () => {
+    const model = createModel("claude-sonnet-4-5", "@ai-sdk/anthropic")
+
+    expect(ProviderTransform.providerOptions(model, { thinking: { type: "enabled", budgetTokens: 16_000 } })).toEqual({
+      anthropic: { thinking: { type: "enabled", budgetTokens: 16_000, blockBinding: binding } },
+    })
+  })
+
+  test("non-claude model on the anthropic sdk does not get block binding", () => {
+    const model = createModel("kimi-k2p5", "@ai-sdk/anthropic")
+
+    expect(ProviderTransform.providerOptions(model, { thinking: { type: "enabled", budgetTokens: 16_000 } })).toEqual({
+      anthropic: { thinking: { type: "enabled", budgetTokens: 16_000 } },
+    })
+  })
+
+  test("claude 5 gets block binding on vertex anthropic too", () => {
+    const model = createModel("claude-fable-5-1", "@ai-sdk/google-vertex/anthropic")
+
+    expect(ProviderTransform.providerOptions(model, { thinking: { type: "adaptive" } })).toEqual({
+      anthropic: { thinking: { type: "adaptive", blockBinding: binding } },
+    })
+  })
+
+  test("claude 5 thinks by default so block binding is added without a thinking option", () => {
+    const model = createModel("claude-fable-5-1", "@ai-sdk/anthropic")
+
+    expect(ProviderTransform.providerOptions(model, {})).toEqual({
+      anthropic: { thinking: { type: "adaptive", blockBinding: binding } },
+    })
+  })
+
+  test("pre-5 claude without a thinking option is left alone", () => {
+    const model = createModel("claude-sonnet-4-5", "@ai-sdk/anthropic")
+
+    expect(ProviderTransform.providerOptions(model, {})).toEqual({ anthropic: {} })
+  })
+
+  test("disabled thinking does not get block binding", () => {
+    const model = createModel("claude-fable-5-1", "@ai-sdk/anthropic")
+
+    expect(ProviderTransform.providerOptions(model, { thinking: { type: "disabled" } })).toEqual({
+      anthropic: { thinking: { type: "disabled" } },
+    })
+  })
+
+  test("bedrock claude is left alone", () => {
+    const model = createModel("anthropic.claude-fable-5-1", "@ai-sdk/amazon-bedrock")
+
+    expect(ProviderTransform.providerOptions(model, { reasoningConfig: { type: "adaptive" } })).toEqual({
+      bedrock: { reasoningConfig: { type: "adaptive" } },
+    })
+  })
+})
+
 describe("ProviderTransform.schema - gemini array items", () => {
   test("adds missing items for array properties", () => {
     const geminiModel = {
