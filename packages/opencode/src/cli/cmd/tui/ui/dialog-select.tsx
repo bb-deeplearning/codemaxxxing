@@ -13,6 +13,7 @@ import { Locale } from "@/util/locale"
 import { getScrollAcceleration } from "../util/scroll"
 import { useTuiConfig } from "../context/tui-config"
 import { sinkColor, Spans, type GlowSpan } from "@tui/ui/glow"
+import * as Clipboard from "@tui/util/clipboard"
 
 export interface DialogSelectProps<T> {
   title: string
@@ -198,9 +199,15 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   }
 
   const keybind = useKeybind()
-  useKeyboard((evt) => {
+  useKeyboard(async (evt) => {
     setStore("input", "keyboard")
 
+    if (keybind.match("input_paste", evt)) {
+      evt.preventDefault()
+      evt.stopPropagation()
+      await Clipboard.pasteText(input)
+      return
+    }
     if (evt.name === "up" || (evt.ctrl && evt.name === "p")) move(-1)
     if (evt.name === "down" || (evt.ctrl && evt.name === "n")) move(1)
     if (evt.name === "pageup") move(-10)

@@ -422,7 +422,12 @@ export function Prompt(props: PromptProps) {
       {
         title: "Paste",
         value: "prompt.paste",
-        keybind: "input_paste",
+        // Deliberately no `keybind`: the command dialog's global keypress
+        // listener would intercept input_paste (ctrl+v) first and
+        // preventDefault, which skips the textarea's onKeyDown — where the
+        // actual text/image paste runs. Keep ctrl+v flowing to the textarea;
+        // this command stays reachable only via command.trigger() (e.g. the
+        // empty-bracketed-paste image fallback in onPaste).
         category: "Prompt",
         hidden: true,
         onSelect: async () => {
@@ -1136,6 +1141,73 @@ export function Prompt(props: PromptProps) {
     return
   }
 
+  // Shared text-paste pipeline used by both bracketed paste (onPaste) and
+  // terminals that forward Ctrl+V as a keydown (e.g. Windows Terminal 1.25+
+  // with the kitty keyboard protocol active). Keeps paste behavior identical
+  // regardless of which signal the terminal delivers it through.
+  async function handlePastedText(normalizedText: string) {
+    const pastedContent = normalizedText.trim()
+
+    const filepath = iife(() => {
+      const raw = pastedContent.replace(/^['"]+|['"]+$/g, "")
+      if (raw.startsWith("file://")) {
+        try {
+          return fileURLToPath(raw)
+        } catch {}
+      }
+      if (process.platform === "win32") return raw
+      return raw.replace(/\\(.)/g, "$1")
+    })
+    const isUrl = /^(https?):\/\//.test(filepath)
+    if (!isUrl) {
+      try {
+        const mime = await Filesystem.mimeType(filepath)
+        const filename = path.basename(filepath)
+        // Handle SVG as raw text content, not as base64 image
+        if (mime === "image/svg+xml") {
+          const content = await Filesystem.readText(filepath).catch(() => {})
+          if (content) {
+            pasteText(content, `[SVG: ${filename ?? "image"}]`)
+            return
+          }
+        }
+        if (mime.startsWith("image/") || mime === "application/pdf") {
+          const content = await Filesystem.readArrayBuffer(filepath)
+            .then((buffer) => Buffer.from(buffer).toString("base64"))
+            .catch(() => {})
+          if (content) {
+            await pasteAttachment({
+              filename,
+              filepath,
+              mime,
+              content,
+            })
+            return
+          }
+        }
+      } catch {}
+    }
+
+    const lineCount = (pastedContent.match(/\n/g)?.length ?? 0) + 1
+    if (
+      (lineCount >= 3 || pastedContent.length > 150) &&
+      kv.get("paste_summary_enabled", !sync.data.config.experimental?.disable_paste_summary)
+    ) {
+      pasteText(pastedContent, `[Pasted ~${lineCount} lines]`)
+      return
+    }
+
+    input.insertText(normalizedText)
+
+    // Force layout update and render for the pasted content
+    setTimeout(() => {
+      // setTimeout is a workaround and needs to be addressed properly
+      if (!input || input.isDestroyed) return
+      input.getLayoutNode().markDirty()
+      renderer.requestRender()
+    }, 0)
+  }
+
   const highlight = createMemo(() => {
     if (keybind.leader) return theme.border
     if (store.mode === "shell") return theme.primary
@@ -1395,7 +1467,19 @@ export function Prompt(props: PromptProps) {
                     })
                     return
                   }
-                  // If no image, let the default paste behavior continue
+                  // Terminals that forward Ctrl+V to the app instead of pasting
+                  // themselves (e.g. Windows Terminal 1.25+ with the kitty
+                  // keyboard protocol active) never emit a bracketed paste, so a
+                  // text clipboard would otherwise be dropped entirely. Insert it
+                  // through the same pipeline as bracketed paste. Terminals that
+                  // paste natively never deliver the Ctrl+V keydown, so this
+                  // cannot double-insert.
+                  if (content?.mime.startsWith("text/") && content.data.length > 0) {
+                    e.preventDefault()
+                    const normalizedText = content.data.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+                    await handlePastedText(normalizedText)
+                    return
+                  }
                 }
                 if (keybind.match("input_clear", e) && store.prompt.input !== "") {
                   input.clear()
@@ -1482,64 +1566,7 @@ export function Prompt(props: PromptProps) {
                 // default paste unless we suppress it first and handle insertion ourselves.
                 event.preventDefault()
 
-                const filepath = iife(() => {
-                  const raw = pastedContent.replace(/^['"]+|['"]+$/g, "")
-                  if (raw.startsWith("file://")) {
-                    try {
-                      return fileURLToPath(raw)
-                    } catch {}
-                  }
-                  if (process.platform === "win32") return raw
-                  return raw.replace(/\\(.)/g, "$1")
-                })
-                const isUrl = /^(https?):\/\//.test(filepath)
-                if (!isUrl) {
-                  try {
-                    const mime = await Filesystem.mimeType(filepath)
-                    const filename = path.basename(filepath)
-                    // Handle SVG as raw text content, not as base64 image
-                    if (mime === "image/svg+xml") {
-                      const content = await Filesystem.readText(filepath).catch(() => {})
-                      if (content) {
-                        pasteText(content, `[SVG: ${filename ?? "image"}]`)
-                        return
-                      }
-                    }
-                    if (mime.startsWith("image/") || mime === "application/pdf") {
-                      const content = await Filesystem.readArrayBuffer(filepath)
-                        .then((buffer) => Buffer.from(buffer).toString("base64"))
-                        .catch(() => {})
-                      if (content) {
-                        await pasteAttachment({
-                          filename,
-                          filepath,
-                          mime,
-                          content,
-                        })
-                        return
-                      }
-                    }
-                  } catch {}
-                }
-
-                const lineCount = (pastedContent.match(/\n/g)?.length ?? 0) + 1
-                if (
-                  (lineCount >= 3 || pastedContent.length > 150) &&
-                  kv.get("paste_summary_enabled", !sync.data.config.experimental?.disable_paste_summary)
-                ) {
-                  pasteText(pastedContent, `[Pasted ~${lineCount} lines]`)
-                  return
-                }
-
-                input.insertText(normalizedText)
-
-                // Force layout update and render for the pasted content
-                setTimeout(() => {
-                  // setTimeout is a workaround and needs to be addressed properly
-                  if (!input || input.isDestroyed) return
-                  input.getLayoutNode().markDirty()
-                  renderer.requestRender()
-                }, 0)
+                await handlePastedText(normalizedText)
               }}
               ref={(r: TextareaRenderable) => {
                 input = r
