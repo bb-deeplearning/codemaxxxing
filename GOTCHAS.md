@@ -78,6 +78,9 @@ Severities: `correctness-bug` (silent wrong behavior), `perf-regression` (silent
 | Returning a typed error from an AUTH-WRAPPED httpapi endpoint (any Effect.fail in an API group with Authorization) | `httpapi-security-middleware-eats-typed-errors-respond-raw` |
 | Adding a `Layer.provide(...)` to an already-long `.pipe(...)` chain (defaultLayer assemblies) | `layer-pipe-20-arg-cap-collapses-types-to-unknown` |
 | Verifying SSE `/event` against a `bun run dev` serve | `dev-serve-event-sse-closes-after-first-frame` |
+| Editing `~/.config/opencode/opencode.jsonc` from inside a cmx session (any key, any reason) | `global-config-baseurl-is-the-live-session-lifeline` |
+| Adding a new Claude model, or debugging a 400 that only a new Claude throws | `ai-sdk-anthropic-unknown-model-forces-json-tool`, `zsh-colon-modifier-eats-vertex-rawpredict-url` |
+| Writing a shell probe whose URL contains `$VAR:something` (Vertex `:rawPredict`, `host:port`) | `zsh-colon-modifier-eats-vertex-rawpredict-url` |
 
 ## By category — slugs with one-line summaries and line offsets
 
@@ -183,6 +186,15 @@ Line numbers (`L###`) are approximate jump targets — use `Read GOTCHAS.md offs
 - L1526 `worktree-service-git-must-anchor-primary-cwd` — primary-side git anchors at `ctx.project.worktree`, never `ctx.worktree`: a worktree-scoped remove/merge otherwise runs `git branch -D` from the directory it just deleted.
 
 ---
+
+### Provider / model contracts
+- `ai-sdk-anthropic-unknown-model-forces-json-tool` — the pinned @ai-sdk/anthropic 3.0.71 classifies every Claude ≥ 5 as unknown: `generateObject` becomes a forced `json` tool, which Opus 5.5 / Fable 5.1 reject with 400. Gates live in `transform.ts`, not in the sdk.
+
+### Config editing from a live session
+- `global-config-baseurl-is-the-live-session-lifeline` — the global opencode.jsonc is hot-reloaded by the very serve you are running in; a wrong `provider.anthropic.options.baseURL` kills the session that wrote it on its next turn. Verify the whole provider block after any edit near it.
+
+### Shell probing
+- `zsh-colon-modifier-eats-vertex-rawpredict-url` — `$MODEL:rawPredict` in zsh applies the `:r` history modifier to `$MODEL`; the URL becomes `...5-5awPredict` and Google answers an HTML 404 that looks like "model not on Vertex". Brace the variable.
 
 ## Full entries
 
@@ -1644,5 +1656,38 @@ const removed = yield* git(["worktree", "remove", "--force", entry.path], { cwd:
 **Fix:** Respond RAW from the handler: `Effect.succeed(HttpServerResponse.jsonUnsafe(payload, { status: 400 }))` — the builder returns raw responses verbatim (`handlerToHttpEffect` checks `isHttpServerResponse` before encoding; the session-list handler is the precedent). Keep the declared error schema on the endpoint for OpenAPI truth; the wire truth is the raw response. The worktree family uses the hono `ErrorMiddleware` contract: `{name, data}` from `NamedError.toObject()`, status 400.
 **Why:** Effect's security middleware wrapper intercepts the error channel of the wrapped handler effect before the endpoint's `encodeError` union can serialize it, and answers with its own 401. Whether that's intended framework behavior or an effect-beta bug is unresolved — treat auth-wrapped endpoint error channels as unusable until an effect upgrade proves otherwise (the authed pin below goes red if `Effect.fail` ever starts working, which is the signal to revisit).
 **See:** `src/server/routes/instance/httpapi/handlers/experimental.ts` (`worktreeErrors`), authed pin in `test/server/httpapi-raw-route-auth.test.ts` ("THROUGH the auth middleware"), no-auth shape pin in `httpapi-experimental.test.ts`. Fix commit `efa93f94d6` (after two wrong theories in `9f087103ac` and `87c01ab3d6` — the commit trail is the debugging story).
+
+---
+
+### `global-config-baseurl-is-the-live-session-lifeline`
+
+**Severity:** self-inflicted outage (the editing session dies)
+**When:** Editing `~/.config/opencode/opencode.jsonc` from inside a cmx session for ANY reason: swapping an agent's model, adding a `blacklist`, touching a comment near the `provider` block. 2026-09-24, the Opus 5.5 rollout.
+**Symptom:** The next turn of the session that made the edit faults on the provider call and the whole thing looks like the model died. Rohan had to restore `provider.anthropic.options.baseURL` by hand. There was no error visible to the agent because the agent IS the thing that lost its route.
+**Fix:** Treat the `provider.<id>.options.baseURL` lines as the session's own life support. After any edit to that file, read the WHOLE provider block back (not just the hunk you touched) and confirm each `baseURL` is exactly what it was, then run the parse check: `bun -e 'const c=(await import("/Users/rohan/.config/opencode/opencode.jsonc")).default; console.log(c.provider.anthropic.options.baseURL, c.provider.google.options.baseURL)'`. Prefer `edit` with a tight `oldString` that does not span the `options` object; never `write` the file whole.
+**Why:** Fleet serves hot-reload the config (cmx `d262514989`), so the edit lands on the running serve within the same turn. `anthropic.options.baseURL` is `http://localhost:6969/v1`, the local proxy; the default is `api.anthropic.com`, where the baked `dummy` key is invalid. The edit tool's fuzzy match (see `edit-tool-fuzzy-match-can-apply-nonexistent-oldstring`) makes a nearby-block edit able to land in the wrong place without an error.
+**See:** `~/.config/opencode/opencode.jsonc` provider block; CHANGES `2026-09-24-opus-5-5-support.md` (Config section).
+
+---
+
+### `ai-sdk-anthropic-unknown-model-forces-json-tool`
+
+**Severity:** correctness-bug (400 on every structured-output / `generateObject` call for a new Claude)
+**When:** Any Claude the pinned `@ai-sdk/anthropic@3.0.71` does not list in `getModelCapabilities` (its table ends at `claude-opus-4-7`; every Claude 5 falls through to `isKnownModel: false`), combined with a model that rejects forced tool use (Opus 5.5, Fable 5.1, and per Anthropic's contract every later Opus/Fable).
+**Symptom:** `generateObject` / `responseFormat: json` returns `400 tool_choice: type "tool" and "any" are not supported for this model.` The `/agent/generate` path and anything else built on `generateObject` are dead for that model; the session prompt loop's `json_schema` format (which asks for `toolChoice: "required"`) is dead too. Nothing in the fork's own code mentions a forced tool, so grepping for `tool_choice` finds nothing.
+**Fix:** Two gates in `packages/opencode/src/provider/transform.ts`, both keyed on `anthropicRejectsForcedToolUse(apiId)`: `toolChoice(model, choice)` downgrades `required` → `auto` (wired in `llm.ts`), and `providerOptions()` pins `structuredOutputMode: "outputFormat"` so the sdk emits native `output_config.format` instead of the `json` tool. When adding the NEXT Claude, check three things against the live API before trusting the sdk: does it accept `tool_choice: any`, does it accept `thinking: disabled`, does it accept `temperature`. Upstream `@ai-sdk/anthropic@4.0.61` already carries a `claude-opus-5-5` row with `rejectsForcedToolUse: true`; the day we move off 3.0.71 (block-binding patch is the blocker) both gates can retire.
+**Why:** The unknown branch sets `supportsStructuredOutput: false`; with `structuredOutputMode` on its `"auto"` default the sdk then chooses the `jsonTool` emulation, which is implemented as `tool_choice: {type: "tool", name: "json"}`. The sdk ALSO maps our `toolChoice: "required"` to `{type: "any"}` with no per-model check in 3.0.71.
+**See:** `transform.ts` (`anthropicRejectsForcedToolUse`, `toolChoice`, `anthropicStructuredOutputMode`), pins in `test/provider/transform.test.ts` (`ProviderTransform.toolChoice`, `anthropic structured output mode`), CHANGES `2026-09-24-opus-5-5-support.md`.
+
+---
+
+### `zsh-colon-modifier-eats-vertex-rawpredict-url`
+
+**Severity:** wasted-diagnosis (a 404 that reads as "model not served")
+**When:** Building a URL in a zsh `exec_command` with an unbraced variable followed by a colon and a word: `.../models/$MODEL:rawPredict`, `http://$HOST:8080`.
+**Symptom:** Google answers an HTML `Error 404 (Not Found)!!1` page for `claude-opus-5-5` AND for `claude-fable-5-1` (which was known-good five minutes earlier), so the natural read is "Opus 5.5 is not on Vertex yet in this project". It was on Vertex; the URL was `.../models/claude-opus-5-5awPredict`.
+**Fix:** `${MODEL}:rawPredict`. When a curl probe 404s with HTML instead of a JSON error body, print the URL before trusting the conclusion.
+**Why:** zsh parses `$MODEL:r` as the `:r` history/parameter modifier (strip extension) applied to `$MODEL`, consuming the `:r`, and leaves `awPredict` as literal text. bash does not do this, which is why the same line works in a bash script and in the docs.
+**See:** the Opus 5.5 rollout session, 2026-09-24 (two probes burned before the URL was printed).
 
 ---

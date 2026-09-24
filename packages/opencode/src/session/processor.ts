@@ -16,6 +16,7 @@ import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
 import { SessionSummary } from "./summary"
 import type { Provider } from "@/provider/provider"
+import { ProviderTransform } from "@/provider/transform"
 import { Question } from "@/question"
 import { errorMessage } from "@/util/error"
 import * as Log from "@opencode-ai/core/util/log"
@@ -470,6 +471,24 @@ export const layer: Layer.Layer<
             ctx.assistantMessage.finish = value.finishReason
             ctx.assistantMessage.cost += usage.cost
             ctx.assistantMessage.tokens = usage.tokens
+            // A refused step produces no text, no tool call and (until now) no
+            // error, so the turn went idle looking like a silent non-answer.
+            // Surface it as an error so the tui, the event bus and a spawner's
+            // completion notification all see it. Anthropic's `stop_details`
+            // names the classifier (cyber / bio / reasoning_extraction) when
+            // the sdk passes it through; other providers get the generic line.
+            if (value.finishReason === "content-filter" && !ctx.assistantMessage.error) {
+              const details = ProviderTransform.refusal(value.providerMetadata)
+              const error = new MessageV2.ContentFilterError({
+                message: details?.category
+                  ? `refused by the model's ${details.category} safety classifier. nothing was generated past this point and the input was still billed. rephrase, or retry on another model.`
+                  : "the response was blocked by the provider's content filter. nothing was generated past this point and the input was still billed. rephrase, or retry on another model.",
+                ...details,
+              }).toObject()
+              ctx.assistantMessage.error = error
+              slog.warn("content filter", { finish: value.finishReason, ...details })
+              yield* bus.publish(Session.Event.Error, { sessionID: ctx.sessionID, error })
+            }
             yield* session.updatePart({
               id: PartID.ascending(),
               reason: value.finishReason,

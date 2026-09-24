@@ -45,6 +45,17 @@ export const StructuredOutputError = namedSchemaError("StructuredOutputError", {
   message: Schema.String,
   retries: NonNegativeInt,
 })
+// The provider's safety classifier declined to continue (Anthropic
+// `stop_reason: "refusal"`, or any sdk `content-filter` finish). Same name
+// as upstream's error so a future sync lands on it; `category` and
+// `explanation` are Anthropic's `stop_details` when the sdk surfaces them,
+// which is how a claude 5.5 turn tells "cyber" from "bio" from
+// "reasoning_extraction".
+export const ContentFilterError = namedSchemaError("ContentFilterError", {
+  message: Schema.String,
+  category: Schema.optional(Schema.String),
+  explanation: Schema.optional(Schema.String),
+})
 export const AuthError = namedSchemaError("ProviderAuthError", {
   providerID: Schema.String,
   message: Schema.String,
@@ -467,6 +478,7 @@ const AssistantErrorZod = z.discriminatedUnion("name", [
   OutputLengthError.Schema,
   AbortedError.Schema,
   StructuredOutputError.Schema,
+  ContentFilterError.Schema,
   ContextOverflowError.Schema,
   APIError.Schema,
 ])
@@ -481,6 +493,7 @@ const AssistantErrorSchema = Schema.Union([
   OutputLengthError.EffectSchema,
   AbortedError.EffectSchema,
   StructuredOutputError.EffectSchema,
+  ContentFilterError.EffectSchema,
   ContextOverflowError.EffectSchema,
   APIError.EffectSchema,
 ]).annotate({ discriminator: "name" })

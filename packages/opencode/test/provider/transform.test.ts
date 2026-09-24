@@ -545,6 +545,7 @@ describe("ProviderTransform.providerOptions - anthropic thinking block binding",
       anthropic: {
         thinking: { type: "adaptive", display: "summarized", blockBinding: binding },
         effort: "high",
+        structuredOutputMode: "outputFormat",
       },
     })
   })
@@ -579,15 +580,44 @@ describe("ProviderTransform.providerOptions - anthropic thinking block binding",
     const model = createModel("claude-fable-5-1", "@ai-sdk/google-vertex/anthropic")
 
     expect(ProviderTransform.providerOptions(model, { thinking: { type: "adaptive" } })).toEqual({
-      anthropic: { thinking: { type: "adaptive", blockBinding: binding } },
+      anthropic: { thinking: { type: "adaptive", blockBinding: binding }, structuredOutputMode: "outputFormat" },
     })
   })
 
   test("claude 5 thinks by default so block binding is added without a thinking option", () => {
     const model = createModel("claude-fable-5-1", "@ai-sdk/anthropic")
 
+    // the synthesized default also asks for summarized display: these models
+    // default to "omitted", which would blank every thinking block and, on
+    // fable 5.1 / opus 5.5, silence the between-tool-call narration too
     expect(ProviderTransform.providerOptions(model, {})).toEqual({
-      anthropic: { thinking: { type: "adaptive", blockBinding: binding } },
+      anthropic: {
+        thinking: { type: "adaptive", display: "summarized", blockBinding: binding },
+        structuredOutputMode: "outputFormat",
+      },
+    })
+  })
+
+  test("claude opus 5.5 without a thinking option gets adaptive + summarized + block binding", () => {
+    const model = createModel("claude-opus-5-5", "@ai-sdk/anthropic")
+
+    expect(ProviderTransform.providerOptions(model, {})).toEqual({
+      anthropic: {
+        thinking: { type: "adaptive", display: "summarized", blockBinding: binding },
+        structuredOutputMode: "outputFormat",
+      },
+    })
+  })
+
+  test("an explicit adaptive config without display is passed through untouched (only binding added)", () => {
+    const model = createModel("claude-opus-5-5", "@ai-sdk/anthropic")
+
+    expect(ProviderTransform.providerOptions(model, { thinking: { type: "adaptive" }, effort: "xhigh" })).toEqual({
+      anthropic: {
+        thinking: { type: "adaptive", blockBinding: binding },
+        effort: "xhigh",
+        structuredOutputMode: "outputFormat",
+      },
     })
   })
 
@@ -601,7 +631,7 @@ describe("ProviderTransform.providerOptions - anthropic thinking block binding",
     const model = createModel("claude-fable-5-1", "@ai-sdk/anthropic")
 
     expect(ProviderTransform.providerOptions(model, { thinking: { type: "disabled" } })).toEqual({
-      anthropic: { thinking: { type: "disabled" } },
+      anthropic: { thinking: { type: "disabled" }, structuredOutputMode: "outputFormat" },
     })
   })
 
@@ -611,6 +641,199 @@ describe("ProviderTransform.providerOptions - anthropic thinking block binding",
     expect(ProviderTransform.providerOptions(model, { reasoningConfig: { type: "adaptive" } })).toEqual({
       bedrock: { reasoningConfig: { type: "adaptive" } },
     })
+  })
+})
+
+describe("ProviderTransform.toolChoice - models that reject forced tool use", () => {
+  const createModel = (apiId: string, npm: string, providerID = "anthropic") =>
+    ({
+      id: `${providerID}/${apiId}`,
+      providerID,
+      api: { id: apiId, url: "https://api.anthropic.com", npm },
+      name: apiId,
+      capabilities: {
+        temperature: false,
+        reasoning: true,
+        attachment: true,
+        toolcall: true,
+        input: { text: true, audio: false, image: true, video: false, pdf: true },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: false,
+      },
+      cost: { input: 0.004, output: 0.02, cache: { read: 0.0002, write: 0.005 } },
+      limit: { context: 1_000_000, output: 128_000 },
+      status: "active",
+      options: {},
+      headers: {},
+    }) as any
+
+  test("opus 5.5 and fable 5.1 downgrade required to auto", () => {
+    for (const apiId of ["claude-opus-5-5", "claude-opus-5.5", "claude-fable-5-1", "claude-fable-5.1"]) {
+      expect(ProviderTransform.toolChoice(createModel(apiId, "@ai-sdk/anthropic"), "required")).toBe("auto")
+    }
+  })
+
+  test("the gate follows the model id on every sdk path", () => {
+    expect(
+      ProviderTransform.toolChoice(createModel("claude-opus-5-5@default", "@ai-sdk/google-vertex/anthropic"), "required"),
+    ).toBe("auto")
+    expect(
+      ProviderTransform.toolChoice(
+        createModel("us.anthropic.claude-opus-5-5", "@ai-sdk/amazon-bedrock", "amazon-bedrock"),
+        "required",
+      ),
+    ).toBe("auto")
+    expect(
+      ProviderTransform.toolChoice(createModel("anthropic/claude-opus-5-5", "@ai-sdk/gateway", "vercel"), "required"),
+    ).toBe("auto")
+  })
+
+  test("models that still honour forcing keep required", () => {
+    for (const apiId of [
+      "claude-opus-5",
+      "claude-opus-5-20260724",
+      "claude-opus-4-8",
+      "claude-sonnet-5",
+      "claude-fable-5",
+      "claude-fable-5-20260201",
+      "claude-haiku-4-5",
+    ]) {
+      expect(ProviderTransform.toolChoice(createModel(apiId, "@ai-sdk/anthropic"), "required")).toBe("required")
+    }
+  })
+
+  test("auto, none and undefined pass through unchanged", () => {
+    const model = createModel("claude-opus-5-5", "@ai-sdk/anthropic")
+    expect(ProviderTransform.toolChoice(model, "auto")).toBe("auto")
+    expect(ProviderTransform.toolChoice(model, "none")).toBe("none")
+    expect(ProviderTransform.toolChoice(model, undefined)).toBeUndefined()
+  })
+
+  test("non-anthropic models are never touched", () => {
+    expect(ProviderTransform.toolChoice(createModel("gpt-5.4", "@ai-sdk/openai", "openai"), "required")).toBe("required")
+    expect(
+      ProviderTransform.toolChoice(createModel("gemini-3.8-flash", "@ai-sdk/google", "google"), "required"),
+    ).toBe("required")
+  })
+})
+
+describe("ProviderTransform.anthropicRejectsForcedToolUse", () => {
+  test("version gate is forward compatible and precise at the boundary", () => {
+    expect(ProviderTransform.anthropicRejectsForcedToolUse("claude-opus-5-5")).toBe(true)
+    expect(ProviderTransform.anthropicRejectsForcedToolUse("claude-opus-5-6")).toBe(true)
+    expect(ProviderTransform.anthropicRejectsForcedToolUse("claude-opus-6")).toBe(true)
+    expect(ProviderTransform.anthropicRejectsForcedToolUse("claude-5.5-opus")).toBe(true)
+    expect(ProviderTransform.anthropicRejectsForcedToolUse("claude-fable-5-1")).toBe(true)
+    expect(ProviderTransform.anthropicRejectsForcedToolUse("claude-fable-6")).toBe(true)
+
+    expect(ProviderTransform.anthropicRejectsForcedToolUse("claude-opus-5")).toBe(false)
+    expect(ProviderTransform.anthropicRejectsForcedToolUse("claude-opus-5-20260724")).toBe(false)
+    expect(ProviderTransform.anthropicRejectsForcedToolUse("claude-opus-4-8")).toBe(false)
+    expect(ProviderTransform.anthropicRejectsForcedToolUse("claude-fable-5")).toBe(false)
+    expect(ProviderTransform.anthropicRejectsForcedToolUse("claude-fable-5-20260201")).toBe(false)
+    // sonnet / haiku 5.5 are not gated until anthropic documents their contract
+    expect(ProviderTransform.anthropicRejectsForcedToolUse("claude-sonnet-5-5")).toBe(false)
+    expect(ProviderTransform.anthropicRejectsForcedToolUse("claude-sonnet-5")).toBe(false)
+  })
+})
+
+describe("ProviderTransform.refusal - anthropic stop_details on the finish step", () => {
+  // the exact object the patched @ai-sdk/anthropic 3.0.71 put on a finish-step
+  // for a claude-opus-5-5 cyber refusal through the proxy on 2026-09-24
+  const refused = {
+    anthropic: {
+      usage: { input_tokens: 643, output_tokens: 12 },
+      cacheCreationInputTokens: 0,
+      stopSequence: null,
+      stopDetails: {
+        type: "refusal",
+        category: "cyber",
+        explanation: "This request triggered restrictions on violative cyber content and was blocked under Anthropic's Usage Policy.",
+      },
+      inputTransformations: [],
+      iterations: null,
+      container: null,
+      contextManagement: null,
+    },
+  }
+
+  test("reads category and explanation off the anthropic namespace", () => {
+    expect(ProviderTransform.refusal(refused)).toEqual({
+      category: "cyber",
+      explanation: "This request triggered restrictions on violative cyber content and was blocked under Anthropic's Usage Policy.",
+    })
+  })
+
+  test("finds the details under a custom provider slug too", () => {
+    expect(ProviderTransform.refusal({ "my-proxy": refused.anthropic })).toEqual({
+      category: "cyber",
+      explanation: refused.anthropic.stopDetails.explanation,
+    })
+  })
+
+  test("a category-only refusal still yields the category", () => {
+    expect(ProviderTransform.refusal({ anthropic: { stopDetails: { type: "refusal", category: "bio" } } })).toEqual({
+      category: "bio",
+    })
+  })
+
+  test("non-refusal stop details, other providers and junk yield undefined", () => {
+    expect(ProviderTransform.refusal({ anthropic: { stopDetails: { type: "fallback", recommendedModel: "x" } } })).toBeUndefined()
+    expect(ProviderTransform.refusal({ anthropic: { usage: {} } })).toBeUndefined()
+    expect(ProviderTransform.refusal({ openai: { responseId: "resp_1" } })).toBeUndefined()
+    expect(ProviderTransform.refusal(undefined)).toBeUndefined()
+    expect(ProviderTransform.refusal("nope")).toBeUndefined()
+    expect(ProviderTransform.refusal({ anthropic: null })).toBeUndefined()
+  })
+})
+
+describe("ProviderTransform.providerOptions - anthropic structured output mode", () => {
+  const createModel = (apiId: string, npm: string) =>
+    ({
+      id: `anthropic/${apiId}`,
+      providerID: "anthropic",
+      api: { id: apiId, url: "https://api.anthropic.com", npm },
+      name: apiId,
+      capabilities: {
+        temperature: false,
+        reasoning: true,
+        attachment: true,
+        toolcall: true,
+        input: { text: true, audio: false, image: true, video: false, pdf: true },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: false,
+      },
+      cost: { input: 0.004, output: 0.02, cache: { read: 0.0002, write: 0.005 } },
+      limit: { context: 1_000_000, output: 128_000 },
+      status: "active",
+      options: {},
+      headers: {},
+    }) as any
+
+  test("opus 5.5 pins native structured output so generateObject never forces a json tool", () => {
+    const model = createModel("claude-opus-5-5", "@ai-sdk/anthropic")
+    expect(ProviderTransform.providerOptions(model, { effort: "medium" }).anthropic.structuredOutputMode).toBe(
+      "outputFormat",
+    )
+  })
+
+  test("vertex anthropic gets the same pin", () => {
+    const model = createModel("claude-opus-5-5@default", "@ai-sdk/google-vertex/anthropic")
+    expect(ProviderTransform.providerOptions(model, {}).anthropic.structuredOutputMode).toBe("outputFormat")
+  })
+
+  test("models that accept a forced tool are left on the sdk default", () => {
+    for (const apiId of ["claude-opus-5", "claude-sonnet-5", "claude-fable-5", "claude-opus-4-8"]) {
+      const model = createModel(apiId, "@ai-sdk/anthropic")
+      expect(ProviderTransform.providerOptions(model, {}).anthropic.structuredOutputMode).toBeUndefined()
+    }
+  })
+
+  test("an explicit user choice wins", () => {
+    const model = createModel("claude-opus-5-5", "@ai-sdk/anthropic")
+    expect(ProviderTransform.providerOptions(model, { structuredOutputMode: "jsonTool" }).anthropic.structuredOutputMode).toBe(
+      "jsonTool",
+    )
   })
 })
 
@@ -3070,6 +3293,14 @@ describe("ProviderTransform.variants", () => {
       {
         name: "opus 5",
         apiIds: ["claude-opus-5", "claude-opus-5-20260724"],
+        efforts: ["low", "medium", "high", "xhigh", "max"],
+        expectedHigh: { thinking: { type: "adaptive", display: "summarized" }, effort: "high" },
+      },
+      {
+        // the minor is back ("5-5"), so this also pins the opus regex against
+        // reading "claude-opus-5-5" as a dated opus 5 snapshot
+        name: "opus 5.5",
+        apiIds: ["claude-opus-5-5", "claude-opus-5.5", "claude-opus-5-5@default"],
         efforts: ["low", "medium", "high", "xhigh", "max"],
         expectedHigh: { thinking: { type: "adaptive", display: "summarized" }, effort: "high" },
       },

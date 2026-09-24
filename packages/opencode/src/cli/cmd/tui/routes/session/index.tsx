@@ -1767,10 +1767,13 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[] }) {
   // the error name on every reactive read.
   const hasUserError = createMemo(() => !!props.message.error && props.message.error.name !== "MessageAbortedError")
   // A turn that finished with `content-filter` produces only step-start /
-  // step-finish parts (no text/tool/reasoning) and carries no error, so nothing
-  // visible renders and the turn looks like a silent "no response". Surface it
-  // explicitly instead. (`finish` is a free-form string in the schema.)
-  const blocked = createMemo(() => props.message.finish === "content-filter")
+  // step-finish parts (no text/tool/reasoning). Turns recorded since the
+  // processor started raising ContentFilterError render through the error slot
+  // (with the classifier category when the provider names one); this banner
+  // covers turns persisted before that, which carry no error and would
+  // otherwise look like a silent "no response". (`finish` is a free-form
+  // string in the schema.)
+  const blocked = createMemo(() => props.message.finish === "content-filter" && !props.message.error)
 
   // Combined render array — parts plus the trailing slots (task hint,
   // user error, closing summary). Rendered as a single <For> in the

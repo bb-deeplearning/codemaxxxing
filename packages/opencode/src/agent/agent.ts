@@ -482,7 +482,10 @@ export const layer = Layer.effect(
               userId: cfg.username ?? "unknown",
             },
           },
-          temperature: 0.3,
+          // Claude 4.7+ answers any non-default sampling parameter with a 400
+          // ("`temperature` is deprecated for this model"); models.dev marks
+          // those `temperature: false`, so the capability is the gate.
+          temperature: resolved.capabilities.temperature ? 0.3 : undefined,
           messages: [
             ...(isOpenaiOauth
               ? []
@@ -522,7 +525,13 @@ export const layer = Layer.effect(
           })
         }
 
-        return yield* Effect.promise(() => generateObject(params).then((r) => r.object))
+        // providerOptions carries the Claude 5 request shaping (block binding,
+        // native structured output on the models that reject a forced tool).
+        return yield* Effect.promise(() =>
+          generateObject({ ...params, providerOptions: ProviderTransform.providerOptions(resolved, {}) }).then(
+            (r) => r.object,
+          ),
+        )
       }),
     })
   }),

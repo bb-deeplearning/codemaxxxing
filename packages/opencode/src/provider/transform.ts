@@ -466,6 +466,57 @@ export function anthropicOmitsThinking(apiId: string) {
   return anthropicOpus47OrLater(apiId) || anthropicSonnet5OrLater(apiId) || apiId.includes("fable-5")
 }
 
+// Opus 5.5 and Fable 5.1 answer `tool_choice: any` / `tool` with a 400
+// ("tool_choice: type "tool" and "any" are not supported for this model."),
+// on the Claude API, Vertex and Bedrock alike. Anthropic's replacement is
+// `auto` plus an instruction in the prompt, which is what callers get from
+// toolChoice() below. The gate is version-based on purpose: Anthropic does
+// not un-break contracts, so a later Opus/Fable inherits it. Sonnet and Haiku
+// 5.5 are not gated until their docs say so. The minor is capped at two digits
+// so a dated snapshot ("claude-opus-5-20260724") reads as 5.0, not 5.20260724.
+export function anthropicRejectsForcedToolUse(apiId: string) {
+  const opus = /opus-(\d+)(?:[.-](\d{1,2}))?(?:[.@-]|$)|claude-(\d+)(?:[.-](\d{1,2}))?-opus(?:[.@-]|$)/i.exec(apiId)
+  if (opus) {
+    const major = Number(opus[1] ?? opus[3])
+    const minor = Number(opus[2] ?? opus[4] ?? 0)
+    return major > 5 || (major === 5 && minor >= 5)
+  }
+  const fable = /fable-(\d+)(?:[.-](\d{1,2}))?(?:[.@-]|$)/i.exec(apiId)
+  if (fable) {
+    const major = Number(fable[1])
+    const minor = Number(fable[2] ?? 0)
+    return major > 5 || (major === 5 && minor >= 1)
+  }
+  return false
+}
+
+// The structured-output path asks for `required` so the model cannot finish a
+// json_schema turn in plain text. Models that reject forced tool use get `auto`
+// instead; the StructuredOutput system prompt carries the instruction and the
+// tool's schema validation catches a wrong-shaped call.
+export function toolChoice<T extends "auto" | "required" | "none" | undefined>(model: Provider.Model, choice: T) {
+  if (choice !== "required") return choice
+  if (!anthropicRejectsForcedToolUse(model.api.id)) return choice
+  return "auto" as const
+}
+
+// Anthropic's `stop_details` for a `stop_reason: "refusal"`, read off the finish
+// step's providerMetadata where the patched @ai-sdk/anthropic puts it
+// (`<slug>.stopDetails`, the upstream 4.x shape). The slug is whatever key the
+// sdk was addressed by, so every namespace is scanned. Providers that don't
+// classify refusals, and older sdk copies, yield undefined.
+export function refusal(metadata: unknown): { category?: string; explanation?: string } | undefined {
+  if (typeof metadata !== "object" || metadata === null) return
+  const details = Object.values(metadata as Record<string, unknown>)
+    .map((slug) => (typeof slug === "object" && slug !== null ? (slug as Record<string, unknown>)["stopDetails"] : undefined))
+    .find((d): d is Record<string, unknown> => typeof d === "object" && d !== null && (d as any)["type"] === "refusal")
+  if (!details) return
+  return {
+    ...(typeof details["category"] === "string" ? { category: details["category"] } : {}),
+    ...(typeof details["explanation"] === "string" ? { explanation: details["explanation"] } : {}),
+  }
+}
+
 // Claude 5+ thinks without being asked, so these models reason even when no
 // thinking option is set. Matches "claude-fable-5-1", "claude-opus-5",
 // "claude-5-sonnet" and the vendor-prefixed spellings; the optional minor keeps
@@ -476,21 +527,49 @@ function anthropicThinksByDefault(apiId: string) {
   return Number(version[1]) >= 5
 }
 
+function anthropicSdk(model: Provider.Model) {
+  return (
+    (model.api.npm === "@ai-sdk/anthropic" || model.api.npm === "@ai-sdk/google-vertex/anthropic") &&
+    model.api.id.includes("claude")
+  )
+}
+
 // Fable 5.1 binds every thinking signature to the prompt prefix above it (system
 // prompt, tool list, preceding messages) and rejects the request when that prefix
 // moves — which compaction and a re-rendered system prompt both do. Asking the
 // API to drop stale blocks instead of erroring keeps the turn alive. Models that
 // don't enforce binding accept the field and ignore it, so this is safe to send
 // to every Claude.
+//
+// When no thinking option was chosen, the synthesized adaptive config also asks
+// for `display: "summarized"` on the models that default to "omitted": without
+// it every thinking block arrives empty, and on Opus 5.5 / Fable 5.1 the text
+// the model writes between tool calls (which now travels in thinking blocks)
+// goes silent too.
 function anthropicBlockBinding(model: Provider.Model, options: { [x: string]: any }) {
-  if (model.api.npm !== "@ai-sdk/anthropic" && model.api.npm !== "@ai-sdk/google-vertex/anthropic") return options
-  if (!model.api.id.includes("claude")) return options
-  const thinking = options["thinking"] ?? (anthropicThinksByDefault(model.api.id) ? { type: "adaptive" } : undefined)
+  if (!anthropicSdk(model)) return options
+  const thinking =
+    options["thinking"] ??
+    (anthropicThinksByDefault(model.api.id)
+      ? { type: "adaptive", ...(anthropicOmitsThinking(model.api.id) ? { display: "summarized" } : {}) }
+      : undefined)
   if (thinking?.type !== "adaptive" && thinking?.type !== "enabled") return options
   return {
     ...options,
     thinking: { ...thinking, blockBinding: { prefixMismatchBehavior: "drop_block" } },
   }
+}
+
+// The pinned @ai-sdk/anthropic only knows models up to Opus 4.7, so for every
+// Claude 5 it emulates `generateObject` with a forced `json` tool — the exact
+// request Opus 5.5 and Fable 5.1 reject. Pinning the mode to `outputFormat`
+// makes the sdk use native `output_config.format` instead. No effect on
+// requests without a response format.
+function anthropicStructuredOutputMode(model: Provider.Model, options: { [x: string]: any }) {
+  if (!anthropicSdk(model)) return options
+  if (!anthropicRejectsForcedToolUse(model.api.id)) return options
+  if (options["structuredOutputMode"]) return options
+  return { ...options, structuredOutputMode: "outputFormat" }
 }
 
 export function variants(model: Provider.Model): Record<string, Record<string, any>> {
@@ -1090,7 +1169,7 @@ const SLUG_OVERRIDES: Record<string, string> = {
 }
 
 export function providerOptions(model: Provider.Model, input: { [x: string]: any }) {
-  const options = anthropicBlockBinding(model, input)
+  const options = anthropicStructuredOutputMode(model, anthropicBlockBinding(model, input))
   if (model.api.npm === "@ai-sdk/gateway") {
     // Gateway providerOptions are split across two namespaces:
     // - `gateway`: gateway-native routing/caching controls (order, only, byok, etc.)
